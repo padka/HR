@@ -35,7 +35,7 @@ Canonical.
 | Server state | React Query | Backend API | Candidate detail, slots, dashboard, profile, messenger threads/messages |
 | Route state | TanStack Router | URL | `candidateId`, `token`, route selection |
 | Local UI state | React component | Component state | Open/close drawers, active tab, filters, modals, draft text |
-| Persistent browser state | `localStorage` / session storage | Browser | Theme, Liquid Glass override, persisted filters, candidate portal token/session |
+| Persistent browser state | `localStorage` / session storage / HttpOnly resume cookie | Browser | Theme, Liquid Glass override, persisted filters, candidate portal bootstrap token and short-lived portal resume cookie |
 | Shell runtime state | `RootLayout` | `__root.tsx` | Nav mode, unread chat count, mobile sheet state, motion mode |
 
 ## Admin Shell Bootstrap
@@ -122,7 +122,7 @@ sequenceDiagram
 
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
-- If token exchange fails with recoverable state, the flow falls back to the journey payload.
+- If token exchange fails with recoverable state, the flow falls back to the journey payload and retries once without stale stored token so the resume cookie can rehydrate the session.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 
 ## Candidate Portal Journey Flow

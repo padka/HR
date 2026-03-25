@@ -6,6 +6,7 @@ import {
   cancelCandidatePortalSlot,
   completeCandidatePortalScreening,
   confirmCandidatePortalSlot,
+  parseCandidatePortalError,
   fetchCandidatePortalJourney,
   logoutCandidatePortalSession,
   reserveCandidatePortalSlot,
@@ -307,6 +308,7 @@ export function CandidateJourneyPage() {
   const nextStepMeta = payload?.journey.next_step_timezone
     ? `Часовой пояс: ${payload.journey.next_step_timezone}`
     : 'Данные обновляются автоматически'
+  const portalError = parseCandidatePortalError(journeyQuery.error)
 
   if (journeyQuery.isLoading) {
     return (
@@ -323,20 +325,35 @@ export function CandidateJourneyPage() {
   }
 
   if (journeyQuery.isError || !payload) {
-    const error = journeyQuery.error as Error & { status?: number }
-    const isExpired = error?.status === 401
+    const recoveryState = portalError?.state || (portalError?.status === 401 ? 'recoverable' : null)
+    const errorTitle =
+      recoveryState === 'blocked'
+        ? 'Доступ к кабинету недоступен'
+        : recoveryState === 'needs_new_link'
+          ? 'Нужна новая ссылка'
+          : 'Не удалось восстановить кабинет'
+    const errorSubtitle =
+      recoveryState === 'blocked'
+        ? 'Сессия отозвана или кандидат не найден. Попросите рекрутера восстановить доступ.'
+        : recoveryState === 'needs_new_link'
+          ? 'Старая ссылка устарела. Откройте свежую ссылку из MAX или Telegram.'
+          : 'Откройте кабинет заново из MAX или Telegram. Если resume-cookie ещё жив, доступ поднимется автоматически.'
     return (
       <div className="candidate-portal">
         <div className="candidate-portal__loader">
           <div className="glass glass--elevated candidate-portal__card">
             <div className="candidate-portal__eyebrow">Candidate Portal</div>
-            <h1 className="candidate-portal__title">{isExpired ? 'Ссылка истекла' : 'Не удалось загрузить портал'}</h1>
+            <h1 className="candidate-portal__title">{errorTitle}</h1>
             <p className="candidate-portal__subtitle">
-              {error?.message || 'Попробуйте открыть последнюю ссылку из сообщения или запросите новую у рекрутера.'}
+              {errorSubtitle}
             </p>
-            <div className="candidate-portal__actions">
-              <Link className="ui-btn ui-btn--ghost" to="/candidate/journey">
+            {portalError?.message ? <p className="candidate-portal__error">{portalError.message}</p> : null}
+            <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>
+              <button className="ui-btn ui-btn--primary" onClick={() => journeyQuery.refetch()}>
                 Повторить
+              </button>
+              <Link className="ui-btn ui-btn--ghost" to="/candidate/start">
+                Открыть заново
               </Link>
             </div>
           </div>
@@ -359,6 +376,19 @@ export function CandidateJourneyPage() {
             {payload.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
             {payload.journey.entry_channel ? <span className="candidate-portal__chip">Вход: {payload.journey.entry_channel}</span> : null}
             {statusSummary ? <span className="candidate-portal__chip">{statusSummary}</span> : null}
+          </div>
+        </section>
+
+        <section className="candidate-portal__summary-card" style={{ marginBottom: 20 }}>
+          <div className="candidate-portal__card-head">
+            <h2 className="candidate-portal__card-title">Кабинет восстанавливается автоматически</h2>
+            <p className="candidate-portal__card-copy">
+              Если вы закроете браузер, прогресс и сессия сохранятся на этом устройстве примерно на 24 часа.
+            </p>
+          </div>
+          <div className="candidate-portal__summary-tags" aria-label="Преимущества восстановления кабинета">
+            <span className="candidate-portal__summary-tag">Безопасный resume-cookie</span>
+            <span className="candidate-portal__summary-tag">Подходит для MAX и браузера</span>
           </div>
         </section>
 

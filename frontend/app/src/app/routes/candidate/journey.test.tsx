@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CandidateJourneyPage } from './journey'
@@ -23,6 +24,14 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
     useQueryClient: () => useQueryClientMock(),
   }
 })
+
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({ to, children, ...props }: { to: string; children?: ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
+}))
 
 vi.mock('./webapp', () => ({
   markCandidateWebAppReady: () => readyMock(),
@@ -114,6 +123,7 @@ describe('CandidateJourneyPage', () => {
     expect(screen.getByText('SMART SERVICE')).toBeInTheDocument()
     expect(screen.getByText(/отбор в SMART SERVICE/i)).toBeInTheDocument()
     expect(screen.getByText(/Анкета и прогресс сохраняются автоматически/i)).toBeInTheDocument()
+    expect(screen.getByText(/resume-cookie/i)).toBeInTheDocument()
   })
 
   it('uses a bounded cache policy for the candidate portal journey', () => {
@@ -123,5 +133,30 @@ describe('CandidateJourneyPage', () => {
     expect(queryOptions?.staleTime).toBe(60_000)
     expect(queryOptions?.refetchOnWindowFocus).toBe(false)
     expect(queryOptions?.refetchOnReconnect).toBe(false)
+  })
+
+  it('renders a recovery screen for stale candidate portal sessions', () => {
+    useQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Сессия портала устарела'), {
+        status: 401,
+        data: {
+          detail: {
+            code: 'portal_session_version_mismatch',
+            state: 'needs_new_link',
+            message: 'Сессия портала устарела. Откройте новую ссылку.',
+          },
+        },
+      }),
+    })
+
+    render(<CandidateJourneyPage />)
+
+    expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
+    expect(screen.getByText(/Откройте свежую ссылку из MAX или Telegram/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Повторить' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Открыть заново' })).toHaveAttribute('href', '/candidate/start')
   })
 })

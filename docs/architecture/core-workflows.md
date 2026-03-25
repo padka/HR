@@ -91,7 +91,8 @@ stateDiagram-v2
 ```
 
 ### Reliability Contract
-- Header-token recovery without cookie is allowed only for an `active` journey session with matching `session_version`.
+- Browser reopen recovery first uses the short-lived HttpOnly resume cookie; if the cookie is missing, the portal may still recover from an explicit header token only for an `active` journey session with matching `session_version`.
+- If no bootstrap source is available, the candidate portal returns structured recovery states (`recoverable`, `needs_new_link`, `blocked`) so the UI can explain the next step instead of showing a dead-end 401.
 - Invite rotation, relink and explicit security recovery bump `session_version`; stale browser/header tokens must fail closed and emit audit trail.
 
 ## 2. Slot Booking And Reschedule

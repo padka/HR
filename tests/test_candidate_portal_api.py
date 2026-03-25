@@ -12,12 +12,14 @@ from backend.core import settings as settings_module
 from backend.core.db import async_session
 from backend.domain.candidates.models import ChatMessage, User
 from backend.domain.candidates.portal_service import (
+    bump_candidate_portal_session_version,
     get_candidate_portal_questions,
     sign_candidate_portal_token,
 )
 from backend.domain.candidates.services import create_candidate_invite_token
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.apps.admin_ui.routers.candidate_portal import PORTAL_RESUME_COOKIE
 
 
 def _configure_env(monkeypatch) -> None:
@@ -260,6 +262,98 @@ def test_candidate_portal_journey_can_be_restored_from_header_token(monkeypatch)
     payload = response.json()
     assert payload["candidate"]["id"] == seeded["candidate_id"]
     assert payload["journey"]["current_step"] == "profile"
+
+
+def test_candidate_portal_journey_can_be_restored_from_resume_cookie_after_browser_restart(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+        token = sign_candidate_portal_token(
+            candidate_uuid=str(seeded["candidate_uuid"]),
+            entry_channel="web",
+            source_channel="portal",
+        )
+        exchange = client.post("/api/candidate/session/exchange", json={"token": token})
+        assert exchange.status_code == 200
+
+        resume_cookie = client.cookies.get(PORTAL_RESUME_COOKIE)
+        assert resume_cookie
+        client.cookies.clear()
+        client.cookies.set(PORTAL_RESUME_COOKIE, resume_cookie)
+
+        response = client.get("/api/candidate/journey")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == seeded["candidate_id"]
+    assert payload["journey"]["current_step"] == "profile"
+
+
+def test_candidate_portal_journey_returns_recoverable_state_without_bootstrap(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+
+    with TestClient(app) as client:
+        client.cookies.clear()
+        response = client.get("/api/candidate/journey")
+
+    assert response.status_code == 401
+    detail = response.json()["detail"]
+    assert detail["state"] == "recoverable"
+    assert detail["code"] == "portal_session_expired"
+
+
+def test_candidate_portal_resume_cookie_is_cleared_after_version_mismatch(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+        token = sign_candidate_portal_token(
+            candidate_uuid=str(seeded["candidate_uuid"]),
+            entry_channel="web",
+            source_channel="portal",
+        )
+        exchange = client.post("/api/candidate/session/exchange", json={"token": token})
+        assert exchange.status_code == 200
+
+        resume_cookie = client.cookies.get(PORTAL_RESUME_COOKIE)
+        assert resume_cookie
+
+        async def _bump_version() -> None:
+            async with async_session() as session:
+                async with session.begin():
+                    await bump_candidate_portal_session_version(
+                        session,
+                        candidate_id=int(seeded["candidate_id"]),
+                    )
+
+        asyncio.run(_bump_version())
+        client.cookies.clear()
+        client.cookies.set(PORTAL_RESUME_COOKIE, resume_cookie)
+
+        response = client.get("/api/candidate/journey")
+
+    assert response.status_code == 401
+    detail = response.json()["detail"]
+    assert detail["state"] == "needs_new_link"
+    assert detail["code"] == "portal_session_version_mismatch"
 
 
 def test_candidate_portal_end_to_end_flow(monkeypatch):

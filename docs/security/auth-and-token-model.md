@@ -44,6 +44,7 @@ Canonical
 | Bearer JWT | `/auth/token` | API clients / browser fallback | `access_token_ttl_hours` | client header |
 | CSRF token | `/api/csrf` | state-changing admin requests | session-bound | browser memory / header |
 | Candidate portal token | `sign_candidate_portal_token()` | `/api/candidate/session/exchange` and portal requests | `candidate_portal_token_ttl_seconds`, bound to `candidate_id + journey_session_id + session_version` | query param / header |
+| Candidate portal resume cookie | `/api/candidate/session/exchange` and successful portal responses | `/api/candidate/journey` bootstrap after browser reopen | short-lived bootstrap cookie, `HttpOnly`, `SameSite=Lax`, path `/api/candidate` | browser cookie |
 | Candidate invite token | `generate_candidate_invite_token()` / `issue_candidate_invite_token()` | MAX deep link generation and linking | server-generated, rotated per candidate/channel, status-tracked in DB | query param / DB token table |
 | MAX mini-app token | `sign_candidate_portal_token(... entry_channel="max")` | MAX mini app entry | portal TTL, includes `journey_session_id + session_version` | startapp token |
 | HH OAuth state | `sign_hh_oauth_state()` | OAuth callback correlation | `hh_oauth_state_ttl_seconds` | query param |
@@ -102,9 +103,11 @@ sequenceDiagram
 - Portal token is a signed, time-limited token built with `itsdangerous.URLSafeTimedSerializer`.
 - Portal token payload contains `candidate_id`, `entry_channel`, `journey_session_id` and `session_version`.
 - Portal session is server-managed and lives under `candidate_portal` session key.
+- Browser reopen recovery uses a short-lived HttpOnly resume cookie that stores only the signed portal token; JavaScript cannot read it and the cookie is scoped to candidate portal API requests.
 - Native entry from MAX `startapp` and Telegram `web_app` buttons is only a launch surface; the same signed portal token still gates session recovery and browser fallback.
 - Requests can recover from missing browser cookies by sending the portal token in one of:
   `x-candidate-portal-token`, `x-candidate-portal-access-token`, `x-candidate-portal-session-token`.
+- If both browser session and resume cookie are missing, the portal returns structured recovery states instead of a generic 401 so the UI can distinguish `recoverable`, `needs_new_link`, and `blocked`.
 - Header-token recovery is valid only when the referenced journey session still exists, remains `active`, and `session_version` matches the current DB value.
 - `relink`, invite rotation, explicit security recovery and similar ownership-changing actions bump `session_version` and invalidate stale browser/header sessions.
 - Portal responses must never be treated as admin/recruiter auth.

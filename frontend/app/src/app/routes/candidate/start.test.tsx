@@ -5,6 +5,7 @@ import { CandidateStartPage } from './start'
 
 const exchangeCandidatePortalTokenMock = vi.fn()
 const fetchCandidatePortalJourneyMock = vi.fn()
+const parseCandidatePortalErrorMock = vi.fn()
 const navigateMock = vi.fn()
 const setQueryDataMock = vi.fn()
 const useParamsMock = vi.fn()
@@ -12,6 +13,7 @@ const useParamsMock = vi.fn()
 vi.mock('@/api/candidate', () => ({
   exchangeCandidatePortalToken: (...args: unknown[]) => exchangeCandidatePortalTokenMock(...args),
   fetchCandidatePortalJourney: (...args: unknown[]) => fetchCandidatePortalJourneyMock(...args),
+  parseCandidatePortalError: (...args: unknown[]) => parseCandidatePortalErrorMock(...args),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -29,6 +31,7 @@ describe('CandidateStartPage', () => {
   beforeEach(() => {
     exchangeCandidatePortalTokenMock.mockReset()
     fetchCandidatePortalJourneyMock.mockReset()
+    parseCandidatePortalErrorMock.mockReset()
     navigateMock.mockReset()
     setQueryDataMock.mockReset()
     useParamsMock.mockReturnValue({ token: 'signed-token' })
@@ -60,11 +63,40 @@ describe('CandidateStartPage', () => {
 
   it('shows portal error when exchange fails', async () => {
     exchangeCandidatePortalTokenMock.mockRejectedValue(new Error('Ссылка устарела'))
+    parseCandidatePortalErrorMock.mockReturnValue({
+      message: 'Ссылка устарела',
+      state: 'needs_new_link',
+      status: 401,
+    })
 
     render(<CandidateStartPage />)
 
     await waitFor(() => {
+      expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
       expect(screen.getByText('Ссылка устарела')).toBeInTheDocument()
+    })
+  })
+
+  it('falls back to the existing portal session when exchange token is stale', async () => {
+    exchangeCandidatePortalTokenMock.mockRejectedValue(
+      Object.assign(new Error('Ссылка устарела'), { status: 401 }),
+    )
+    fetchCandidatePortalJourneyMock.mockResolvedValue({
+      candidate: { id: 1, candidate_id: 'cid' },
+      journey: { current_step: 'profile' },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(fetchCandidatePortalJourneyMock).toHaveBeenCalled()
+      expect(setQueryDataMock).toHaveBeenCalledWith(
+        ['candidate-portal-journey'],
+        expect.objectContaining({
+          candidate: expect.objectContaining({ id: 1 }),
+        }),
+      )
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
     })
   })
 

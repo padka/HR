@@ -659,12 +659,16 @@ async def build_candidate_portal_journey(
     candidate: User,
     *,
     entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
+    journey: CandidateJourneySession | None = None,
 ) -> dict[str, Any]:
-    journey = await ensure_candidate_portal_session(
-        session,
-        candidate,
-        entry_channel=entry_channel,
-    )
+    if journey is None:
+        journey = await ensure_candidate_portal_session(
+            session,
+            candidate,
+            entry_channel=entry_channel,
+        )
+    if "step_states" not in journey.__dict__:
+        await session.refresh(journey, attribute_names=["step_states"])
     step_map = {item.step_key: item for item in journey.step_states}
     profile_state = step_map.get("profile")
     screening_state = step_map.get("screening")

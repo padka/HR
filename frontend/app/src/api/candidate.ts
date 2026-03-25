@@ -1,9 +1,13 @@
 import { apiFetch } from './client'
-import { readCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
+import {
+  clearCandidatePortalAccessToken,
+  readCandidatePortalAccessToken,
+} from '@/shared/candidate-portal-session'
 
 export const CANDIDATE_API_URL = '/api/candidate'
 
 export type CandidatePortalStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped'
+export type CandidatePortalRecoveryState = 'recoverable' | 'needs_new_link' | 'blocked'
 
 export type CandidatePortalQuestion = {
   index: number
@@ -104,25 +108,87 @@ export type CandidatePortalJourneyResponse = {
 
 type CandidateFetchInit = RequestInit & {
   json?: unknown
+  skipStoredPortalToken?: boolean
+}
+
+export type CandidatePortalErrorInfo = {
+  status?: number
+  code?: string
+  state?: CandidatePortalRecoveryState
+  message: string
+  canResume?: boolean
+  requiresFreshLink?: boolean
 }
 
 export async function candidateFetch<T>(path: string, init?: CandidateFetchInit): Promise<T> {
-  const headers = new Headers(init?.headers)
-  if (init?.json !== undefined && !headers.has('Content-Type')) {
+  const { skipStoredPortalToken = false, ...requestInit } = init ?? {}
+  const headers = new Headers(requestInit.headers)
+  if (requestInit.json !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
-  const portalToken = readCandidatePortalAccessToken()
+  const portalToken = skipStoredPortalToken ? '' : readCandidatePortalAccessToken()
   if (portalToken && !headers.has('x-candidate-portal-token')) {
     headers.set('x-candidate-portal-token', portalToken)
   }
   const apiPath = `${CANDIDATE_API_URL.replace(/^\/api/, '')}${path}`
 
   return apiFetch<T>(apiPath, {
-    ...init,
+    ...requestInit,
     skipCsrf: true,
     headers,
-    body: init?.json !== undefined ? init.json : init?.body,
+    body: requestInit.json !== undefined ? requestInit.json : requestInit.body,
   })
+}
+
+export function parseCandidatePortalError(error: unknown): CandidatePortalErrorInfo | null {
+  if (!error || typeof error !== 'object') return null
+  const record = error as {
+    status?: number
+    data?: unknown
+    message?: string
+  }
+
+  let detail: unknown = record.data
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const payload = detail as { detail?: unknown; message?: unknown; error?: unknown }
+    detail = payload.detail ?? payload.error ?? detail
+  }
+
+  let message = record.message || ''
+  let code: string | undefined
+  let state: CandidatePortalRecoveryState | undefined
+  let canResume: boolean | undefined
+  let requiresFreshLink: boolean | undefined
+
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const payload = detail as Record<string, unknown>
+    if (typeof payload.message === 'string') message = payload.message
+    if (typeof payload.code === 'string') code = payload.code
+    if (
+      typeof payload.state === 'string'
+      && ['recoverable', 'needs_new_link', 'blocked'].includes(payload.state)
+    ) {
+      state = payload.state as CandidatePortalRecoveryState
+    }
+    if (typeof payload.can_resume === 'boolean') canResume = payload.can_resume
+    if (typeof payload.requires_fresh_link === 'boolean') requiresFreshLink = payload.requires_fresh_link
+  } else if (typeof detail === 'string' && !message) {
+    message = detail
+  }
+
+  if (!message) message = 'Не удалось открыть кабинет.'
+  if (!state && record.status === 401) {
+    state = 'recoverable'
+  }
+
+  return {
+    status: record.status,
+    code,
+    state,
+    message,
+    canResume,
+    requiresFreshLink,
+  }
 }
 
 export const exchangeCandidatePortalToken = async (token: string) =>
@@ -131,8 +197,21 @@ export const exchangeCandidatePortalToken = async (token: string) =>
     json: { token },
   })
 
-export const fetchCandidatePortalJourney = async () =>
-  await candidateFetch<CandidatePortalJourneyResponse>('/journey')
+export const fetchCandidatePortalJourney = async () => {
+  const storedToken = readCandidatePortalAccessToken()
+  try {
+    return await candidateFetch<CandidatePortalJourneyResponse>('/journey')
+  } catch (error) {
+    const parsed = parseCandidatePortalError(error)
+    if (storedToken && parsed?.status === 401) {
+      clearCandidatePortalAccessToken()
+      return await candidateFetch<CandidatePortalJourneyResponse>('/journey', {
+        skipStoredPortalToken: true,
+      })
+    }
+    throw error
+  }
+}
 
 export const saveCandidatePortalProfile = async (payload: {
   fio: string

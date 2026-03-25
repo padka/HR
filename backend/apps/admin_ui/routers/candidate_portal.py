@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.apps.admin_ui.security import get_client_ip, limiter
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates.portal_service import (
     PORTAL_SESSION_KEY,
@@ -29,6 +30,7 @@ from backend.domain.candidates.portal_service import (
     resolve_candidate_portal_user,
     save_candidate_profile,
     save_screening_draft,
+    sign_candidate_portal_token,
     touch_candidate_portal_session,
     validate_candidate_portal_session_payload,
     CandidatePortalAuthError,
@@ -42,6 +44,12 @@ PORTAL_TOKEN_HEADERS = (
     "x-candidate-portal-access-token",
     "x-candidate-portal-session-token",
 )
+PORTAL_RESUME_COOKIE = "candidate_portal_resume"
+PORTAL_RESUME_COOKIE_PATH = "/api/candidate"
+PORTAL_RESUME_COOKIE_MAX_AGE_SECONDS = 24 * 60 * 60
+PORTAL_RECOVERY_STATE_RECOVERABLE = "recoverable"
+PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK = "needs_new_link"
+PORTAL_RECOVERY_STATE_BLOCKED = "blocked"
 
 
 class CandidatePortalExchangePayload(BaseModel):
@@ -82,15 +90,129 @@ def _request_portal_token(request: Request) -> str:
     return ""
 
 
-async def _candidate_session_payload(request: Request) -> dict[str, Any]:
+def _request_portal_resume_token(request: Request) -> str:
+    return (request.cookies.get(PORTAL_RESUME_COOKIE) or "").strip()
+
+
+def _candidate_portal_resume_cookie_clear_headers() -> dict[str, str]:
+    temp_response = Response()
+    temp_response.delete_cookie(
+        PORTAL_RESUME_COOKIE,
+        path=PORTAL_RESUME_COOKIE_PATH,
+    )
+    header_value = temp_response.headers.get("set-cookie") or ""
+    return {"set-cookie": header_value} if header_value else {}
+
+
+def _candidate_portal_auth_error(
+    *,
+    message: str,
+    code: str,
+    state: str,
+    clear_resume_cookie: bool = False,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "message": message,
+            "code": code,
+            "state": state,
+        },
+        headers=_candidate_portal_resume_cookie_clear_headers() if clear_resume_cookie else None,
+    )
+
+
+def _candidate_portal_resume_cookie_max_age() -> int:
+    settings = get_settings()
+    return max(
+        300,
+        min(
+            int(settings.candidate_portal_token_ttl_seconds),
+            int(settings.candidate_portal_session_ttl_seconds),
+            PORTAL_RESUME_COOKIE_MAX_AGE_SECONDS,
+        ),
+    )
+
+
+def _clear_candidate_portal_resume_cookie(response: Response | None) -> None:
+    if response is None:
+        return
+    response.delete_cookie(
+        PORTAL_RESUME_COOKIE,
+        path=PORTAL_RESUME_COOKIE_PATH,
+    )
+
+
+def _set_candidate_portal_resume_cookie(
+    response: Response | None,
+    *,
+    token: str,
+) -> None:
+    if response is None:
+        return
+    settings = get_settings()
+    response.set_cookie(
+        PORTAL_RESUME_COOKIE,
+        token,
+        max_age=_candidate_portal_resume_cookie_max_age(),
+        path=PORTAL_RESUME_COOKIE_PATH,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+    )
+
+
+def _issue_candidate_portal_resume_cookie(
+    response: Response | None,
+    *,
+    candidate,
+    journey,
+    entry_channel: str,
+) -> None:
+    token = sign_candidate_portal_token(
+        candidate_uuid=str(candidate.candidate_id),
+        entry_channel=entry_channel,
+        source_channel="portal",
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    )
+    _set_candidate_portal_resume_cookie(response, token=token)
+
+
+def _candidate_portal_not_found_error(
+    response: Response | None,
+    *,
+    message: str,
+    clear_resume_cookie: bool = False,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "message": message,
+            "code": "portal_candidate_not_found",
+            "state": PORTAL_RECOVERY_STATE_BLOCKED,
+        },
+        headers=_candidate_portal_resume_cookie_clear_headers() if clear_resume_cookie else None,
+    )
+
+
+async def _candidate_session_payload(
+    request: Request,
+    response: Response | None = None,
+) -> dict[str, Any]:
     payload = request.session.get(PORTAL_SESSION_KEY)
     if not is_candidate_portal_session_valid(payload):
         request.session.pop(PORTAL_SESSION_KEY, None)
         portal_token = _request_portal_token(request)
+        portal_token_from_resume_cookie = False
         if not portal_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"message": "Сессия портала истекла. Откройте ссылку заново."},
+            portal_token = _request_portal_resume_token(request)
+            portal_token_from_resume_cookie = bool(portal_token)
+        if not portal_token:
+            raise _candidate_portal_auth_error(
+                message="Сессия портала истекла. Попробуйте открыть кабинет заново.",
+                code="portal_session_expired",
+                state=PORTAL_RECOVERY_STATE_RECOVERABLE,
             )
 
         async with async_session() as session:
@@ -100,13 +222,21 @@ async def _candidate_session_payload(request: Request) -> dict[str, Any]:
                 except CandidatePortalAuthError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={"message": str(exc)},
+                        detail={
+                            "message": str(exc),
+                            "code": "portal_link_invalid",
+                            "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                        },
+                        headers=_candidate_portal_resume_cookie_clear_headers()
+                        if portal_token_from_resume_cookie
+                        else None,
                     ) from exc
                 candidate = await resolve_candidate_portal_user(session, access)
                 if candidate is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={"message": "Кандидатская сессия не найдена."},
+                    raise _candidate_portal_not_found_error(
+                        response,
+                        message="Кандидатская сессия не найдена.",
+                        clear_resume_cookie=portal_token_from_resume_cookie,
                     )
                 journey = await ensure_candidate_portal_session(
                     session,
@@ -133,7 +263,14 @@ async def _candidate_session_payload(request: Request) -> dict[str, Any]:
                     )
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={"message": "Сессия портала устарела. Откройте новую ссылку."},
+                        detail={
+                            "message": "Сессия портала устарела. Откройте новую ссылку.",
+                            "code": "portal_session_version_mismatch",
+                            "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                        },
+                        headers=_candidate_portal_resume_cookie_clear_headers()
+                        if portal_token_from_resume_cookie
+                        else None,
                     )
                 next_payload = build_candidate_portal_session_payload(
                     candidate_id=int(candidate.id),
@@ -158,22 +295,26 @@ async def _candidate_session_payload(request: Request) -> dict[str, Any]:
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"message": "Сессия портала устарела. Откройте новую ссылку."},
+                    detail={
+                        "message": "Сессия портала устарела. Откройте новую ссылку.",
+                        "code": "portal_session_version_mismatch",
+                        "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                    },
                 )
     next_payload = touch_candidate_portal_session(dict(payload))
     request.session[PORTAL_SESSION_KEY] = next_payload
     return next_payload
 
 
-async def _load_candidate(request: Request):
-    payload = await _candidate_session_payload(request)
+async def _load_candidate(request: Request, response: Response | None = None):
+    payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(payload["candidate_id"]))
         if candidate is None:
             request.session.pop(PORTAL_SESSION_KEY, None)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"message": "Кандидатская сессия не найдена."},
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Кандидатская сессия не найдена.",
             )
         return candidate, payload
 
@@ -189,6 +330,7 @@ def _portal_error(exc: CandidatePortalError) -> HTTPException:
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def exchange_candidate_portal_session(
     request: Request,
+    response: Response,
     payload: CandidatePortalExchangePayload,
 ):
     async with async_session() as session:
@@ -198,14 +340,53 @@ async def exchange_candidate_portal_session(
             except CandidatePortalAuthError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"message": str(exc)},
+                    detail={
+                        "message": str(exc),
+                        "code": "portal_link_invalid",
+                        "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                    },
                 ) from exc
             candidate = await resolve_candidate_portal_user(session, access)
+            if candidate is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "message": "Кандидатская сессия не найдена.",
+                        "code": "portal_candidate_not_found",
+                        "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                    },
+                )
             journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
                 entry_channel=access.entry_channel,
             )
+            if (
+                access.journey_session_id is not None
+                and access.journey_session_id != int(journey.id)
+            ) or (
+                access.session_version is not None
+                and access.session_version != int(journey.session_version or 1)
+            ):
+                await log_audit_action(
+                    "portal_session_rejected_version_mismatch",
+                    "candidate",
+                    candidate.id,
+                    changes={
+                        "token_session_id": access.journey_session_id,
+                        "token_session_version": access.session_version,
+                        "actual_session_id": int(journey.id),
+                        "actual_session_version": int(journey.session_version or 1),
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "message": "Сессия портала устарела. Откройте новую ссылку.",
+                        "code": "portal_session_version_mismatch",
+                        "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                    },
+                )
             test1_result = await get_latest_test1_result(session, candidate.id)
             journey_meta = dict(journey.payload_json or {})
             if test1_result is None and not journey_meta.get("screening_started_logged_at"):
@@ -223,6 +404,7 @@ async def exchange_candidate_portal_session(
                 session,
                 candidate,
                 entry_channel=access.entry_channel,
+                journey=journey,
             )
 
         request.session[PORTAL_SESSION_KEY] = {
@@ -233,47 +415,72 @@ async def exchange_candidate_portal_session(
                 last_seen_at=candidate.last_activity,
             )
         }
+        _issue_candidate_portal_resume_cookie(
+            response,
+            candidate=candidate,
+            journey=journey,
+            entry_channel=access.entry_channel,
+        )
         return response_payload
 
 
 @router.post("/session/logout", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
-async def logout_candidate_portal_session(request: Request) -> Response:
+async def logout_candidate_portal_session(request: Request, response: Response) -> Response:
     request.session.pop(PORTAL_SESSION_KEY, None)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_candidate_portal_resume_cookie(response)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.get("/journey")
-async def get_candidate_portal_journey(request: Request):
-    payload = await _candidate_session_payload(request)
+async def get_candidate_portal_journey(request: Request, response: Response):
+    payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(payload["candidate_id"]))
             if candidate is None:
                 request.session.pop(PORTAL_SESSION_KEY, None)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"message": "Кандидатская сессия не найдена."},
+                raise _candidate_portal_not_found_error(
+                    response,
+                    message="Кандидатская сессия не найдена.",
                 )
-            return await build_candidate_portal_journey(
+            journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
                 entry_channel=str(payload.get("entry_channel") or "web"),
             )
+            response_payload = await build_candidate_portal_journey(
+                session,
+                candidate,
+                entry_channel=str(payload.get("entry_channel") or "web"),
+                journey=journey,
+            )
+            _issue_candidate_portal_resume_cookie(
+                response,
+                candidate=candidate,
+                journey=journey,
+                entry_channel=str(payload.get("entry_channel") or "web"),
+            )
+            return response_payload
 
 
 @router.post("/profile")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def save_candidate_portal_profile(
     request: Request,
+    response: Response,
     payload: CandidatePortalProfilePayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
             if candidate is None:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+                raise _candidate_portal_not_found_error(
+                    response,
+                    message="Сессия портала недействительна.",
+                )
             journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
@@ -290,25 +497,37 @@ async def save_candidate_portal_profile(
                 )
             except CandidatePortalError as exc:
                 raise _portal_error(exc) from exc
-            return await build_candidate_portal_journey(
+            response_payload = await build_candidate_portal_journey(
                 session,
                 candidate,
                 entry_channel=str(session_payload.get("entry_channel") or "web"),
+                journey=journey,
             )
+            _issue_candidate_portal_resume_cookie(
+                response,
+                candidate=candidate,
+                journey=journey,
+                entry_channel=str(session_payload.get("entry_channel") or "web"),
+            )
+            return response_payload
 
 
 @router.post("/screening/save")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def save_candidate_portal_screening_draft(
     request: Request,
+    response: Response,
     payload: CandidatePortalScreeningPayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
             if candidate is None:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+                raise _candidate_portal_not_found_error(
+                    response,
+                    message="Сессия портала недействительна.",
+                )
             journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
@@ -319,25 +538,37 @@ async def save_candidate_portal_screening_draft(
                 journey,
                 answers=payload.answers,
             )
-            return await build_candidate_portal_journey(
+            response_payload = await build_candidate_portal_journey(
                 session,
                 candidate,
                 entry_channel=str(session_payload.get("entry_channel") or "web"),
+                journey=journey,
             )
+            _issue_candidate_portal_resume_cookie(
+                response,
+                candidate=candidate,
+                journey=journey,
+                entry_channel=str(session_payload.get("entry_channel") or "web"),
+            )
+            return response_payload
 
 
 @router.post("/screening/complete")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def complete_candidate_portal_screening(
     request: Request,
+    response: Response,
     payload: CandidatePortalScreeningPayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
             if candidate is None:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+                raise _candidate_portal_not_found_error(
+                    response,
+                    message="Сессия портала недействительна.",
+                )
             journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
@@ -352,24 +583,36 @@ async def complete_candidate_portal_screening(
                 )
             except CandidatePortalError as exc:
                 raise _portal_error(exc) from exc
-            return await build_candidate_portal_journey(
+            response_payload = await build_candidate_portal_journey(
                 session,
                 candidate,
                 entry_channel=str(session_payload.get("entry_channel") or "web"),
+                journey=journey,
             )
+            _issue_candidate_portal_resume_cookie(
+                response,
+                candidate=candidate,
+                journey=journey,
+                entry_channel=str(session_payload.get("entry_channel") or "web"),
+            )
+            return response_payload
 
 
 @router.post("/slots/reserve")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def reserve_candidate_portal_slot_route(
     request: Request,
+    response: Response,
     payload: CandidatePortalReservePayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -379,7 +622,10 @@ async def reserve_candidate_portal_slot_route(
 
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -397,24 +643,37 @@ async def reserve_candidate_portal_slot_route(
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         response_payload = await build_candidate_portal_journey(
             session,
             candidate,
             entry_channel=str(session_payload.get("entry_channel") or "web"),
+            journey=journey,
         )
         await session.commit()
+        _issue_candidate_portal_resume_cookie(
+            response,
+            candidate=candidate,
+            journey=journey,
+            entry_channel=str(session_payload.get("entry_channel") or "web"),
+        )
         return response_payload
 
 
 @router.post("/slots/confirm")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
-async def confirm_candidate_portal_slot_route(request: Request):
-    session_payload = await _candidate_session_payload(request)
+async def confirm_candidate_portal_slot_route(request: Request, response: Response):
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -423,7 +682,10 @@ async def confirm_candidate_portal_slot_route(request: Request):
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -440,24 +702,37 @@ async def confirm_candidate_portal_slot_route(request: Request):
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         response_payload = await build_candidate_portal_journey(
             session,
             candidate,
             entry_channel=str(session_payload.get("entry_channel") or "web"),
+            journey=journey,
         )
         await session.commit()
+        _issue_candidate_portal_resume_cookie(
+            response,
+            candidate=candidate,
+            journey=journey,
+            entry_channel=str(session_payload.get("entry_channel") or "web"),
+        )
         return response_payload
 
 
 @router.post("/slots/cancel")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
-async def cancel_candidate_portal_slot_route(request: Request):
-    session_payload = await _candidate_session_payload(request)
+async def cancel_candidate_portal_slot_route(request: Request, response: Response):
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -466,7 +741,10 @@ async def cancel_candidate_portal_slot_route(request: Request):
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -483,13 +761,23 @@ async def cancel_candidate_portal_slot_route(request: Request):
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         response_payload = await build_candidate_portal_journey(
             session,
             candidate,
             entry_channel=str(session_payload.get("entry_channel") or "web"),
+            journey=journey,
         )
         await session.commit()
+        _issue_candidate_portal_resume_cookie(
+            response,
+            candidate=candidate,
+            journey=journey,
+            entry_channel=str(session_payload.get("entry_channel") or "web"),
+        )
         return response_payload
 
 
@@ -497,13 +785,17 @@ async def cancel_candidate_portal_slot_route(request: Request):
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def reschedule_candidate_portal_slot_route(
     request: Request,
+    response: Response,
     payload: CandidatePortalReschedulePayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -512,7 +804,10 @@ async def reschedule_candidate_portal_slot_route(
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         journey = await ensure_candidate_portal_session(
             session,
             candidate,
@@ -530,13 +825,23 @@ async def reschedule_candidate_portal_slot_route(
         await session.commit()
         candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
         if candidate is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+            raise _candidate_portal_not_found_error(
+                response,
+                message="Сессия портала недействительна.",
+            )
         response_payload = await build_candidate_portal_journey(
             session,
             candidate,
             entry_channel=str(session_payload.get("entry_channel") or "web"),
+            journey=journey,
         )
         await session.commit()
+        _issue_candidate_portal_resume_cookie(
+            response,
+            candidate=candidate,
+            journey=journey,
+            entry_channel=str(session_payload.get("entry_channel") or "web"),
+        )
         return response_payload
 
 
@@ -544,14 +849,18 @@ async def reschedule_candidate_portal_slot_route(
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
 async def send_candidate_portal_message_route(
     request: Request,
+    response: Response,
     payload: CandidatePortalMessagePayload,
 ):
-    session_payload = await _candidate_session_payload(request)
+    session_payload = await _candidate_session_payload(request, response=response)
     async with async_session() as session:
         async with session.begin():
             candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
             if candidate is None:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"message": "Сессия портала недействительна."})
+                raise _candidate_portal_not_found_error(
+                    response,
+                    message="Сессия портала недействительна.",
+                )
             try:
                 await create_candidate_portal_message(
                     session,
@@ -560,8 +869,21 @@ async def send_candidate_portal_message_route(
                 )
             except CandidatePortalError as exc:
                 raise _portal_error(exc) from exc
-            return await build_candidate_portal_journey(
+            journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
                 entry_channel=str(session_payload.get("entry_channel") or "web"),
             )
+            response_payload = await build_candidate_portal_journey(
+                session,
+                candidate,
+                entry_channel=str(session_payload.get("entry_channel") or "web"),
+                journey=journey,
+            )
+            _issue_candidate_portal_resume_cookie(
+                response,
+                candidate=candidate,
+                journey=journey,
+                entry_channel=str(session_payload.get("entry_channel") or "web"),
+            )
+            return response_payload

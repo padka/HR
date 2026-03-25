@@ -41,6 +41,7 @@ Canonical
 - `start=` or `startapp=` link opens but session is not established.
 - MAX deep link fails to bind to existing CRM candidate.
 - Portal expires immediately after open.
+- Candidate closes and reopens browser and loses access even though a fresh resume cookie should have restored the cabinet.
 - Browser cookie is missing, but header token should have recovered the session and did not.
 - Freshly rotated MAX link works, but older link still circulates and now fails.
 - Same invite reused from another `max_user_id` produces conflict.
@@ -52,8 +53,9 @@ Canonical
 2. Confirm whether the token is expired, malformed, or for the wrong candidate.
 3. Check whether the invite is `active`, `superseded`, `used`, or `conflict`.
 4. Check whether portal `session_version` changed after link rotation, relink or manual security recovery.
-5. Check whether `MAX_BOT_LINK_BASE`, portal public URL, and webhook settings are present.
-6. Verify `max_bot` adapter is registered and webhook updates are being received.
+5. If browser restart is involved, verify that the resume cookie is still present and that the frontend retries journey bootstrap without a stale stored token.
+6. Check whether `MAX_BOT_LINK_BASE`, portal public URL, and webhook settings are present.
+7. Verify `max_bot` adapter is registered and webhook updates are being received.
 
 ## Triage Flow
 
@@ -74,14 +76,17 @@ flowchart TD
 
 1. Если invite `superseded`, не переиспользовать старую ссылку. Сгенерировать новый MAX invite через `/api/candidates/{id}/channels/max-link`.
 2. Если invite в `conflict`, подтвердить `used_by_external_id` и не пытаться “лечить” это повторным retry. Нужен явный relink/rotation decision.
-3. Если portal token не проходит после relink/rotation, проверить `candidate_journey_sessions.session_version`; stale browser/header token должен быть отброшен и заменён новым signed token.
-4. Re-test token exchange with a clean browser session or MAX mini-app restart.
-5. If MAX bot is degraded, verify adapter registration, credentials and webhook health before requeue/retry.
-6. If only the deep link is broken, check the provider-specific base URL and query parameter encoding.
+3. Если browser restart сработал не сразу, проверить, что frontend очистил stale session storage token и повторно попытался `GET /api/candidate/journey` без него.
+4. Если portal token не проходит после relink/rotation, проверить `candidate_journey_sessions.session_version`; stale browser/header token должен быть отброшен и заменён новым signed token.
+5. Если resume cookie stale или `session_version` не совпадает, портал должен вернуть structured `needs_new_link` state и очистить cookie.
+6. Re-test token exchange with a clean browser session or MAX mini-app restart.
+7. If MAX bot is degraded, verify adapter registration, credentials and webhook health before requeue/retry.
+8. If only the deep link is broken, check the provider-specific base URL and query parameter encoding.
 
 ## Verification
 
 - Candidate opens the portal and sees journey payload.
+- Candidate can close and reopen the browser and recover the portal if the short-lived resume cookie is still valid.
 - Candidate can continue via `x-candidate-portal-token` when cookies are unavailable and `session_version` still matches.
 - Admin-generated MAX link returns `deep_link`, `mini_app_link` and invite metadata.
 - MAX updates are processed once, not duplicated.
