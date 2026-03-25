@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Project-level operating rules for Codex in RecruitSmart Admin.
+Project-level operating rules for Codex in Attila Recruiting.
 
 ## 1. Canonical Docs And Precedence
 
@@ -26,7 +26,7 @@ If a workflow or command is described in older docs but conflicts with the curre
 
 ## 2. Repository Shape
 
-RecruitSmart Admin is a production CRM/ATS monorepo with:
+Attila Recruiting is a production CRM/ATS monorepo with:
 
 - FastAPI backend in [backend](/Users/mikhail/Projects/recruitsmart_admin/backend)
 - React 18 SPA in [frontend/app](/Users/mikhail/Projects/recruitsmart_admin/frontend/app)

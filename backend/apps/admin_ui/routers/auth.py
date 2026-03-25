@@ -315,7 +315,7 @@ async def login_form(
     <html lang="ru">
     <head>
       <meta charset="utf-8" />
-      <title>Вход | RecruitSmart</title>
+      <title>Вход | Attila Recruiting</title>
       <style>
         :root {{
           --bg: #0b1220;
@@ -471,9 +471,9 @@ async def login_form(
       <div class="halo"></div>
       <form class="card" method="post" action="/auth/login">
         <div class="logo" aria-hidden="true">
-          <span class="logo-badge">RS</span>
+          <span class="logo-badge">AR</span>
           <span class="logo-text">
-            <strong>RecruitSmart</strong>
+            <strong>Attila Recruiting</strong>
             <small>Админ панель</small>
           </span>
         </div>

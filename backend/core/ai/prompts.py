@@ -75,7 +75,7 @@ def _style_guide_excerpt() -> str:
 
 def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Recruiter Copilot.\n"
+        "You are Attila Recruiting Recruiter Copilot.\n"
         "Task kind: candidate_summary_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -141,7 +141,7 @@ def candidate_summary_prompts(*, context: dict, allow_pii: bool = False) -> tupl
 
 def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Recruiter Coach.\n"
+        "You are Attila Recruiting Recruiter Coach.\n"
         "Task kind: candidate_coach_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -191,7 +191,7 @@ def interview_script_prompts(
     base_risk_hints: list[dict[str, Any]],
 ) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Interview Script Generator.\n"
+        "You are Attila Recruiting Interview Script Generator.\n"
         "Task kind: interview_script_v2.\n"
         "Hard rules:\n"
         "- Output MUST be a single valid JSON object.\n"
@@ -271,7 +271,7 @@ def interview_script_prompts(
 def candidate_coach_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
     style_excerpt = _style_guide_excerpt()
     system = (
-        "You are RecruitSmart Recruiter Coach.\n"
+        "You are Attila Recruiting Recruiter Coach.\n"
         "Task kind: candidate_coach_drafts_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -302,7 +302,7 @@ def candidate_coach_drafts_prompts(*, context: dict, mode: str, allow_pii: bool 
 def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
     style_excerpt = _style_guide_excerpt()
     system = (
-        "You are RecruitSmart Recruiter Copilot.\n"
+        "You are Attila Recruiting Recruiter Copilot.\n"
         "Task kind: chat_reply_drafts_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -343,7 +343,7 @@ def chat_reply_drafts_prompts(*, context: dict, mode: str, allow_pii: bool = Fal
 
 def dashboard_insight_prompts(*, context: dict) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Ops & Analytics Copilot.\n"
+        "You are Attila Recruiting Ops & Analytics Copilot.\n"
         "Task kind: dashboard_insight_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -366,7 +366,7 @@ def dashboard_insight_prompts(*, context: dict) -> tuple[str, str]:
 
 def city_candidate_recommendations_prompts(*, context: dict) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Recruiter Copilot.\n"
+        "You are Attila Recruiting Recruiter Copilot.\n"
         "Task kind: city_candidate_recommendations_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -392,7 +392,7 @@ def city_candidate_recommendations_prompts(*, context: dict) -> tuple[str, str]:
 
 def agent_chat_reply_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
     system = (
-        "You are RecruitSmart Recruiter Copilot.\n"
+        "You are Attila Recruiting Recruiter Copilot.\n"
         "Task kind: agent_chat_reply_v1.\n"
         "Rules:\n"
         "- Output MUST be a single JSON object (no markdown).\n"
@@ -413,7 +413,7 @@ def agent_chat_reply_prompts(*, context: dict, allow_pii: bool = False) -> tuple
     user = (
         "Answer the recruiter question using internal regulations.\n"
         "If the question is about what you can help with (capabilities), answer with:\n"
-        "- 5-8 bullet points of what you can do in RecruitSmart (screening, regulations, script, next steps, message drafts);\n"
+        "- 5-8 bullet points of what you can do in Attila Recruiting (screening, regulations, script, next steps, message drafts);\n"
         "- list the titles from knowledge_base.documents.\n"
         "If the question is about conducting an interview, propose exact questions and phrasing aligned with the company script.\n"
         "Context (JSON):\n"

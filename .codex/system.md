@@ -1,4 +1,4 @@
-# RecruitSmart Admin — Codex Compatibility Note
+# Attila Recruiting — Codex Compatibility Note
 
 This file is historical context only.
 

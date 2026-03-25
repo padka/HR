@@ -81,7 +81,7 @@ def _to_training_row(row: AIInterviewScriptFeedback) -> dict[str, Any] | None:
             {
                 "role": "system",
                 "content": (
-                    "You are RecruitSmart Interview Script Generator. "
+                    "You are Attila Recruiting Interview Script Generator. "
                     "Return one valid JSON object. No markdown. No extra keys."
                 ),
             },
@@ -180,4 +180,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -1,4 +1,4 @@
-# Message Style Guide: RecruitSmart Telegram Bot
+# Message Style Guide: Attila Recruiting Telegram Bot
 
 ## Цель
 Создать единообразный, премиум-стиль сообщений, который снижает когнитивную нагрузку и повышает конверсию в ключевые действия.

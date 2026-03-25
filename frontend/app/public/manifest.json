@@ -1,7 +1,7 @@
 {
-  "name": "RecruitSmart Admin",
-  "short_name": "RecruitSmart",
-  "description": "RecruitSmart CRM mobile workspace",
+  "name": "Attila Recruiting",
+  "short_name": "Attila",
+  "description": "Attila Recruiting CRM mobile workspace",
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",

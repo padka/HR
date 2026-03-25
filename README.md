@@ -1,6 +1,6 @@
-# RecruitSmart Admin
+# Attila Recruiting
 
-RecruitSmart Admin is a production CRM/ATS repository for recruiting pipeline operations, candidate scheduling, recruiter coordination, messaging, and related admin workflows.
+Attila Recruiting is a production CRM/ATS repository for recruiting pipeline operations, candidate scheduling, recruiter coordination, messaging, and related admin workflows.
 
 The product is currently a FastAPI backend plus a React 18 SPA:
 - backend admin server: [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)

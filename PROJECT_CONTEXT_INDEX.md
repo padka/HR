@@ -1,6 +1,6 @@
 # Project Context Index
 
-Compact navigation for current RecruitSmart Admin work.
+Compact navigation for current Attila Recruiting work.
 
 ## Canonical docs
 

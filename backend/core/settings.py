@@ -729,7 +729,7 @@ def get_settings() -> Settings:
     hh_client_id = os.getenv("HH_CLIENT_ID", "").strip()
     hh_client_secret = os.getenv("HH_CLIENT_SECRET", "").strip()
     hh_redirect_uri = os.getenv("HH_REDIRECT_URI", "").strip()
-    hh_user_agent = os.getenv("HH_USER_AGENT", "RecruitSmart/1.0 (engineering@recruitsmart.local)").strip() or "RecruitSmart/1.0 (engineering@recruitsmart.local)"
+    hh_user_agent = os.getenv("HH_USER_AGENT", "Attila Recruiting/1.0 (engineering@attila.local)").strip() or "Attila Recruiting/1.0 (engineering@attila.local)"
     hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
     hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
     hh_auto_import_interval_seconds = _get_int("HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60)

@@ -38,7 +38,7 @@ describe('RootLayout liquid glass mode', () => {
     localStorage.clear()
     delete document.documentElement.dataset.ui
     delete document.documentElement.dataset.motion
-    document.title = 'RecruitSmart'
+    document.title = 'Attila Recruiting'
 
     useRouterStateMock.mockReturnValue({ location: { pathname: '/app/login' } })
     useProfileMock.mockReturnValue({
@@ -185,7 +185,7 @@ describe('RootLayout liquid glass mode', () => {
     render(<RootLayout />)
 
     await waitFor(() => {
-      expect(document.title).toBe('(3) Дашборд • RecruitSmart')
+      expect(document.title).toBe('(3) Дашборд • Attila Recruiting')
       expect(document.querySelector('.vision-nav__badge')?.textContent).toBe('3')
     })
   })

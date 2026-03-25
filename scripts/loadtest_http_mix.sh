@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Mixed HTTP load test for local RecruitSmart Admin UI.
+# Mixed HTTP load test for local Attila Recruiting UI.
 #
 # Goal: attempt a target overall RPS distribution across multiple endpoints for a fixed duration.
 # Uses autocannon via npx (no repo dependency install required).

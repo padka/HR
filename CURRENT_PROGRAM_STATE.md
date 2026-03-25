@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Repository: RecruitSmart Admin
+- Repository: Attila Recruiting
 - Mode: local development only by default
 - Production/VPS: do not touch unless the user explicitly asks
 - Root markdown cleanup: completed on `2026-03-08`
