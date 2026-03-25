@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   applyCandidateAction,
   createCandidateMaxLink,
+  fetchCandidateChannelHealth,
   fetchCandidateAiCoach,
   fetchCandidateAiSummary,
   fetchCandidateChat,
@@ -27,6 +28,17 @@ export function useCandidateDetail(candidateId: number) {
     queryKey: ['candidate-detail', candidateId],
     queryFn: () => fetchCandidateDetail(candidateId),
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+}
+
+export function useCandidateChannelHealth(candidateId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ['candidate-channel-health', candidateId],
+    queryFn: () => fetchCandidateChannelHealth(candidateId),
+    enabled: enabled && Boolean(candidateId),
+    staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })

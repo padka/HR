@@ -289,7 +289,7 @@ async def _load_accessible_user(
 async def _load_thread_rows(
     principal: Principal,
 ) -> tuple[
-    list[tuple[User, str | None, datetime | None, str | None, str | None, dict | None]],
+    list[tuple[User, str | None, datetime | None, str | None, str | None, str | None, str | None, dict | None]],
     dict[int, Optional[datetime]],
     dict[int, Optional[datetime]],
     dict[int, int],
@@ -304,6 +304,8 @@ async def _load_thread_rows(
             ChatMessage.created_at.label("created_at"),
             ChatMessage.direction.label("direction"),
             ChatMessage.author_label.label("author_label"),
+            ChatMessage.status.label("status"),
+            ChatMessage.error.label("error"),
             ChatMessage.payload_json.label("payload_json"),
             func.row_number()
             .over(
@@ -323,6 +325,8 @@ async def _load_thread_rows(
                     latest_sq.c.created_at,
                     latest_sq.c.direction,
                     latest_sq.c.author_label,
+                    latest_sq.c.status,
+                    latest_sq.c.error,
                     latest_sq.c.payload_json,
                 )
                 .join(latest_sq, latest_sq.c.candidate_id == User.id)
@@ -448,7 +452,7 @@ async def list_threads(
     threads: list[dict[str, object]] = []
     latest_event_at: Optional[datetime] = None
 
-    for user, last_text, last_created_at, last_direction, last_author_label, last_payload_json in rows:
+    for user, last_text, last_created_at, last_direction, last_author_label, last_status, last_error, last_payload_json in rows:
         if not await _is_accessible_user(
             user,
             principal,
@@ -533,6 +537,9 @@ async def list_threads(
                 "status_slug": _status_slug(user),
                 "profile_url": f"/app/candidates/{user.id}",
                 "telegram_username": user.telegram_username or user.username,
+                "preferred_channel": str(user.messenger_platform or "").strip().lower() or None,
+                "telegram_linked": bool(user.telegram_id or user.telegram_user_id),
+                "max_linked": bool(str(user.max_user_id or "").strip()),
                 "created_at": _iso(event_at) or datetime.now(timezone.utc).isoformat(),
                 "last_message_at": _iso(last_message_at),
                 "archived_at": _iso(archived_at),
@@ -557,6 +564,8 @@ async def list_threads(
                     "direction": last_direction,
                     "kind": last_message_kind,
                 },
+                "latest_send_status": str(last_status or "").strip().lower() or None,
+                "latest_send_error": str(last_error or "").strip() or None,
                 "unread_count": unread_count,
             }
         )

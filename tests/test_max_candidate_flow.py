@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import backend.core.messenger.registry as registry_mod
 from backend.core import settings as settings_module
@@ -144,6 +144,14 @@ async def _load_latest_test1(candidate_id: int) -> TestResult | None:
         return row
 
 
+async def _count_candidates_by_uuid(candidate_uuid: str) -> int:
+    async with async_session() as session:
+        return int(
+            await session.scalar(select(func.count()).select_from(User).where(User.candidate_id == candidate_uuid))
+            or 0
+        )
+
+
 def _post_bot_started(client: TestClient, *, max_user_id: str, start_payload: str | None = None):
     body = {
         "update_type": "bot_started",
@@ -202,7 +210,7 @@ def test_max_flow_completes_profile_and_screening(client: TestClient, _isolated_
     asyncio.run(_seed_city(city_name))
     candidate_uuid = str(uuid4())
     asyncio.run(_seed_candidate(candidate_uuid, fio=f"MAX {candidate_uuid[:8]}", phone=None, city=None))
-    invite = asyncio.run(create_candidate_invite_token(candidate_uuid))
+    invite = asyncio.run(create_candidate_invite_token(candidate_uuid, channel="max"))
     max_user_id = f"77{uuid4().hex[:10]}"
 
     response = _post_bot_started(client, max_user_id=max_user_id, start_payload=invite.token)
@@ -256,7 +264,7 @@ def test_max_flow_completes_profile_and_screening(client: TestClient, _isolated_
 def test_max_bot_started_links_existing_candidate_by_payload(client: TestClient, _isolated_registry: _FakeMaxAdapter):
     candidate_uuid = str(uuid4())
     asyncio.run(_seed_candidate(candidate_uuid))
-    invite = asyncio.run(create_candidate_invite_token(candidate_uuid))
+    invite = asyncio.run(create_candidate_invite_token(candidate_uuid, channel="max"))
     max_user_id = f"88{uuid4().hex[:10]}"
 
     response = _post_bot_started(client, max_user_id=max_user_id, start_payload=invite.token)
@@ -298,7 +306,7 @@ def test_max_without_invite_starts_public_onboarding(client: TestClient, _isolat
     candidate = asyncio.run(_load_candidate_by_max(max_user_id))
     assert candidate is not None
     assert candidate.messenger_platform == "max"
-    assert candidate.source == "max_bot"
+    assert candidate.source == "max_bot_public"
 
 
 def test_max_with_invalid_invite_still_rejects_link(client: TestClient, _isolated_registry: _FakeMaxAdapter):
@@ -310,3 +318,79 @@ def test_max_with_invalid_invite_still_rejects_link(client: TestClient, _isolate
 
     candidate = asyncio.run(_load_candidate_by_max(max_user_id))
     assert candidate is None
+
+
+def test_max_same_invite_same_user_is_idempotent(client: TestClient, _isolated_registry: _FakeMaxAdapter):
+    candidate_uuid = str(uuid4())
+    asyncio.run(_seed_candidate(candidate_uuid))
+    invite = asyncio.run(create_candidate_invite_token(candidate_uuid, channel="max"))
+    max_user_id = f"55{uuid4().hex[:10]}"
+
+    first = _post_bot_started(client, max_user_id=max_user_id, start_payload=invite.token)
+    second = _post_bot_started(client, max_user_id=max_user_id, start_payload=invite.token)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    candidate = asyncio.run(_load_candidate_by_uuid(candidate_uuid))
+    assert candidate is not None
+    assert candidate.max_user_id == max_user_id
+    assert asyncio.run(_count_candidates_by_uuid(candidate_uuid)) == 1
+
+
+def test_max_same_invite_different_user_conflicts_without_duplicate_rows(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    candidate_uuid = str(uuid4())
+    asyncio.run(_seed_candidate(candidate_uuid))
+    invite = asyncio.run(create_candidate_invite_token(candidate_uuid, channel="max"))
+    first_user_id = f"44{uuid4().hex[:10]}"
+    second_user_id = f"45{uuid4().hex[:10]}"
+
+    assert _post_bot_started(client, max_user_id=first_user_id, start_payload=invite.token).status_code == 200
+    response = _post_bot_started(client, max_user_id=second_user_id, start_payload=invite.token)
+
+    assert response.status_code == 200
+    assert "уже привязана" in str(_isolated_registry.calls[-1]["text"]).lower()
+
+    candidate = asyncio.run(_load_candidate_by_uuid(candidate_uuid))
+    assert candidate is not None
+    assert candidate.max_user_id == first_user_id
+    assert asyncio.run(_count_candidates_by_uuid(candidate_uuid)) == 1
+    assert asyncio.run(_load_candidate_by_max(second_user_id)) is None
+
+
+def test_max_link_does_not_silently_override_telegram_preferred_channel(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    candidate_uuid = str(uuid4())
+
+    async def _seed_telegram_candidate() -> None:
+        async with async_session() as session:
+            candidate = User(
+                candidate_id=candidate_uuid,
+                fio="TG linked",
+                phone="+79991112233",
+                city="Москва",
+                source="seed",
+                telegram_id=123456789,
+                telegram_user_id=123456789,
+                telegram_username="tg_linked",
+                messenger_platform="telegram",
+            )
+            session.add(candidate)
+            await session.commit()
+
+    asyncio.run(_seed_telegram_candidate())
+    invite = asyncio.run(create_candidate_invite_token(candidate_uuid, channel="max"))
+    max_user_id = f"33{uuid4().hex[:10]}"
+
+    response = _post_bot_started(client, max_user_id=max_user_id, start_payload=invite.token)
+    assert response.status_code == 200
+
+    candidate = asyncio.run(_load_candidate_by_uuid(candidate_uuid))
+    assert candidate is not None
+    assert candidate.max_user_id == max_user_id
+    assert candidate.messenger_platform == "telegram"

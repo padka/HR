@@ -9,7 +9,7 @@ import InterviewScript from '@/app/components/InterviewScript/InterviewScript'
 import { RecruitmentScript, ScriptFab } from '@/app/components/RecruitmentScript/RecruitmentScript'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
-import { useCandidateAi, useCandidateActions, useCandidateDetail } from './candidate-detail.api'
+import { useCandidateAi, useCandidateActions, useCandidateChannelHealth, useCandidateDetail } from './candidate-detail.api'
 import { CandidateActions } from './CandidateActions'
 import { CandidateChatDrawer } from './CandidateChatDrawer'
 import { CandidateDrawer } from './CandidateDrawer'
@@ -50,6 +50,7 @@ export function CandidateDetailPage() {
 
   const detailQuery = useCandidateDetail(candidateId)
   const { actionMutation, createMaxLinkMutation } = useCandidateActions(candidateId)
+  const channelHealthQuery = useCandidateChannelHealth(candidateId, detailQuery.isSuccess)
   const ai = useCandidateAi(candidateId)
 
   const detail = detailQuery.data
@@ -58,6 +59,7 @@ export function CandidateDetailPage() {
   const test2Section = testSections.find((section) => section.key === 'test2')
 
   const candidateJourney = detail?.journey || null
+  const channelHealth = channelHealthQuery.data || null
   const archiveInfo = detail?.archive || candidateJourney?.archive || null
   const statusSlug = detail?.candidate_status_slug || null
   const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
@@ -66,7 +68,8 @@ export function CandidateDetailPage() {
   const pendingSlotRequest = formatRescheduleRequest(detail?.pending_slot_request || candidateJourney?.pending_slot_request)
   const finalOutcomeDisplay = resolveFinalOutcomeDisplay(candidateJourney, detail?.final_outcome)
   const finalOutcomeReason = detail?.final_outcome_reason || candidateJourney?.final_outcome_reason || null
-  const chatChannelLabel = detail?.messenger_platform === 'max' && detail?.max_user_id ? 'MAX' : 'Telegram'
+  const preferredChannel = channelHealth?.preferred_channel || detail?.messenger_platform
+  const chatChannelLabel = preferredChannel === 'max' && detail?.max_user_id ? 'MAX' : 'Telegram'
 
   const pipelineData = useMemo(() => {
     if (!detail) return null
@@ -209,6 +212,11 @@ export function CandidateDetailPage() {
   const handleCopyMaxLink = () => {
     createMaxLinkMutation.mutate(undefined, {
       onSuccess: async (payload) => {
+        await Promise.all([
+          detailQuery.refetch(),
+          channelHealthQuery.refetch(),
+          queryClient.invalidateQueries({ queryKey: ['candidate-channel-health', candidateId] }),
+        ])
         const maxLink = String(payload?.mini_app_link || payload?.deep_link || payload?.public_link || '').trim()
         if (!maxLink) {
           setActionMessage('MAX-ссылка не была получена')
@@ -217,7 +225,11 @@ export function CandidateDetailPage() {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(maxLink)
-            setActionMessage('MAX-бот ссылка скопирована')
+            setActionMessage(
+              payload?.invite?.rotated
+                ? 'MAX-ссылка обновлена и скопирована'
+                : 'MAX-ссылка скопирована',
+            )
             return
           }
         } catch {
@@ -296,9 +308,10 @@ export function CandidateDetailPage() {
                     />
                   </div>
 
-                  <CandidateActions
-                    candidate={detail}
-                    statusSlug={statusSlug}
+                <CandidateActions
+                  candidate={detail}
+                  channelHealth={channelHealth}
+                  statusSlug={statusSlug}
                     test2Section={test2Section}
                     actionPending={actionMutation.isPending}
                     maxLinkPending={createMaxLinkMutation.isPending}
@@ -435,6 +448,7 @@ export function CandidateDetailPage() {
           <CandidateChatDrawer
             candidateId={candidateId}
             channelLabel={chatChannelLabel}
+            channelHealth={channelHealth}
             ai={ai}
             isOpen={isChatOpen}
             onClose={() => {

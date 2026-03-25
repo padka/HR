@@ -18,7 +18,7 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.models import CalendarTask, City, Recruiter, Slot, SlotStatus
+from backend.domain.models import AuditLog, CalendarTask, City, Recruiter, Slot, SlotStatus
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -274,6 +274,48 @@ async def test_generate_max_link(admin_app) -> None:
     assert payload["invite_token"] in payload["deep_link"]
     assert payload["mini_app_link"].startswith("https://max.ru/recruitsmartbot?startapp=")
     assert payload["invite_token"] not in payload["mini_app_link"]
+    assert payload["invite"] == {"channel": "max", "status": "active", "rotated": False}
+
+    rotated = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+    assert rotated.status_code == 200
+    rotated_payload = rotated.json()
+    assert rotated_payload["invite"]["channel"] == "max"
+    assert rotated_payload["invite"]["status"] == "active"
+    assert rotated_payload["invite"]["rotated"] is True
+    assert rotated_payload["invite_token"] != payload["invite_token"]
+
+    channel_health = await _async_request(
+        admin_app,
+        "get",
+        f"/api/candidates/{candidate.id}/channel-health",
+    )
+    assert channel_health.status_code == 200
+    channel_payload = channel_health.json()
+    assert "token" not in (channel_payload.get("active_invite") or {})
+
+    async with async_session() as session:
+        audit_rows = (
+            await session.scalars(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "candidate",
+                    AuditLog.entity_id == str(candidate.id),
+                    AuditLog.action.in_(("invite_issued", "invite_superseded")),
+                )
+                .order_by(AuditLog.id.asc())
+            )
+        ).all()
+
+    assert any(row.action == "invite_issued" for row in audit_rows)
+    assert any(row.action == "invite_superseded" for row in audit_rows)
+    for row in audit_rows:
+        changes = row.changes or {}
+        assert "token" not in changes
+        assert "previous_token" not in changes
 
 
 @pytest.mark.asyncio

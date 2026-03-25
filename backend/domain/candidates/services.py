@@ -29,6 +29,27 @@ if TYPE_CHECKING:
     from .status import CandidateStatus
 
 
+INVITE_STATUS_ACTIVE = "active"
+INVITE_STATUS_USED = "used"
+INVITE_STATUS_SUPERSEDED = "superseded"
+INVITE_STATUS_CONFLICT = "conflict"
+
+INVITE_CHANNEL_GENERIC = "generic"
+INVITE_CHANNEL_TELEGRAM = "telegram"
+INVITE_CHANNEL_MAX = "max"
+
+
+def normalize_invite_channel(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"tg", INVITE_CHANNEL_TELEGRAM}:
+        return INVITE_CHANNEL_TELEGRAM
+    if normalized in {"vk_max", "vkmax", INVITE_CHANNEL_MAX}:
+        return INVITE_CHANNEL_MAX
+    if normalized == INVITE_CHANNEL_GENERIC:
+        return INVITE_CHANNEL_GENERIC
+    return INVITE_CHANNEL_GENERIC
+
+
 async def create_or_update_user(
     telegram_id: int,
     fio: str,
@@ -371,7 +392,12 @@ def _generate_invite_token() -> str:
     return secrets.token_urlsafe(8).rstrip("=")
 
 
-async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteToken:
+async def create_candidate_invite_token(
+    candidate_id: str,
+    *,
+    channel: str = INVITE_CHANNEL_GENERIC,
+) -> CandidateInviteToken:
+    channel_value = normalize_invite_channel(channel)
     async with async_session() as session:
         async with session.begin():
             token_value = _generate_invite_token()
@@ -388,6 +414,8 @@ async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteTok
             invite = CandidateInviteToken(
                 candidate_id=candidate_id,
                 token=token_value,
+                channel=channel_value,
+                status=INVITE_STATUS_ACTIVE,
                 created_at=datetime.now(timezone.utc),
             )
             session.add(invite)
@@ -395,26 +423,97 @@ async def create_candidate_invite_token(candidate_id: str) -> CandidateInviteTok
         return invite
 
 
+async def issue_candidate_invite_token(
+    candidate_id: str,
+    *,
+    channel: str,
+    rotate_active: bool = False,
+    session: AsyncSession | None = None,
+) -> tuple[CandidateInviteToken, list[int]]:
+    now = datetime.now(timezone.utc)
+    channel_value = normalize_invite_channel(channel)
+    superseded_ids: list[int] = []
+
+    async def _issue(db_session: AsyncSession) -> tuple[CandidateInviteToken, list[int]]:
+        await db_session.scalar(
+            select(User.id)
+            .where(User.candidate_id == candidate_id)
+            .with_for_update()
+        )
+        if rotate_active:
+            existing_rows = (
+                await db_session.scalars(
+                    select(CandidateInviteToken)
+                    .where(
+                        CandidateInviteToken.candidate_id == candidate_id,
+                        CandidateInviteToken.channel == channel_value,
+                        CandidateInviteToken.status == INVITE_STATUS_ACTIVE,
+                    )
+                    .with_for_update()
+                )
+            ).all()
+            for row in existing_rows:
+                row.status = INVITE_STATUS_SUPERSEDED
+                row.superseded_at = now
+                superseded_ids.append(int(row.id))
+
+        token_value = _generate_invite_token()
+        for _ in range(5):
+            exists = await db_session.scalar(
+                select(func.count()).where(
+                    CandidateInviteToken.token == token_value
+                )
+            )
+            if not exists:
+                break
+            token_value = _generate_invite_token()
+
+        invite = CandidateInviteToken(
+            candidate_id=candidate_id,
+            token=token_value,
+            channel=channel_value,
+            status=INVITE_STATUS_ACTIVE,
+            created_at=now,
+        )
+        db_session.add(invite)
+        await db_session.flush()
+        return invite, superseded_ids
+
+    if session is not None:
+        return await _issue(session)
+
+    async with async_session() as db_session:
+        async with db_session.begin():
+            invite, superseded_ids = await _issue(db_session)
+        await db_session.refresh(invite)
+        return invite, superseded_ids
+
+
 async def get_latest_candidate_invite_token(
     session: AsyncSession,
     candidate_id: str,
+    *,
+    channel: str | None = None,
 ) -> Optional[CandidateInviteToken]:
     if not candidate_id:
         return None
+    stmt = select(CandidateInviteToken).where(CandidateInviteToken.candidate_id == candidate_id)
+    if channel:
+        stmt = stmt.where(CandidateInviteToken.channel == normalize_invite_channel(channel))
     return await session.scalar(
-        select(CandidateInviteToken)
-        .where(CandidateInviteToken.candidate_id == candidate_id)
-        .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
-        .limit(1)
+        stmt.order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc()).limit(1)
     )
 
 
 async def ensure_candidate_invite_token(
     session: AsyncSession,
     candidate_id: str,
+    *,
+    channel: str = INVITE_CHANNEL_GENERIC,
 ) -> CandidateInviteToken:
-    existing = await get_latest_candidate_invite_token(session, candidate_id)
-    if existing is not None:
+    channel_value = normalize_invite_channel(channel)
+    existing = await get_latest_candidate_invite_token(session, candidate_id, channel=channel_value)
+    if existing is not None and (existing.status or INVITE_STATUS_ACTIVE) == INVITE_STATUS_ACTIVE:
         return existing
 
     token_value = _generate_invite_token()
@@ -431,6 +530,8 @@ async def ensure_candidate_invite_token(
     invite = CandidateInviteToken(
         candidate_id=candidate_id,
         token=token_value,
+        channel=channel_value,
+        status=INVITE_STATUS_ACTIVE,
         created_at=datetime.now(timezone.utc),
     )
     session.add(invite)
@@ -451,12 +552,19 @@ async def bind_telegram_to_candidate(
     async with async_session() as session:
         async with session.begin():
             invite = await session.scalar(
-                select(CandidateInviteToken).where(
-                    CandidateInviteToken.token == clean_token,
-                    CandidateInviteToken.used_at.is_(None),
-                )
+                select(CandidateInviteToken)
+                .where(CandidateInviteToken.token == clean_token)
+                .with_for_update()
             )
             if not invite:
+                return None
+            if invite.channel not in {INVITE_CHANNEL_GENERIC, INVITE_CHANNEL_TELEGRAM}:
+                return None
+            if invite.status in {INVITE_STATUS_SUPERSEDED, INVITE_STATUS_CONFLICT}:
+                return None
+            if invite.used_at is not None and invite.used_by_telegram_id not in {None, telegram_id}:
+                invite.status = INVITE_STATUS_CONFLICT
+                invite.used_by_external_id = str(telegram_id)
                 return None
 
             candidate = await session.scalar(
@@ -499,7 +607,9 @@ async def bind_telegram_to_candidate(
             candidate.last_activity = now
 
             invite.used_at = now
+            invite.status = "used"
             invite.used_by_telegram_id = telegram_id
+            invite.used_by_external_id = str(telegram_id)
 
         await session.refresh(candidate)
         return candidate

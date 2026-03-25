@@ -12,6 +12,9 @@ export type CandidateChatThread = {
   status_slug?: string | null
   profile_url?: string | null
   telegram_username?: string | null
+  preferred_channel?: string | null
+  telegram_linked?: boolean
+  max_linked?: boolean
   created_at: string
   last_message_at?: string | null
   archived_at?: string | null
@@ -36,6 +39,8 @@ export type CandidateChatThread = {
     direction?: string | null
     kind?: 'candidate' | 'recruiter' | 'bot' | 'system' | null
   }
+  latest_send_status?: string | null
+  latest_send_error?: string | null
   unread_count?: number
 }
 

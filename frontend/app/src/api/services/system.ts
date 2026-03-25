@@ -87,11 +87,17 @@ export type OutboxItem = {
   id: number
   type: string
   status: string
+  channel?: string | null
   attempts: number
   created_at: string | null
   locked_at: string | null
   next_retry_at: string | null
   last_error: string | null
+  failure_class?: string | null
+  failure_code?: string | null
+  provider_message_id?: string | null
+  dead_lettered_at?: string | null
+  degraded_reason?: string | null
   booking_id: number | null
   candidate_tg_id: number | null
   recruiter_tg_id: number | null
@@ -108,10 +114,14 @@ export type NotificationLogItem = {
   id: number
   type: string
   status: string
+  channel?: string | null
   attempts: number
+  attempt_no?: number | null
   created_at: string | null
   next_retry_at: string | null
   last_error: string | null
+  failure_class?: string | null
+  provider_message_id?: string | null
   booking_id: number
   candidate_tg_id: number | null
   template_key: string | null
@@ -122,6 +132,21 @@ export type NotificationLogsPayload = {
   items: NotificationLogItem[]
   latest_id: number
   degraded: boolean
+}
+
+export type MessengerHealthChannel = {
+  channel: string
+  queue_depth: number
+  dead_letter_count: number
+  oldest_pending_age_seconds?: number | null
+  degraded: boolean
+  status?: string | null
+  degraded_reason?: string | null
+  degraded_at?: string | null
+}
+
+export type MessengerHealthPayload = {
+  channels: Record<string, MessengerHealthChannel>
 }
 
 export type QuestionGroup = {
@@ -161,6 +186,20 @@ export function fetchNotificationsFeed(queryString: string) {
 
 export function fetchNotificationLogs(queryString: string) {
   return apiFetch<NotificationLogsPayload>(`/notifications/logs?${queryString}`)
+}
+
+export function fetchMessengerHealth() {
+  return apiFetch<MessengerHealthPayload>('/system/messenger-health').then((payload) => ({
+    channels: Object.fromEntries(
+      Object.entries(payload.channels || {}).map(([channel, item]) => [
+        channel,
+        {
+          ...item,
+          status: item.degraded ? 'degraded' : 'healthy',
+        },
+      ]),
+    ),
+  }))
 }
 
 export function retryNotification(id: number) {

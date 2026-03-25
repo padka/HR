@@ -9,7 +9,7 @@ from aiogram.methods import SendMessage
 from sqlalchemy import select, update, func, delete
 from sqlalchemy.exc import IntegrityError
 
-from backend.apps.bot.broker import InMemoryNotificationBroker
+from backend.apps.bot.broker import BrokerMessage, InMemoryNotificationBroker
 from backend.apps.bot.metrics import get_notification_metrics_snapshot
 from backend.apps.bot.services import (
     BookingNotificationStatus,
@@ -22,6 +22,7 @@ from backend.apps.bot.services import (
 )
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
+from backend.core.messenger.channel_state import get_messenger_channel_health, mark_messenger_channel_healthy
 from backend.domain import models
 from backend.domain.models import (
     MessageTemplate,
@@ -29,7 +30,7 @@ from backend.domain.models import (
     NotificationLog,
     SlotStatus,
 )
-from backend.domain.repositories import add_outbox_notification, get_slot
+from backend.domain.repositories import add_outbox_notification, get_outbox_item, get_slot
 
 
 @pytest.mark.asyncio
@@ -134,6 +135,9 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
             assert outbox.status == "pending"
             assert outbox.attempts == 1
             assert outbox.next_retry_at is not None
+            assert outbox.failure_class == "transient"
+            assert outbox.failure_code == "provider_transient"
+            assert outbox.dead_lettered_at is None
             next_retry = outbox.next_retry_at
             if next_retry.tzinfo is None:
                 next_retry = next_retry.replace(tzinfo=timezone.utc)
@@ -149,6 +153,9 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
             assert log is not None
             assert log.delivery_status == "failed"
             assert log.next_retry_at is not None
+            assert log.failure_class == "transient"
+            assert log.channel == "telegram"
+            assert log.attempt_no == 1
 
         metrics = await get_notification_metrics_snapshot()
         assert metrics.send_retry_total >= 1
@@ -170,6 +177,100 @@ async def test_retry_with_backoff_and_jitter(monkeypatch):
             .values(body_md=original_body, updated_at=datetime.now(timezone.utc))
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.notifications
+async def test_schedule_retry_marks_misconfiguration_as_dead_letter(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+
+    service = NotificationService(
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+        broker=broker,
+    )
+    configure_notification_service(service)
+    service._current_message = BrokerMessage(id="misconfig-1", payload={"type": "slot_reminder"})
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(
+            name="MAX Rec",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example",
+            active=True,
+        )
+        session.add(recruiter)
+        await session.commit()
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            status=SlotStatus.PENDING,
+            candidate_tg_id=1122,
+            candidate_fio="MAX Candidate",
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=slot.id,
+        candidate_tg_id=slot.candidate_tg_id,
+        payload={"msg": "max"},
+        messenger_channel="max",
+    )
+    item = await get_outbox_item(entry.id)
+    assert item is not None
+
+    try:
+        await service._schedule_retry(
+            item,
+            attempt=1,
+            log_type="slot_reminder",
+            notification_type="slot_reminder",
+            error="invalid token",
+            rendered=None,
+            candidate_tg_id=slot.candidate_tg_id,
+        )
+
+        async with async_session() as session:
+            outbox = await session.get(OutboxNotification, entry.id)
+            log = await session.scalar(
+                select(NotificationLog).where(NotificationLog.booking_id == slot.id)
+            )
+
+        assert outbox is not None
+        assert outbox.status == "dead_letter"
+        assert outbox.failure_class == "misconfiguration"
+        assert outbox.failure_code == "invalid_token"
+        assert outbox.dead_lettered_at is not None
+
+        assert log is not None
+        assert log.delivery_status == "dead_letter"
+        assert log.failure_class == "misconfiguration"
+        assert log.channel == "max"
+
+        channel_health = await get_messenger_channel_health()
+        assert channel_health["max"]["status"] == "degraded"
+        assert channel_health["max"]["reason"] == "max:invalid_token"
+    finally:
+        await mark_messenger_channel_healthy("max")
+        await service.shutdown()
+        await manager.clear()
+        await manager.close()
+        import backend.apps.bot.services as bot_services
+
+        bot_services._notification_service = None
 
 
 @pytest.mark.asyncio
@@ -543,10 +644,11 @@ async def test_fatal_error_marks_outbox_failed(monkeypatch):
         async with async_session() as session:
             outbox = await session.get(OutboxNotification, outbox_entry.id)
             assert outbox is not None
-            assert outbox.status == "failed"
+            assert outbox.status == "dead_letter"
             assert outbox.attempts == 1
             assert outbox.next_retry_at is None
             assert outbox.last_error and "chat not found" in outbox.last_error.lower()
+            assert outbox.failure_class == "permanent"
 
             log = await session.scalar(
                 select(NotificationLog).where(
@@ -555,8 +657,9 @@ async def test_fatal_error_marks_outbox_failed(monkeypatch):
                 )
             )
             assert log is not None
-            assert log.delivery_status == "failed"
+            assert log.delivery_status == "dead_letter"
             assert log.last_error and "chat not found" in log.last_error.lower()
+            assert log.failure_class == "permanent"
     finally:
         await service.shutdown()
         await manager.clear()
@@ -628,9 +731,10 @@ async def test_unauthorized_error_marks_outbox_failed_without_retry(monkeypatch)
         async with async_session() as session:
             outbox = await session.get(OutboxNotification, outbox_entry.id)
             assert outbox is not None
-            assert outbox.status == "failed"
+            assert outbox.status == "dead_letter"
             assert outbox.next_retry_at is None
             assert outbox.last_error == "telegram_unauthorized"
+            assert outbox.failure_class == "misconfiguration"
 
         snapshot = await service.health_snapshot()
         assert snapshot["fatal_error_code"] == "telegram_unauthorized"
@@ -1025,9 +1129,10 @@ async def test_reschedule_requested_recruiter_marks_failed_when_assignment_missi
                 .order_by(OutboxNotification.id.desc())
             )
             assert outbox is not None
-            assert outbox.status == "failed"
+            assert outbox.status == "dead_letter"
             assert outbox.last_error == "assignment_missing"
             assert outbox.attempts >= 1
+            assert outbox.failure_class == "transient"
     finally:
         await service.shutdown()
         await manager.clear()
@@ -1201,12 +1306,13 @@ async def test_reschedule_requested_recruiter_marks_failed_when_candidate_missin
             outbox = await session.scalar(
                 select(OutboxNotification)
                 .where(OutboxNotification.type == "reschedule_requested_recruiter")
-                .where(OutboxNotification.status == "failed")
+                .where(OutboxNotification.status == "dead_letter")
                 .order_by(OutboxNotification.id.desc())
             )
             assert outbox is not None
             assert outbox.last_error == "candidate_missing"
             assert outbox.attempts >= 1
+            assert outbox.failure_class == "transient"
     finally:
         await service.shutdown()
         await manager.clear()

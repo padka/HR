@@ -114,4 +114,28 @@ describe('ThreadView layout behavior', () => {
       expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
     })
   })
+
+  it('renders channel and delivery badges in the header', async () => {
+    render(
+      <ThreadView
+        {...baseProps}
+        groupedMessages={[]}
+        channelHealth={{
+          candidate_id: 101,
+          preferred_channel: 'max',
+          max_linked: true,
+          telegram_linked: true,
+          last_outbound_delivery: {
+            status: 'dead_letter',
+            delivery_stage: 'dead_letter',
+            error: 'max:invalid_token',
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByText('MAX')).toBeInTheDocument()
+    expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+    expect(screen.getByText('max:invalid_token')).toBeInTheDocument()
+  })
 })

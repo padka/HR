@@ -17,6 +17,7 @@ import {
 import {
   cancelNotification,
   fetchBotIntegration,
+  fetchMessengerHealth,
   fetchNotificationLogs,
   fetchNotificationsFeed,
   fetchQuestionGroups,
@@ -28,6 +29,7 @@ import {
   retryNotification,
   type BotStatus,
   type HealthPayload,
+  type MessengerHealthPayload,
   type NotificationLogsPayload,
   type OutboxFeedPayload,
   type QuestionGroup,
@@ -37,6 +39,7 @@ import {
   updateReminderPolicy,
 } from '@/api/services/system'
 import { RoleGuard } from '@/app/components/RoleGuard'
+import { MessengerHealthCards } from './system.delivery-health'
 
 type BotCenterTab = 'health' | 'tests' | 'templates' | 'reminders' | 'delivery' | 'hh'
 type HHJobStatusFilter = '' | 'pending' | 'running' | 'completed' | 'failed'
@@ -545,6 +548,12 @@ export function SystemPage() {
 
   const [outboxStatusFilter, setOutboxStatusFilter] = useState<string>('')
   const [outboxTypeFilter, setOutboxTypeFilter] = useState<string>('')
+  const messengerHealthQuery = useQuery<MessengerHealthPayload>({
+    queryKey: ['system-messenger-health'],
+    queryFn: fetchMessengerHealth,
+    refetchInterval: 15_000,
+    enabled: activeTab === 'delivery',
+  })
 
   const outboxQuery = useQuery<OutboxFeedPayload>({
     queryKey: ['system-outbox-feed', outboxStatusFilter, outboxTypeFilter],
@@ -1072,7 +1081,7 @@ export function SystemPage() {
           <section className="glass page-section">
             <h2 className="section-title">Доставка уведомлений (Outbox)</h2>
             <p className="subtitle">
-              Очередь уведомлений Telegram. Используйте фильтры и ручной retry/cancel для triage.
+              Очередь уведомлений Telegram/MAX. Используйте фильтры и ручной requeue/cancel для triage.
             </p>
 
             <div className="form-row" style={{ alignItems: 'flex-end' }}>
@@ -1082,6 +1091,7 @@ export function SystemPage() {
                   <option value="">Все</option>
                   <option value="pending">pending</option>
                   <option value="failed">failed</option>
+                  <option value="dead_letter">dead_letter</option>
                   <option value="sent">sent</option>
                 </select>
               </label>
@@ -1107,6 +1117,7 @@ export function SystemPage() {
 
             {outboxQuery.data && (
               <>
+                <MessengerHealthCards channels={messengerHealthQuery.data?.channels} />
                 <p className="subtitle">Latest ID: {outboxQuery.data.latest_id}</p>
                 <div className="glass panel--tight" style={{ overflowX: 'auto' }}>
                   <table className="data-table">
@@ -1114,6 +1125,7 @@ export function SystemPage() {
                       <tr>
                         <th>ID</th>
                         <th>Type</th>
+                        <th>Channel</th>
                         <th>Status</th>
                         <th>Attempts</th>
                         <th>Next retry</th>
@@ -1125,7 +1137,7 @@ export function SystemPage() {
                     <tbody>
                       {outboxQuery.data.items.length === 0 && (
                         <tr>
-                          <td colSpan={8} className="subtitle">Пусто</td>
+                          <td colSpan={9} className="subtitle">Пусто</td>
                         </tr>
                       )}
                       {outboxQuery.data.items.map((item) => {
@@ -1140,11 +1152,12 @@ export function SystemPage() {
                           <tr key={item.id}>
                             <td>{item.id}</td>
                             <td style={{ whiteSpace: 'nowrap' }}>{item.type}</td>
+                            <td>{item.channel || 'telegram'}</td>
                             <td>{item.status}</td>
                             <td>{item.attempts}</td>
                             <td style={{ whiteSpace: 'nowrap' }}>{item.next_retry_at || '-'}</td>
                             <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.last_error || '-'}
+                              {item.last_error || item.degraded_reason || '-'}
                             </td>
                             <td style={{ whiteSpace: 'nowrap' }}>{target}</td>
                             <td>
@@ -1190,6 +1203,7 @@ export function SystemPage() {
                   <option value="">Все</option>
                   <option value="sent">sent</option>
                   <option value="failed">failed</option>
+                  <option value="dead_letter">dead_letter</option>
                   <option value="pending">pending</option>
                 </select>
               </label>
@@ -1225,6 +1239,7 @@ export function SystemPage() {
                     <tr>
                       <th>ID</th>
                       <th>Type</th>
+                      <th>Channel</th>
                       <th>Status</th>
                       <th>Attempts</th>
                       <th>Created</th>
@@ -1237,13 +1252,14 @@ export function SystemPage() {
                   <tbody>
                     {logsQuery.data.items.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="subtitle">Пусто</td>
+                        <td colSpan={10} className="subtitle">Пусто</td>
                       </tr>
                     )}
                     {logsQuery.data.items.map((item) => (
                       <tr key={item.id}>
                         <td>{item.id}</td>
                         <td style={{ whiteSpace: 'nowrap' }}>{item.type}</td>
+                        <td>{item.channel || 'telegram'}</td>
                         <td>{item.status}</td>
                         <td>{item.attempts}</td>
                         <td style={{ whiteSpace: 'nowrap' }}>{item.created_at || '-'}</td>

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from backend.apps.admin_ui.app import create_app
 from backend.core.db import async_session
 from backend.domain.ai.models import AIInterviewScriptFeedback
 from backend.domain.candidates.models import User
@@ -36,9 +36,15 @@ def ai_feedback_app(monkeypatch):
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
-    monkeypatch.setattr("backend.apps.admin_ui.state.setup_bot_state", fake_setup)
-    monkeypatch.setattr("backend.apps.admin_ui.app.setup_bot_state", fake_setup)
-    app = create_app()
+    state_module = importlib.reload(importlib.import_module("backend.apps.admin_ui.state"))
+    importlib.reload(importlib.import_module("backend.apps.admin_ui.security"))
+    importlib.reload(importlib.import_module("backend.apps.admin_ui.routers.auth"))
+    importlib.reload(importlib.import_module("backend.apps.admin_ui.routers.api_misc"))
+    importlib.reload(importlib.import_module("backend.apps.admin_ui.routers.ai"))
+    app_module = importlib.reload(importlib.import_module("backend.apps.admin_ui.app"))
+    monkeypatch.setattr(state_module, "setup_bot_state", fake_setup)
+    monkeypatch.setattr(app_module, "setup_bot_state", fake_setup)
+    app = app_module.create_app()
     try:
         yield app
     finally:
@@ -127,7 +133,7 @@ def test_interview_script_feedback_persists_and_idempotent(ai_feedback_app):
         second = client.post(
             f"/api/ai/candidates/{candidate_id}/interview-script/feedback",
             auth=("admin", "admin"),
-            headers={"x-csrf-token": token},
+            headers={"x-csrf-token": _csrf(client)},
             json=feedback_payload,
         )
         assert second.status_code == 200

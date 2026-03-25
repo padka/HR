@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react'
 
+import type { CandidateChannelHealth } from '@/api/services/candidates'
 import { normalizeTextLinks, splitMessageText, messageAuthorLabel, formatFullDateTime, threadAvatar } from './messenger.utils'
 import { URL_RE } from './messenger.constants'
 import type { CandidateChatTemplate, CandidateChatThread, GroupedMessageRow } from './messenger.types'
@@ -97,6 +98,7 @@ function renderMessageText(text?: string | null) {
 
 type ThreadViewProps = {
   activeThread: CandidateChatThread | null
+  channelHealth?: CandidateChannelHealth | null
   isMobile: boolean
   isLoading: boolean
   isError: boolean
@@ -119,6 +121,7 @@ type ThreadViewProps = {
 
 export function ThreadView({
   activeThread,
+  channelHealth,
   isMobile,
   isLoading,
   isError,
@@ -198,6 +201,16 @@ export function ThreadView({
                       activeThread.title
                     )}
                   </h2>
+                  {channelHealth?.preferred_channel ? (
+                    <span className={`status-badge status-badge--${channelHealth.preferred_channel === 'max' ? 'info' : 'success'}`}>
+                      {channelHealth.preferred_channel === 'max' ? 'MAX' : 'Telegram'}
+                    </span>
+                  ) : null}
+                  {channelHealth?.last_outbound_delivery?.status ? (
+                    <span className="status-badge status-badge--warning">
+                      send: {channelHealth.last_outbound_delivery.status}
+                    </span>
+                  ) : null}
                 </div>
                 {activeThread.city || activeThread.status_label ? (
                   <div className="messenger-chat-pane__subtitle">
@@ -205,6 +218,9 @@ export function ThreadView({
                     {activeThread.city && activeThread.status_label ? <span className="messenger-chat-pane__subtitle-divider" aria-hidden="true" /> : null}
                     {activeThread.status_label ? <span>{activeThread.status_label}</span> : null}
                   </div>
+                ) : null}
+                {channelHealth?.last_outbound_delivery?.error ? (
+                  <div className="subtitle subtitle--danger">{channelHealth.last_outbound_delivery.error}</div>
                 ) : null}
               </div>
             </div>

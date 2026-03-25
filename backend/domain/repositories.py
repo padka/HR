@@ -6,12 +6,12 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, selectinload
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass
 from typing import Literal
 
 
@@ -21,7 +21,7 @@ from backend.domain.candidates.services import create_or_update_user
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
 
-_UNSET = object()
+_UNSET = MISSING
 
 from .models import (
     ActionToken,
@@ -521,6 +521,9 @@ class OutboxItem:
     created_at: datetime
     next_retry_at: Optional[datetime] = None
     messenger_channel: str = "telegram"
+    failure_class: Optional[str] = None
+    failure_code: Optional[str] = None
+    provider_message_id: Optional[str] = None
 
 
 @dataclass
@@ -623,10 +626,14 @@ async def add_notification_log(
     booking_id: int,
     *,
     candidate_tg_id: Optional[int] = None,
+    channel: str = "telegram",
     payload: Optional[str] = None,
     delivery_status: str = "sent",
     attempts: int = 1,
+    attempt_no: Optional[int] = None,
     last_error: Optional[str] = None,
+    failure_class: Optional[str] = None,
+    provider_message_id: Optional[str] = None,
     next_retry_at: Optional[datetime] = None,
     overwrite: bool = False,
     template_key: Optional[str] = None,
@@ -641,11 +648,15 @@ async def add_notification_log(
             values = {
                 "booking_id": booking_id,
                 "candidate_tg_id": candidate_tg_id,
+                "channel": channel,
                 "type": notification_type,
                 "payload": payload,
                 "delivery_status": delivery_status,
                 "attempts": attempts,
+                "attempt_no": attempt_no or attempts,
                 "last_error": last_error,
+                "failure_class": failure_class,
+                "provider_message_id": provider_message_id,
                 "next_retry_at": next_retry_at,
                 "template_key": template_key,
                 "template_version": template_version,
@@ -678,9 +689,13 @@ async def add_notification_log(
                     )
                     .values(
                         payload=payload,
+                        channel=channel,
                         delivery_status=delivery_status,
                         attempts=attempts,
+                        attempt_no=attempt_no or attempts,
                         last_error=last_error,
+                        failure_class=failure_class,
+                        provider_message_id=provider_message_id,
                         next_retry_at=next_retry_at,
                         template_key=template_key,
                         template_version=template_version,
@@ -701,9 +716,13 @@ async def add_notification_log(
             if existing:
                 if overwrite:
                     existing.payload = payload
+                    existing.channel = channel
                     existing.delivery_status = delivery_status
                     existing.attempts = attempts
+                    existing.attempt_no = attempt_no or attempts
                     existing.last_error = last_error
+                    existing.failure_class = failure_class
+                    existing.provider_message_id = provider_message_id
                     existing.next_retry_at = next_retry_at
                     existing.template_key = template_key
                     existing.template_version = template_version
@@ -762,10 +781,14 @@ async def add_message_log(
 async def update_notification_log_fields(
     log_id: int,
     *,
+    channel: object = _UNSET,
     delivery_status: Optional[str] = None,
     payload: object = _UNSET,
     attempts: Optional[int] = None,
+    attempt_no: Optional[int] = None,
     last_error: object = _UNSET,
+    failure_class: object = _UNSET,
+    provider_message_id: object = _UNSET,
     next_retry_at: object = _UNSET,
     template_key: object = _UNSET,
     template_version: object = _UNSET,
@@ -775,14 +798,22 @@ async def update_notification_log_fields(
             log = await session.get(NotificationLog, log_id, with_for_update=True)
             if not log:
                 return
+            if channel is not _UNSET:
+                log.channel = channel  # type: ignore[assignment]
             if delivery_status is not None:
                 log.delivery_status = delivery_status
             if payload is not _UNSET:
                 log.payload = payload  # type: ignore[assignment]
             if attempts is not None:
                 log.attempts = attempts
+            if attempt_no is not None:
+                log.attempt_no = attempt_no
             if last_error is not _UNSET:
                 log.last_error = last_error  # type: ignore[assignment]
+            if failure_class is not _UNSET:
+                log.failure_class = failure_class  # type: ignore[assignment]
+            if provider_message_id is not _UNSET:
+                log.provider_message_id = provider_message_id  # type: ignore[assignment]
             if next_retry_at is not _UNSET:
                 log.next_retry_at = next_retry_at  # type: ignore[assignment]
             if template_key is not _UNSET:
@@ -848,6 +879,11 @@ async def add_outbox_notification(
             created_at=now,
             locked_at=None,
             next_retry_at=None,
+            failure_class=None,
+            failure_code=None,
+            provider_message_id=None,
+            dead_lettered_at=None,
+            last_channel_attempted=messenger_channel,
             correlation_id=correlation_id,
             messenger_channel=messenger_channel,
         )
@@ -871,6 +907,14 @@ async def claim_outbox_batch(
 ) -> List[OutboxItem]:
     now = datetime.now(timezone.utc)
     stale_before = now - lock_timeout
+    from backend.core.messenger.channel_state import get_messenger_channel_health
+
+    channel_state = await get_messenger_channel_health()
+    degraded_channels = [
+        channel
+        for channel, payload in channel_state.items()
+        if str(payload.get("status") or "healthy") == "degraded"
+    ]
     async with async_session() as session:
         async with session.begin():
             # Use with_for_update(skip_locked=True) to prevent race conditions
@@ -882,6 +926,11 @@ async def claim_outbox_batch(
                     select(OutboxNotification)
                     .where(
                         OutboxNotification.status == "pending",
+                        (
+                            OutboxNotification.messenger_channel.not_in(degraded_channels)
+                            if degraded_channels
+                            else true()
+                        ),
                         or_(
                             OutboxNotification.next_retry_at.is_(None),
                             OutboxNotification.next_retry_at <= now,
@@ -917,6 +966,9 @@ async def claim_outbox_batch(
                         created_at=row.created_at,
                         next_retry_at=row.next_retry_at,
                         messenger_channel=getattr(row, "messenger_channel", None) or "telegram",
+                        failure_class=getattr(row, "failure_class", None),
+                        failure_code=getattr(row, "failure_code", None),
+                        provider_message_id=getattr(row, "provider_message_id", None),
                     )
                 )
         return items
@@ -931,6 +983,14 @@ async def claim_outbox_item_by_id(
 
     now = datetime.now(timezone.utc)
     stale_before = now - lock_timeout
+    from backend.core.messenger.channel_state import get_messenger_channel_health
+
+    channel_state = await get_messenger_channel_health()
+    degraded_channels = [
+        channel
+        for channel, payload in channel_state.items()
+        if str(payload.get("status") or "healthy") == "degraded"
+    ]
     async with async_session() as session:
         async with session.begin():
             row = await session.scalar(
@@ -938,6 +998,11 @@ async def claim_outbox_item_by_id(
                 .where(
                     OutboxNotification.id == outbox_id,
                     OutboxNotification.status == "pending",
+                    (
+                        OutboxNotification.messenger_channel.not_in(degraded_channels)
+                        if degraded_channels
+                        else true()
+                    ),
                     or_(
                         OutboxNotification.next_retry_at.is_(None),
                         OutboxNotification.next_retry_at <= now,
@@ -965,6 +1030,9 @@ async def claim_outbox_item_by_id(
                 created_at=row.created_at,
                 next_retry_at=row.next_retry_at,
                 messenger_channel=getattr(row, "messenger_channel", None) or "telegram",
+                failure_class=getattr(row, "failure_class", None),
+                failure_code=getattr(row, "failure_code", None),
+                provider_message_id=getattr(row, "provider_message_id", None),
             )
 
 
@@ -975,6 +1043,11 @@ async def update_outbox_entry(
     attempts: Optional[int] = None,
     next_retry_at: object = _UNSET,
     last_error: object = _UNSET,
+    failure_class: object = _UNSET,
+    failure_code: object = _UNSET,
+    provider_message_id: object = _UNSET,
+    dead_lettered_at: object = _UNSET,
+    last_channel_attempted: object = _UNSET,
     correlation_id: Optional[str] = None,
 ) -> None:
     values: Dict[str, Any] = {"locked_at": None}
@@ -987,6 +1060,16 @@ async def update_outbox_entry(
             values["next_retry_at"] = next_retry_at
     if last_error is not _UNSET:
         values["last_error"] = last_error
+    if failure_class is not _UNSET:
+        values["failure_class"] = failure_class
+    if failure_code is not _UNSET:
+        values["failure_code"] = failure_code
+    if provider_message_id is not _UNSET:
+        values["provider_message_id"] = provider_message_id
+    if dead_lettered_at is not _UNSET:
+        values["dead_lettered_at"] = dead_lettered_at
+    if last_channel_attempted is not _UNSET:
+        values["last_channel_attempted"] = last_channel_attempted
     if correlation_id is not None:
         values["correlation_id"] = correlation_id
 
@@ -1021,6 +1104,9 @@ async def mark_outbox_notification_sent(
                     attempts=1,
                     next_retry_at=None,
                     last_error=None,
+                    failure_class=None,
+                    failure_code=None,
+                    dead_lettered_at=None,
                 )
             )
             result = await session.execute(stmt)
@@ -1052,6 +1138,10 @@ async def get_outbox_item(outbox_id: int) -> Optional[OutboxItem]:
             attempts=entry.attempts,
             created_at=entry.created_at,
             next_retry_at=entry.next_retry_at,
+            messenger_channel=getattr(entry, "messenger_channel", None) or "telegram",
+            failure_class=getattr(entry, "failure_class", None),
+            failure_code=getattr(entry, "failure_code", None),
+            provider_message_id=getattr(entry, "provider_message_id", None),
         )
 
 
@@ -1066,6 +1156,10 @@ async def reset_outbox_entry(outbox_id: int) -> None:
             entry.next_retry_at = None
             entry.attempts = 0
             entry.last_error = None
+            entry.failure_class = None
+            entry.failure_code = None
+            entry.provider_message_id = None
+            entry.dead_lettered_at = None
 
 
 async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:

@@ -69,6 +69,8 @@ class CandidatePortalAccess:
     telegram_id: int | None
     entry_channel: str
     source_channel: str
+    journey_session_id: int | None = None
+    session_version: int | None = None
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -133,6 +135,8 @@ def sign_candidate_portal_token(
     telegram_id: int | None = None,
     entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
     source_channel: str = "portal",
+    journey_session_id: int | None = None,
+    session_version: int | None = None,
 ) -> str:
     if not candidate_uuid and not telegram_id:
         raise CandidatePortalError("Candidate portal token requires candidate_uuid or telegram_id")
@@ -142,6 +146,8 @@ def sign_candidate_portal_token(
             "telegram_id": telegram_id,
             "entry_channel": entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL,
             "source_channel": source_channel or "portal",
+            "journey_session_id": journey_session_id,
+            "session_version": session_version,
         }
     )
 
@@ -169,6 +175,8 @@ def parse_candidate_portal_token(value: str) -> CandidatePortalAccess:
         telegram_id=telegram_id,
         entry_channel=str(payload.get("entry_channel") or PORTAL_DEFAULT_ENTRY_CHANNEL),
         source_channel=str(payload.get("source_channel") or "portal"),
+        journey_session_id=int(payload["journey_session_id"]) if payload.get("journey_session_id") not in (None, "") else None,
+        session_version=int(payload["session_version"]) if payload.get("session_version") not in (None, "") else None,
     )
 
 
@@ -178,6 +186,8 @@ def build_candidate_portal_url(
     telegram_id: int | None = None,
     entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
     source_channel: str = "portal",
+    journey_session_id: int | None = None,
+    session_version: int | None = None,
 ) -> str:
     settings = get_settings()
     token = sign_candidate_portal_token(
@@ -185,6 +195,8 @@ def build_candidate_portal_url(
         telegram_id=telegram_id,
         entry_channel=entry_channel,
         source_channel=source_channel,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
     )
     encoded_token = quote(str(token).strip(), safe="")
     base = (settings.candidate_portal_public_url or settings.crm_public_url or settings.bot_backend_url or "").rstrip("/")
@@ -219,6 +231,12 @@ def is_candidate_portal_session_valid(payload: object) -> bool:
     if not isinstance(candidate_id, int) or candidate_id <= 0:
         return False
     if not isinstance(last_seen_at, (int, float)):
+        return False
+    journey_session_id = payload.get("journey_session_id")
+    session_version = payload.get("session_version")
+    if journey_session_id is not None and (not isinstance(journey_session_id, int) or journey_session_id <= 0):
+        return False
+    if session_version is not None and (not isinstance(session_version, int) or session_version <= 0):
         return False
     settings = get_settings()
     age_seconds = _utcnow().timestamp() - float(last_seen_at)
@@ -334,6 +352,7 @@ async def ensure_candidate_portal_session(
             entry_channel=entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL,
             current_step_key="profile",
             status=CandidateJourneySessionStatus.ACTIVE.value,
+            session_version=1,
             started_at=now,
             last_activity_at=now,
         )
@@ -345,6 +364,66 @@ async def ensure_candidate_portal_session(
     journey.last_activity_at = now
     await session.flush()
     return journey
+
+
+def build_candidate_portal_session_payload(
+    *,
+    candidate_id: int,
+    entry_channel: str,
+    journey: CandidateJourneySession,
+    last_seen_at: datetime | None = None,
+) -> dict[str, Any]:
+    seen_at = last_seen_at or _utcnow()
+    if seen_at.tzinfo is None:
+        seen_at = seen_at.replace(tzinfo=timezone.utc)
+    return {
+        "candidate_id": candidate_id,
+        "entry_channel": entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL,
+        "journey_session_id": int(journey.id),
+        "session_version": int(journey.session_version or 1),
+        "last_seen_at": seen_at.timestamp(),
+    }
+
+
+async def bump_candidate_portal_session_version(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+) -> None:
+    journeys = (
+        await session.scalars(
+            select(CandidateJourneySession)
+            .where(
+                CandidateJourneySession.candidate_id == candidate_id,
+                CandidateJourneySession.journey_key == PORTAL_JOURNEY_KEY,
+                CandidateJourneySession.status == CandidateJourneySessionStatus.ACTIVE.value,
+            )
+            .with_for_update()
+        )
+    ).all()
+    for journey in journeys:
+        journey.session_version = int(journey.session_version or 1) + 1
+        journey.last_activity_at = _utcnow()
+
+
+async def validate_candidate_portal_session_payload(
+    session: AsyncSession,
+    payload: dict[str, Any],
+) -> bool:
+    journey_id = int(payload.get("journey_session_id") or 0)
+    session_version = int(payload.get("session_version") or 0)
+    candidate_id = int(payload.get("candidate_id") or 0)
+    if journey_id <= 0 or session_version <= 0 or candidate_id <= 0:
+        return False
+
+    journey = await session.get(CandidateJourneySession, journey_id)
+    if journey is None:
+        return False
+    if int(journey.candidate_id or 0) != candidate_id:
+        return False
+    if journey.status != CandidateJourneySessionStatus.ACTIVE.value:
+        return False
+    return int(journey.session_version or 1) == session_version
 
 
 async def upsert_step_state(
@@ -732,6 +811,8 @@ async def build_candidate_portal_journey(
                 candidate_uuid=candidate.candidate_id,
                 entry_channel=entry_channel,
                 source_channel="portal",
+                journey_session_id=journey.id,
+                session_version=int(journey.session_version or 1),
             ),
         },
         "company": {

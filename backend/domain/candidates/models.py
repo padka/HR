@@ -19,6 +19,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
     JSON,
     Index,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -461,19 +462,38 @@ class CandidateChatWorkspace(Base):
 
 class CandidateInviteToken(Base):
     __tablename__ = "candidate_invite_tokens"
+    __table_args__ = (
+        Index(
+            "ix_candidate_invite_tokens_candidate_channel_status",
+            "candidate_id",
+            "channel",
+            "status",
+        ),
+        Index(
+            "uq_candidate_invite_tokens_active_max_candidate",
+            "candidate_id",
+            unique=True,
+            sqlite_where=text("status = 'active' AND channel = 'max'"),
+            postgresql_where=text("status = 'active' AND channel = 'max'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[str] = mapped_column(
         ForeignKey("users.candidate_id", ondelete="CASCADE"), nullable=False, index=True
     )
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, default="generic")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     used_by_telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    used_by_external_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<CandidateInviteToken {self.id} candidate={self.candidate_id} used={bool(self.used_at)}>"
@@ -511,6 +531,7 @@ class CandidateJourneySession(Base):
     current_step_key: Mapped[str] = mapped_column(String(64), nullable=False, default="profile")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=CandidateJourneySessionStatus.ACTIVE.value)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

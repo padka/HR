@@ -452,6 +452,37 @@ const candidateChatTemplatesData = {
   ],
 }
 
+const candidateChannelHealthData = {
+  candidate_id: 101,
+  preferred_channel: 'max',
+  telegram_linked: true,
+  max_linked: true,
+  telegram: {
+    linked: true,
+    telegram_id: 79990001122,
+    telegram_username: 'candidate_max',
+  },
+  max: {
+    linked: true,
+    max_user_id: 'max-101',
+  },
+  active_invite: {
+    token: 'invite-101',
+    status: 'active',
+    channel: 'max',
+    used_by_external_id: 'max-101',
+    conflict: false,
+  },
+  last_inbound_at: '2031-07-01T08:35:00Z',
+  last_outbound_delivery: {
+    channel: 'max',
+    status: 'dead_letter',
+    delivery_stage: 'dead_letter',
+    error: 'max:invalid_token',
+    created_at: '2031-07-01T08:40:00Z',
+  },
+}
+
 describe('UI cosmetics smoke', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'scrollTo', {
@@ -549,6 +580,9 @@ describe('UI cosmetics smoke', () => {
             latest_message_at: '2031-07-01T08:35:00Z',
           },
         }
+      }
+      if (key === 'candidate-channel-health') {
+        return { ...baseQueryResult, data: candidateChannelHealthData }
       }
       if (key === 'candidate-hh-summary') {
         return {
@@ -988,6 +1022,18 @@ describe('UI cosmetics smoke', () => {
     })
   })
 
+  it('renders candidate detail channel health card', async () => {
+    render(<CandidateDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('candidate-channel-health')).toBeInTheDocument()
+      expect(screen.getByText(/Preferred channel: MAX/)).toBeInTheDocument()
+      expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
+      expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
+      expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+    })
+  })
+
   it('renders messenger as recruiter workspace with compact inbox and sticky composer', async () => {
     render(<MessengerPage />)
 
@@ -1001,6 +1047,10 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByRole('button', { name: 'Отправить сообщение' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Детали' })).not.toBeInTheDocument()
       expect(screen.getByRole('link', { name: 'Карточка' })).toBeInTheDocument()
+      expect(screen.getByText('MAX')).toBeInTheDocument()
+      expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+      expect(screen.getByText('max:invalid_token')).toBeInTheDocument()
     })
   })
+
 })

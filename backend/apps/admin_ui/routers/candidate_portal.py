@@ -8,11 +8,13 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.apps.admin_ui.security import get_client_ip, limiter
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.domain import analytics
 from backend.domain.candidates.portal_service import (
     PORTAL_SESSION_KEY,
     build_candidate_portal_journey,
+    build_candidate_portal_session_payload,
     cancel_candidate_portal_slot,
     complete_screening,
     confirm_candidate_portal_slot,
@@ -28,6 +30,7 @@ from backend.domain.candidates.portal_service import (
     save_candidate_profile,
     save_screening_draft,
     touch_candidate_portal_session,
+    validate_candidate_portal_session_payload,
     CandidatePortalAuthError,
     CandidatePortalError,
 )
@@ -105,18 +108,58 @@ async def _candidate_session_payload(request: Request) -> dict[str, Any]:
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail={"message": "Кандидатская сессия не найдена."},
                     )
-                await ensure_candidate_portal_session(
+                journey = await ensure_candidate_portal_session(
                     session,
                     candidate,
                     entry_channel=access.entry_channel,
                 )
-                next_payload = {
-                    "candidate_id": candidate.id,
-                    "entry_channel": access.entry_channel,
-                    "last_seen_at": candidate.last_activity.timestamp() if candidate.last_activity else 0,
-                }
+                if (
+                    access.journey_session_id is not None
+                    and access.journey_session_id != int(journey.id)
+                ) or (
+                    access.session_version is not None
+                    and access.session_version != int(journey.session_version or 1)
+                ):
+                    await log_audit_action(
+                        "portal_session_rejected_version_mismatch",
+                        "candidate",
+                        candidate.id,
+                        changes={
+                            "token_session_id": access.journey_session_id,
+                            "token_session_version": access.session_version,
+                            "actual_session_id": int(journey.id),
+                            "actual_session_version": int(journey.session_version or 1),
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={"message": "Сессия портала устарела. Откройте новую ссылку."},
+                    )
+                next_payload = build_candidate_portal_session_payload(
+                    candidate_id=int(candidate.id),
+                    entry_channel=access.entry_channel,
+                    journey=journey,
+                    last_seen_at=candidate.last_activity,
+                )
         request.session[PORTAL_SESSION_KEY] = next_payload
         return next_payload
+    async with async_session() as session:
+        async with session.begin():
+            if not await validate_candidate_portal_session_payload(session, dict(payload)):
+                request.session.pop(PORTAL_SESSION_KEY, None)
+                await log_audit_action(
+                    "portal_session_rejected_version_mismatch",
+                    "candidate",
+                    payload.get("candidate_id"),
+                    changes={
+                        "journey_session_id": payload.get("journey_session_id"),
+                        "session_version": payload.get("session_version"),
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={"message": "Сессия портала устарела. Откройте новую ссылку."},
+                )
     next_payload = touch_candidate_portal_session(dict(payload))
     request.session[PORTAL_SESSION_KEY] = next_payload
     return next_payload
@@ -183,9 +226,12 @@ async def exchange_candidate_portal_session(
             )
 
         request.session[PORTAL_SESSION_KEY] = {
-            "candidate_id": candidate.id,
-            "entry_channel": access.entry_channel,
-            "last_seen_at": candidate.last_activity.timestamp() if candidate.last_activity else 0,
+            **build_candidate_portal_session_payload(
+                candidate_id=int(candidate.id),
+                entry_channel=access.entry_channel,
+                journey=journey,
+                last_seen_at=candidate.last_activity,
+            )
         }
         return response_payload
 

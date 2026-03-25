@@ -49,7 +49,7 @@ from backend.domain.candidates.status import (
 )
 from backend.domain.candidate_status_service import CandidateStatusService
 from backend.domain.candidates.status_service import FUNNEL_STATUS_EVENTS
-from backend.domain.candidates.services import create_candidate_invite_token
+from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.candidates.actions import get_candidate_actions
 from backend.domain.candidates.workflow import (
     CandidateWorkflowService,
@@ -3538,7 +3538,11 @@ async def generate_candidate_invite_token(
         if principal and getattr(principal, "type", None) == "recruiter":
             if user.responsible_recruiter_id != getattr(principal, "id", None):
                 return None
-        invite = await create_candidate_invite_token(user.candidate_id)
+        invite, _ = await issue_candidate_invite_token(
+            user.candidate_id,
+            channel="max",
+            rotate_active=True,
+        )
         current_status = user.candidate_status
         current_slug = (
             current_status.value if isinstance(current_status, CandidateStatus) else current_status
@@ -3602,6 +3606,8 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
     detail = await get_candidate_detail(candidate_id, principal=principal_ctx.get())
     if not detail:
         return None
+    from backend.apps.admin_ui.services.messenger_health import get_candidate_channel_health
+
     user: User = detail["user"]
     tests: list[TestResult] = list(detail.get("tests", []) or [])
     sections_map = detail.get("test_sections_map", {})
@@ -3748,6 +3754,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "hh_sync_error": getattr(user, "hh_sync_error", None),
         "messenger_platform": getattr(user, "messenger_platform", "telegram"),
         "max_user_id": getattr(user, "max_user_id", None),
+        "channel_health": await get_candidate_channel_health(int(user.id)),
         "candidate_portal_url": build_candidate_portal_url(
             candidate_uuid=user.candidate_id,
             entry_channel="admin",

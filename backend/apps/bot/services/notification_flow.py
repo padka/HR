@@ -7,6 +7,13 @@ for _name in dir(_base):
         continue
     globals()[_name] = getattr(_base, _name)
 
+from backend.core.messenger.channel_state import (
+    mark_messenger_channel_healthy,
+    set_messenger_channel_degraded,
+)
+from backend.core.messenger.protocol import SendResult
+from backend.core.messenger.reliability import classify_delivery_failure
+
 
 def _uses_legacy_status_update_text(text: str) -> bool:
     rendered = (text or "").strip()
@@ -1054,7 +1061,7 @@ class NotificationService:
         *,
         buttons: Optional[list] = None,
         parse_mode: Optional[str] = None,
-    ) -> bool:
+    ) -> SendResult:
         """Send a message using the messenger abstraction layer.
 
         If the outbox item's messenger_channel is not 'telegram' (or when
@@ -1077,7 +1084,7 @@ class NotificationService:
                     "notification.messenger_adapter.not_found",
                     extra={"channel": channel, "outbox_id": item.id},
                 )
-                return False
+                return SendResult(success=False, error="adapter_missing")
 
             # Convert button format if provided
             adapter_buttons = None
@@ -1098,13 +1105,13 @@ class NotificationService:
                 parse_mode=parse_mode,
                 correlation_id=f"outbox:{item.type}:{item.id}",
             )
-            return result.success
+            return result
         except Exception:
             logger.exception(
                 "notification.messenger_adapter.error",
                 extra={"outbox_id": item.id},
             )
-            return False
+            return SendResult(success=False, error="adapter_exception")
 
     def _is_non_telegram_channel(self, item: OutboxItem) -> bool:
         """Check if the outbox item should be routed via a non-Telegram adapter."""
@@ -1144,13 +1151,21 @@ class NotificationService:
             text = rendered.text
 
         attempt = item.attempts + 1
-        success = await self._send_via_messenger_adapter(item, candidate_id, text)
-        if success:
-            await self._mark_sent(item, attempt, item.type, item.type, rendered, candidate_id)
+        result = await self._send_via_messenger_adapter(item, candidate_id, text)
+        if result.success:
+            await self._mark_sent(
+                item,
+                attempt,
+                item.type,
+                item.type,
+                rendered,
+                candidate_id,
+                provider_message_id=result.message_id,
+            )
         else:
             await self._schedule_retry(
                 item, attempt=attempt, log_type=item.type,
-                notification_type=item.type, error="adapter_send_failed",
+                notification_type=item.type, error=result.error or "adapter_send_failed",
                 rendered=rendered, candidate_tg_id=candidate_id,
             )
 
@@ -3060,6 +3075,7 @@ class NotificationService:
         notification_type: str,
         rendered: object,
         candidate_tg_id: Optional[int],
+        provider_message_id: str | None = None,
     ) -> None:
         self._last_delivery_error = None
         rendered_text, template_key, template_version = self._rendered_components(rendered)
@@ -3069,17 +3085,27 @@ class NotificationService:
             attempts=attempt,
             next_retry_at=None,
             last_error=None,
+            failure_class=None,
+            failure_code=None,
+            provider_message_id=provider_message_id,
+            dead_lettered_at=None,
+            last_channel_attempted=getattr(item, "messenger_channel", "telegram") or "telegram",
         )
+        await mark_messenger_channel_healthy(getattr(item, "messenger_channel", "telegram") or "telegram")
         created = False
         try:
             created = await add_notification_log(
                 log_type,
                 item.booking_id or 0,
                 candidate_tg_id=candidate_tg_id,
+                channel=getattr(item, "messenger_channel", "telegram") or "telegram",
                 payload=rendered_text,
                 delivery_status="sent",
                 attempts=attempt,
+                attempt_no=attempt,
                 last_error=None,
+                failure_class=None,
+                provider_message_id=provider_message_id,
                 next_retry_at=None,
                 overwrite=True,
                 template_key=template_key,
@@ -3132,24 +3158,36 @@ class NotificationService:
         if error == "telegram_unauthorized":
             self._fatal_error_code = error
             self._fatal_error_at = datetime.now(timezone.utc)
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+        failure = classify_delivery_failure(channel=channel, error=error)
         rendered_text, template_key, template_version = self._rendered_components(rendered)
         await update_outbox_entry(
             item.id,
-            status="failed",
+            status="dead_letter",
             attempts=max(attempt, item.attempts),
             next_retry_at=None,
             last_error=error,
+            failure_class=failure.failure_class,
+            failure_code=failure.failure_code,
+            dead_lettered_at=datetime.now(timezone.utc),
+            last_channel_attempted=channel,
         )
+        if failure.degraded_reason:
+            await set_messenger_channel_degraded(channel, reason=failure.degraded_reason)
         created = False
         try:
             created = await add_notification_log(
                 log_type,
                 item.booking_id or 0,
                 candidate_tg_id=candidate_tg_id,
+                channel=channel,
                 payload=rendered_text,
-                delivery_status="failed",
+                delivery_status="dead_letter",
                 attempts=max(attempt, item.attempts),
+                attempt_no=max(attempt, item.attempts),
                 last_error=error,
+                failure_class=failure.failure_class,
+                provider_message_id=getattr(item, "provider_message_id", None),
                 next_retry_at=None,
                 overwrite=True,
                 template_key=template_key,
@@ -3230,6 +3268,20 @@ class NotificationService:
             )
             return
 
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+        failure = classify_delivery_failure(channel=channel, error=error)
+        if failure.failure_class in {"permanent", "misconfiguration"}:
+            await self._mark_failed(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                error,
+                rendered,
+                candidate_tg_id=candidate_tg_id,
+            )
+            return
+
         if attempt >= self._max_attempts:
             await self._mark_failed(
                 item,
@@ -3254,6 +3306,10 @@ class NotificationService:
             attempts=max(attempt, item.attempts),
             next_retry_at=next_retry_at,
             last_error=error,
+            failure_class=failure.failure_class,
+            failure_code=failure.failure_code,
+            dead_lettered_at=None,
+            last_channel_attempted=channel,
         )
         text, key, version = self._rendered_components(rendered)
         created = False
@@ -3262,10 +3318,14 @@ class NotificationService:
                 log_type,
                 item.booking_id or 0,
                 candidate_tg_id=candidate_tg_id,
+                channel=channel,
                 payload=text,
                 delivery_status="failed",
                 attempts=max(attempt, item.attempts),
+                attempt_no=max(attempt, item.attempts),
                 last_error=error,
+                failure_class=failure.failure_class,
+                provider_message_id=getattr(item, "provider_message_id", None),
                 next_retry_at=next_retry_at,
                 overwrite=True,
                 template_key=key,

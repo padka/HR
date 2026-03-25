@@ -44,7 +44,6 @@ from backend.apps.admin_ui.services.candidates import (
     api_candidate_detail_payload,
     assign_candidate_recruiter,
     delete_candidate,
-    generate_candidate_invite_token,
     get_candidate_cohort_comparison,
     get_candidate_detail,
     list_candidates,
@@ -85,6 +84,10 @@ from backend.apps.admin_ui.services.kpis import (
     get_weekly_kpis,
     list_weekly_history,
 )
+from backend.apps.admin_ui.services.messenger_health import (
+    get_candidate_channel_health,
+    get_messenger_health_snapshot,
+)
 from backend.apps.admin_ui.services.recruiter_plan import (
     add_recruiter_plan_entry,
     delete_recruiter_plan_entry,
@@ -92,6 +95,8 @@ from backend.apps.admin_ui.services.recruiter_plan import (
 )
 from backend.domain.candidates.portal_service import (
     build_candidate_max_mini_app_url,
+    bump_candidate_portal_session_version,
+    ensure_candidate_portal_session,
     sign_candidate_portal_token,
 )
 from backend.apps.admin_ui.services.slots import (
@@ -131,9 +136,11 @@ from backend.core.audit import log_audit_action
 from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
 from backend.core.db import async_session
 from backend.core.guards import ensure_slot_scope
+from backend.core.messenger.channel_state import mark_messenger_channel_healthy
 from backend.core.sanitizers import sanitize_plain_text
 from backend.core.settings import get_settings
-from backend.domain.candidates.models import User
+from backend.domain.candidates.models import CandidateInviteToken, User
+from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.hh_integration.summary import build_candidate_hh_summary
 from backend.domain.models import ActionToken, City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
 from backend.domain.slot_service import (
@@ -1855,6 +1862,36 @@ async def api_notifications_logs(
     return JSONResponse({**payload, "degraded": False})
 
 
+@router.get("/system/messenger-health")
+async def api_system_messenger_health(
+    _: Principal = Depends(require_admin),
+):
+    return JSONResponse(await get_messenger_health_snapshot())
+
+
+@router.post("/system/messenger-health/{channel}/recover")
+async def api_recover_messenger_channel(
+    channel: str,
+    request: Request,
+    _: Principal = Depends(require_admin),
+):
+    _ = await require_csrf_token(request)
+    normalized_channel = str(channel or "").strip().lower()
+    if normalized_channel not in {"telegram", "max"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Неизвестный канал"},
+        )
+    await mark_messenger_channel_healthy(normalized_channel)
+    await log_audit_action(
+        "messenger_channel_recovered",
+        "messenger_channel",
+        normalized_channel,
+        changes={"channel": normalized_channel, "action": "recover"},
+    )
+    return JSONResponse({"ok": True, "channel": normalized_channel})
+
+
 @router.post("/notifications/{notification_id}/retry")
 async def api_notifications_retry(
     notification_id: int,
@@ -2324,21 +2361,70 @@ async def api_candidate_max_link(
             detail={"message": "MAX_BOT_LINK_BASE не настроен"},
         )
 
-    invite_token = await generate_candidate_invite_token(candidate_id, principal=principal)
-    if not invite_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Не удалось выпустить MAX-ссылку"},
+    async with async_session() as session:
+        async with session.begin():
+            stored_candidate = await session.get(User, candidate.id)
+            if stored_candidate is None or not stored_candidate.candidate_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"message": "Не удалось выпустить MAX-ссылку"},
+                )
+            previous_invite = await session.scalar(
+                select(CandidateInviteToken)
+                .where(
+                    CandidateInviteToken.candidate_id == stored_candidate.candidate_id,
+                    CandidateInviteToken.channel == "max",
+                    CandidateInviteToken.status == "active",
+                )
+                .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
+                .limit(1)
+            )
+            invite, superseded_ids = await issue_candidate_invite_token(
+                stored_candidate.candidate_id,
+                channel="max",
+                rotate_active=True,
+                session=session,
+            )
+            invite_id = int(invite.id)
+            await bump_candidate_portal_session_version(session, candidate_id=int(stored_candidate.id))
+            journey = await ensure_candidate_portal_session(
+                session,
+                stored_candidate,
+                entry_channel="max",
+            )
+            invite_token = str(invite.token)
+            previous_invite_id = int(previous_invite.id) if previous_invite is not None else None
+            mini_app_token = sign_candidate_portal_token(
+                candidate_uuid=str(stored_candidate.candidate_id),
+                telegram_id=int(stored_candidate.telegram_id)
+                if stored_candidate.telegram_id is not None and not stored_candidate.candidate_id
+                else None,
+                entry_channel="max",
+                source_channel="max_app",
+                journey_session_id=int(journey.id),
+                session_version=int(journey.session_version or 1),
+            )
+
+    await log_audit_action(
+        "invite_issued",
+        "candidate",
+        candidate_id,
+        changes={"channel": "max", "invite_id": invite_id},
+    )
+    if previous_invite is not None or superseded_ids:
+        await log_audit_action(
+            "invite_superseded",
+            "candidate",
+            candidate_id,
+            changes={
+                "channel": "max",
+                "previous_invite_id": previous_invite_id,
+                "superseded_ids": superseded_ids,
+            },
         )
 
     separator = "&" if "?" in link_base else "?"
     deep_link = f"{link_base}{separator}start={quote(invite_token, safe='')}"
-    mini_app_token = sign_candidate_portal_token(
-        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
-        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
-        entry_channel="max",
-        source_channel="max_app",
-    )
     mini_app_link = build_candidate_max_mini_app_url(start_param=mini_app_token)
     return JSONResponse(
         {
@@ -2346,8 +2432,25 @@ async def api_candidate_max_link(
             "invite_token": invite_token,
             "deep_link": deep_link,
             "mini_app_link": mini_app_link,
+            "invite": {
+                "channel": "max",
+                "status": "active",
+                "rotated": bool(previous_invite is not None or superseded_ids),
+            },
         }
     )
+
+
+@router.get("/candidates/{candidate_id}/channel-health")
+async def api_candidate_channel_health(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+):
+    await _get_accessible_candidate(candidate_id, principal)
+    payload = await get_candidate_channel_health(candidate_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+    return JSONResponse(jsonable_encoder(payload))
 
 
 @router.get("/candidates/{candidate_id}")

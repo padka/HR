@@ -34,6 +34,58 @@ export type CandidateMaxLinkPayload = {
   invite_token: string
   deep_link: string
   mini_app_link?: string | null
+  invite?: {
+    channel?: string | null
+    status?: string | null
+    rotated?: boolean
+  } | null
+  invite_status?: string | null
+  issued_at?: string | null
+  preferred_channel?: string | null
+}
+
+export type CandidateChannelHealth = {
+  candidate_id: number
+  preferred_channel?: string | null
+  telegram?: {
+    linked?: boolean
+    telegram_id?: number | null
+    telegram_username?: string | null
+  } | null
+  max?: {
+    linked?: boolean
+    max_user_id?: string | null
+  } | null
+  active_invite?: {
+    status?: string | null
+    channel?: string | null
+    created_at?: string | null
+    used_at?: string | null
+    superseded_at?: string | null
+    used_by_external_id?: string | null
+    conflict?: boolean
+  } | null
+  last_inbound_at?: string | null
+  last_outbound?: {
+    channel?: string | null
+    status?: string | null
+    delivery_stage?: string | null
+    error?: string | null
+    created_at?: string | null
+    author?: string | null
+    text?: string | null
+  } | null
+  telegram_linked?: boolean
+  max_linked?: boolean
+  last_outbound_delivery?: {
+    channel?: string | null
+    status?: string | null
+    delivery_stage?: string | null
+    error?: string | null
+    created_at?: string | null
+  } | null
+  conflict_badge?: boolean
+  degraded_channels?: Record<string, { status?: string | null; degraded_reason?: string | null; reason?: string | null }> | null
 }
 
 export type TestQuestionAnswer = {
@@ -99,6 +151,7 @@ export type CandidateDetail = {
   hh_sync_error?: string | null
   messenger_platform?: string | null
   max_user_id?: string | null
+  channel_health?: CandidateChannelHealth | null
   phone?: string | null
   is_active?: boolean
   stage?: string | null
@@ -546,6 +599,16 @@ export function fetchCities() {
 
 export function fetchCandidateDetail(candidateId: number) {
   return apiFetch<CandidateDetail>(`/candidates/${candidateId}`)
+}
+
+export function fetchCandidateChannelHealth(candidateId: number) {
+  return apiFetch<CandidateChannelHealth>(`/candidates/${candidateId}/channel-health`).then((payload) => ({
+    ...payload,
+    telegram_linked: Boolean(payload.telegram?.linked),
+    max_linked: Boolean(payload.max?.linked),
+    last_outbound_delivery: payload.last_outbound ?? null,
+    conflict_badge: Boolean(payload.active_invite?.conflict),
+  }))
 }
 
 export function fetchCandidateHHSummary(candidateId: number) {

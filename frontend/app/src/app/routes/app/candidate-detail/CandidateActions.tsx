@@ -1,9 +1,10 @@
 import type { Ref } from 'react'
-import type { CandidateAction, CandidateDetail, TestSection } from '@/api/services/candidates'
+import type { CandidateAction, CandidateChannelHealth, CandidateDetail, TestSection } from '@/api/services/candidates'
 import { normalizeConferenceUrl, normalizeTelegramUsername } from '@/shared/utils/normalizers'
 
 type CandidateActionsProps = {
   candidate: CandidateDetail
+  channelHealth?: CandidateChannelHealth | null
   statusSlug: string | null
   test2Section?: TestSection
   actionPending: boolean
@@ -20,6 +21,7 @@ type CandidateActionsProps = {
 
 export function CandidateActions({
   candidate,
+  channelHealth,
   statusSlug,
   test2Section,
   actionPending,
@@ -44,6 +46,13 @@ export function CandidateActions({
   const conferenceLink = normalizeConferenceUrl(candidate.telemost_url)
   const isMaxLinked = Boolean(candidate.max_user_id)
   const canOpenChat = Boolean(candidate.telegram_id || candidate.max_user_id)
+  const preferredChannel = channelHealth?.preferred_channel || candidate.messenger_platform || null
+  const lastOutboundStatus =
+    channelHealth?.last_outbound_delivery?.delivery_stage
+    || channelHealth?.last_outbound_delivery?.status
+    || null
+  const lastOutboundError = channelHealth?.last_outbound_delivery?.error || null
+  const activeInvite = channelHealth?.active_invite || null
 
   const hasUpcomingSlot = slots.some((slot) => {
     const status = String(slot.status || '').toUpperCase()
@@ -162,6 +171,61 @@ export function CandidateActions({
           </button>
         )}
       </div>
+
+      {channelHealth && (
+        <section
+          className="glass panel--tight"
+          data-testid="candidate-channel-health"
+          style={{ padding: 14, marginTop: 12 }}
+        >
+          <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <div>
+              <div className="section-title" style={{ margin: 0, fontSize: '0.95rem' }}>Channel Health</div>
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                Preferred channel: {preferredChannel === 'max' ? 'MAX' : preferredChannel === 'telegram' ? 'Telegram' : '—'}
+              </p>
+            </div>
+            {channelHealth.conflict_badge ? (
+              <span className="status-badge status-badge--danger">invite conflict</span>
+            ) : null}
+          </div>
+
+          <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            <span className={`status-badge ${channelHealth.telegram_linked ? 'status-badge--success' : 'status-badge--muted'}`}>
+              Telegram {channelHealth.telegram_linked ? 'linked' : 'not linked'}
+            </span>
+            <span className={`status-badge ${channelHealth.max_linked ? 'status-badge--info' : 'status-badge--muted'}`}>
+              MAX {channelHealth.max_linked ? 'linked' : 'not linked'}
+            </span>
+            {activeInvite?.status ? (
+              <span className="status-badge status-badge--warning">
+                invite: {activeInvite.status}
+              </span>
+            ) : null}
+            {lastOutboundStatus ? (
+              <span className="status-badge status-badge--warning">
+                send: {lastOutboundStatus}
+              </span>
+            ) : null}
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            {activeInvite?.used_by_external_id ? (
+              <p className="subtitle" style={{ margin: 0 }}>
+                invite user: {activeInvite.used_by_external_id}
+              </p>
+            ) : null}
+            <p className="subtitle" style={{ margin: activeInvite?.used_by_external_id ? '4px 0 0' : 0 }}>
+              last inbound: {channelHealth.last_inbound_at ? new Date(channelHealth.last_inbound_at).toLocaleString('ru-RU') : '—'}
+            </p>
+            {lastOutboundError ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                {lastOutboundError}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      )}
 
       {/* Action buttons */}
       <div className="cd-action-rail" data-testid="candidate-actions">

@@ -112,6 +112,7 @@ class Settings:
     max_webhook_url: str
     max_webhook_secret: str
     max_bot_link_base: str
+    max_bot_allow_public_entry: bool
     candidate_portal_public_url: str
     candidate_portal_token_ttl_seconds: int
     candidate_portal_session_ttl_seconds: int
@@ -739,6 +740,10 @@ def get_settings() -> Settings:
     max_webhook_url = os.getenv("MAX_WEBHOOK_URL", "").strip()
     max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
     max_bot_link_base = os.getenv("MAX_BOT_LINK_BASE", "").strip()
+    max_bot_allow_public_entry = _get_bool(
+        "MAX_BOT_ALLOW_PUBLIC_ENTRY",
+        default=environment != "production",
+    )
     candidate_portal_public_url = os.getenv("CANDIDATE_PORTAL_PUBLIC_URL", "").strip()
     if not candidate_portal_public_url:
         candidate_portal_public_url = crm_public_url or bot_backend_url
@@ -849,6 +854,7 @@ def get_settings() -> Settings:
         max_webhook_url=max_webhook_url,
         max_webhook_secret=max_webhook_secret,
         max_bot_link_base=max_bot_link_base,
+        max_bot_allow_public_entry=max_bot_allow_public_entry,
         candidate_portal_public_url=candidate_portal_public_url,
         candidate_portal_token_ttl_seconds=candidate_portal_token_ttl_seconds,
         candidate_portal_session_ttl_seconds=candidate_portal_session_ttl_seconds,

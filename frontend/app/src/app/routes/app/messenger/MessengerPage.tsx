@@ -3,6 +3,7 @@ import '@/theme/pages/messenger.css'
 
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
+import { useCandidateChannelHealth } from '../candidate-detail/candidate-detail.api'
 
 import {
   useMessengerArchiveThread,
@@ -70,6 +71,7 @@ export function MessengerPage() {
     () => allThreads.find((thread) => thread.candidate_id === activeCandidateId) || null,
     [activeCandidateId, allThreads],
   )
+  const channelHealthQuery = useCandidateChannelHealth(activeCandidateId || 0, Boolean(activeCandidateId))
 
   const refreshThreads = useCallback(() => threadsQuery.refetch(), [threadsQuery])
   const messagesQuery = useMessengerMessages(activeCandidateId, refreshThreads)
@@ -148,6 +150,7 @@ export function MessengerPage() {
 
           <ThreadView
             activeThread={activeThread}
+            channelHealth={channelHealthQuery.data || null}
             isMobile={isMobile}
             isLoading={messagesQuery.isLoading}
             isError={messagesQuery.isError}

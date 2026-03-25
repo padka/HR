@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import type { CandidateChannelHealth } from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import { fadeIn, slideInRight } from '@/shared/motion'
@@ -36,6 +37,7 @@ const CandidateChatMessageCard = memo(function CandidateChatMessageCard({
 type CandidateChatDrawerProps = {
   candidateId: number
   channelLabel: string
+  channelHealth?: CandidateChannelHealth | null
   ai: CandidateAiController
   isOpen: boolean
   onClose: () => void
@@ -45,6 +47,7 @@ type CandidateChatDrawerProps = {
 export function CandidateChatDrawer({
   candidateId,
   channelLabel,
+  channelHealth,
   ai,
   isOpen,
   onClose,
@@ -153,7 +156,13 @@ export function CandidateChatDrawer({
               <header className="candidate-chat-drawer__header">
                 <div>
                   <h3 className="candidate-chat-drawer__title">Чат с кандидатом</h3>
-                  <p className="subtitle">Ответ будет отправлен через {channelLabel}</p>
+                  <p className="subtitle">
+                    Ответ будет отправлен через {channelLabel}
+                    {channelHealth?.last_outbound_delivery?.status ? ` · last send: ${channelHealth.last_outbound_delivery.status}` : ''}
+                  </p>
+                  {channelHealth?.last_outbound_delivery?.error ? (
+                    <p className="subtitle subtitle--danger" style={{ marginTop: 4 }}>{channelHealth.last_outbound_delivery.error}</p>
+                  ) : null}
                 </div>
                 <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
               </header>

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.services.candidates import upsert_candidate
 from backend.core.db import async_session
@@ -137,3 +138,40 @@ async def test_invite_token_has_id_and_persists():
     async with async_session() as session:
         stored = await session.get(candidate_models.CandidateInviteToken, invite.id)
     assert stored is not None
+
+
+@pytest.mark.asyncio
+async def test_max_invite_unique_active_constraint_per_candidate():
+    async with async_session() as session:
+        candidate = candidate_models.User(
+            telegram_id=None,
+            fio="MAX Invite Unique",
+            city="Москва",
+            is_active=True,
+            candidate_status=CandidateStatus.LEAD,
+            source="manual_call",
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+    async with async_session() as session:
+        session.add_all(
+            [
+                candidate_models.CandidateInviteToken(
+                    candidate_id=candidate.candidate_id,
+                    token="max-active-1",
+                    channel="max",
+                    status="active",
+                ),
+                candidate_models.CandidateInviteToken(
+                    candidate_id=candidate.candidate_id,
+                    token="max-active-2",
+                    channel="max",
+                    status="active",
+                ),
+            ]
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()

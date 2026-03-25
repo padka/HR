@@ -871,13 +871,17 @@ class NotificationLog(Base):
         ForeignKey("slots.id", ondelete="CASCADE"), nullable=False
     )
     candidate_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, default="telegram")
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     delivery_status: Mapped[str] = mapped_column(
         "status", String(20), default="sent", nullable=False
     )
     attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    failure_class: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     next_retry_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1043,6 +1047,11 @@ class OutboxNotification(Base):
         DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    failure_class: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    dead_lettered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_channel_attempted: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     messenger_channel: Mapped[str] = mapped_column(
         String(20), nullable=False, default="telegram"
