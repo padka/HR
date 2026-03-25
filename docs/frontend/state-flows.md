@@ -69,6 +69,7 @@ sequenceDiagram
   participant User
   participant Page as CandidateDetailPage
   participant DetailQ as useCandidateDetail
+  participant ChannelQ as useCandidateChannelHealth
   participant Actions as useCandidateActions
   participant AI as useCandidateAi
   participant Drawer as CandidateDrawer/CandidateChatDrawer
@@ -77,6 +78,7 @@ sequenceDiagram
 
   User->>Page: Open /app/candidates/$candidateId
   Page->>DetailQ: load detail payload
+  Page->>ChannelQ: load Telegram/MAX channel health
   Page->>AI: load AI summary/coach queries
   Page->>Page: build pipeline/tests/view model
   User->>Drawer: open insights/chat/script surfaces
@@ -84,12 +86,14 @@ sequenceDiagram
   Modal->>Actions: execute mutation
   Actions-->>Page: success message
   Page->>DetailQ: refetch candidate detail
+  Page->>ChannelQ: refetch after MAX invite rotation / delivery change
   Page->>Query: invalidate ['candidates'] list
 ```
 
 ### What matters
 - Detail screen keeps the canonical view model inside `CandidateDetailPage`.
 - Mutations must invalidate both detail and list views when they affect candidate status.
+- Channel-health UI is separate server state and must be invalidated together with MAX invite rotation or relink actions.
 - Drawer state is local; server truth remains in `useCandidateDetail`.
 
 ## Candidate Portal Start Flow
@@ -144,6 +148,32 @@ sequenceDiagram
 - Each mutation returns a fresh journey snapshot and replaces cache state.
 - Screen state must remain recoverable after refresh.
 
+## System Delivery Flow
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Page as SystemPage
+  participant HealthQ as useQuery(system-messenger-health)
+  participant OutboxQ as useQuery(system-outbox-feed)
+  participant LogsQ as useQuery(system-notification-logs)
+  participant Mut as retryNotification/cancelNotification
+
+  User->>Page: Open /app/system and switch to delivery tab
+  Page->>HealthQ: poll Telegram/MAX health snapshot
+  Page->>OutboxQ: poll outbox feed with filters
+  Page->>LogsQ: poll notification logs with filters
+  User->>Mut: retry or cancel outbox item
+  Mut-->>Page: success
+  Page->>OutboxQ: refetch list
+  Page->>HealthQ: next poll reflects queue/degraded changes
+```
+
+### What matters
+- Delivery tab combines three query surfaces: channel health, outbox feed and notification logs.
+- Telegram/MAX cards are operator summary, not source of truth; authoritative delivery state stays in backend outbox/log tables.
+- Retry after `dead_letter` is explicit operator action and should be reflected in both outbox row and channel health snapshot.
+
 ## Theme And Shell Flow
 
 ```mermaid
@@ -160,4 +190,3 @@ flowchart LR
 - Theme selection is browser state, not server state.
 - Liquid Glass v2 is a UI mode toggle layered on top of the theme.
 - Pages read from CSS variables and should not hard-code a second design system.
-

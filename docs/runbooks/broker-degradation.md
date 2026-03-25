@@ -39,13 +39,16 @@ Canonical
 - Bot or admin runtime reports `degraded` broker status.
 - Content updates do not reach the bot.
 - Redis is unreachable or Redis client library is missing.
+- Only Telegram or only MAX stops draining while the second channel still sends.
+- Outbox rows move to `dead_letter` with `misconfiguration` and channel-specific degraded reason.
 
 ## Immediate Response
 
 1. Confirm whether the app has switched to in-memory fallback.
 2. Check whether `REDIS_URL` is missing, malformed, or unreachable.
 3. Inspect broker logs for reconnect attempts and publish failures.
-4. Separate delivery degradation from data corruption.
+4. Check `/api/system/messenger-health` or operator UI to see whether degradation is broker-wide or only `telegram` / `max`.
+5. Separate delivery degradation from data corruption.
 
 ## Triage Flow
 
@@ -56,7 +59,7 @@ flowchart TD
   B -->|Yes| D{"Broker attach/start succeeded?"}
   D -->|No| E["Inspect Redis client / permissions / topology"]
   D -->|Yes| F{"Notifications still stuck?"}
-  F -->|Yes| G["Inspect queue consumer, stale claims, DLQ"]
+  F -->|Yes| G["Inspect queue consumer, stale claims, per-channel degraded state, DLQ"]
   F -->|No| H["Monitor until stable"]
 ```
 
@@ -66,17 +69,19 @@ flowchart TD
 2. Restart affected runtime only if reconnect loop does not recover.
 3. Verify notification broker transitions from `degraded` to `ok`.
 4. Verify content updates can be published again.
-5. Check whether any messages were moved to DLQ and triage them separately.
+5. If only one messenger channel is degraded, fix adapter/config cause first, then call `POST /api/system/messenger-health/{channel}/recover` to clear degraded state explicitly.
+6. Only after channel recovery, use explicit requeue for affected `dead_letter` items. Retry does not auto-clear degraded state.
+7. Check whether any messages were moved to DLQ / `dead_letter` and triage them separately.
 
 ## Verification
 
 - `/health/notifications` shows healthy delivery state.
 - `app.state.notification_broker_status` is `ok` or `memory` where that is the explicit dev fallback.
 - Bot/admin critical message flow works end-to-end.
+- `/api/system/messenger-health` shows expected per-channel queue depth, dead-letter count and `degraded=false` after recovery.
 
 ## Escalation Criteria
 
 - Redis outage affects all critical delivery paths.
 - DLQ growth is unexpected.
 - Reconnect loops cause request latency or process churn.
-

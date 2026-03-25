@@ -110,12 +110,15 @@ flowchart LR
 - Public portal API расположен на `/api/candidate/*`.
 - Доступ разрешается только через signed portal token и/или валидную серверную сессию портала.
 - При истечении cookie browser может восстановиться через `x-candidate-portal-token` из deep link или сохранённого session token.
+- Header recovery доверяется только после проверки `candidate_id + journey_session_id + session_version`; stale version must fail closed с audit-событием `portal_session_rejected_version_mismatch`.
 - Portal token нельзя считать аутентификацией admin/recruiter.
 
 ### 3. MAX boundary
 - MAX deep link и mini-app link используют отдельные токены для связывания кандидата.
 - Webhook события MAX обрабатываются отдельным runtime и должны быть идемпотентны.
 - `max_bot` не должен доверять raw update payload без dedupe и platform-adapter проверки.
+- Канонический linking path: recruiter-issued invite. Public MAX entry допускается только под feature flag и не должен silently становиться preferred channel.
+- Один кандидат имеет только один active MAX invite. Superseded invite и invite conflict считаются отдельными observable состояниями, а не неявным retry path.
 
 ### 4. HH boundary
 - HH OAuth state подписывается `session_secret`.
@@ -126,6 +129,7 @@ flowchart LR
 - Redis используется как best-effort transport/cache/broker layer, а не как источник истины.
 - Notification broker и content update pub/sub должны деградировать без потери целостности данных.
 - База данных остается source of truth для кандидатов, сессий, слотов, сообщений, интеграций и audit state.
+- Telegram и MAX считаются разными failure domains. Degraded state хранится отдельно по каналу и должен быть видим через операторские surfaces и `/api/system/messenger-health`.
 
 ## Security Regression Areas
 
@@ -151,9 +155,9 @@ flowchart LR
 | Boundary | Entry point | Trust check | Failure mode |
 | --- | --- | --- | --- |
 | Browser admin | `/auth/login`, `/auth/token`, SPA API | session/JWT + CSRF | 401 / 403 |
-| Browser portal | `/api/candidate/session/exchange` | signed portal token + portal session | 401 / 409 |
-| MAX deep link | `/candidates/{id}/channels/max-link`, `startapp` | signed invite / mini-app token | 400 / 503 |
+| Browser portal | `/api/candidate/session/exchange` | signed portal token + active journey + matching session version | 401 / 409 |
+| MAX deep link | `/candidates/{id}/channels/max-link`, `startapp` | signed invite / mini-app token + conflict/idempotency checks | 400 / 409 / 503 |
 | HH OAuth | `/api/integrations/hh/oauth/callback` | signed state + principal match | 400 / 403 / 502 |
 | HH webhook | `/api/hh-integration/webhooks/{key}` | secret path key | 404 |
+| Delivery channel health | `/api/system/messenger-health`, `/api/system/messenger-health/{channel}/recover` | persisted per-channel degraded state + explicit admin recovery | degraded / healthy |
 | Redis broker | notification streams / pubsub | broker availability + dedupe | degraded / memory fallback |
-

@@ -26,6 +26,7 @@ Canonical
 - `backend/core/cache.py`
 - `backend/core/messenger/bootstrap.py`
 - `backend/apps/bot/services/notification_flow.py`
+- `backend/core/messenger/channel_state.py`
 
 ## Related Diagrams
 - [overview.md](./overview.md)
@@ -99,12 +100,14 @@ flowchart TB
 - `backend/apps/bot/app.py` запускает reminder service, notification service, content update subscriber и heartbeat loop.
 - `backend/apps/max_bot/app.py` использует dedupe cache для webhook events и управляет subscription reconciliation.
 - `backend/apps/bot/services/notification_flow.py` обрабатывает outbox claim/send/retry цикл.
+- `backend/core/messenger/channel_state.py` хранит per-channel degraded state для Telegram/MAX и используется как operational guardrail для retry/requeue path.
 - `backend/apps/admin_ui/background_tasks.py` запускает periodic HH sync/import, stalled candidate checks и cleanup свободных слотов.
 
 ## Failure Domains
 - Если Postgres недоступен, бизнес-операции должны деградировать, а health endpoints возвращать не-healthy статус.
 - Если Redis недоступен, система должна продолжать работу в деградированном режиме там, где это допускает код, но без silent loss of retry/claim semantics.
-- Если Telegram/MAX adapters не зарегистрированы, outbox items для этих платформ должны считаться недоставляемыми и попадать в retry/failure path.
+- Если Telegram/MAX adapters не зарегистрированы или misconfigured, outbox items для этих платформ должны попадать в `dead_letter`, а соответствующий канал — в persisted degraded state до ручного recovery.
+- Telegram и MAX не делят общий health budget: деградация одного канала не должна блокировать claim/send path второго.
 - Если HH OAuth или webhook secret не настроены, HH-интеграция остается неактивной, но core CRM продолжает работать.
 - Если SPA bundle отсутствует, admin UI отдает явную ошибку вместо молчаливой деградации.
 
@@ -113,6 +116,7 @@ flowchart TB
 | --- | --- | --- |
 | `GET /health` on admin UI | App, DB and Redis health | `backend/apps/admin_ui/app.py` |
 | `GET /health` on admin API | App, DB and Redis health | `backend/apps/admin_api/main.py` |
+| `GET /api/system/messenger-health`, `POST /api/system/messenger-health/{channel}/recover` on admin UI | Telegram/MAX queue depth, dead-letter counts, degraded state, explicit operator recovery | `backend/apps/admin_ui/routers/api_misc.py`, `backend/apps/admin_ui/services/messenger_health.py`, `backend/core/messenger/channel_state.py` |
 | `/metrics` and Prometheus instrumentation | HTTP, DB, cache and degraded-mode metrics | `backend/apps/admin_ui/perf/metrics/` |
 | JSON logs and request IDs | Correlation across runtime boundaries | `backend/core/logging.py`, middleware in `backend/apps/admin_ui/app.py` |
 | Sentry | Exception tracking, if configured | `backend/apps/admin_ui/app.py` |

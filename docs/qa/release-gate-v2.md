@@ -28,8 +28,8 @@ Release Gate v2 применяется ко всем release candidate и бло
 ### 3. Security regression matrix
 - admin session
 - recruiter session / bearer flows
-- candidate portal token / session
-- Telegram / MAX identity
+- candidate portal token / session / header recovery version match
+- Telegram / MAX identity / invite conflict / preferred channel policy
 - CSRF
 - RBAC / scope leaks
 - webhook trust
@@ -46,12 +46,14 @@ Release Gate v2 применяется ко всем release candidate и бло
 - slot booking / reschedule
 - portal APIs
 - messenger updates
+- `/api/system/messenger-health`
 
 ### 6. Observability verification
 - health checks
 - logs без токенов и лишнего PII
 - ключевые метрики и алерты
 - наличие runbook для известных failure domains
+- Telegram/MAX degraded state surfaced in operator UI or system API
 
 ## Gate decision
 | Состояние | Решение |
@@ -67,6 +69,8 @@ Release Gate v2 применяется ко всем release candidate и бло
 
 - список выполненных команд
 - результаты тестов
+- per-channel degraded-mode verification
+- invite rotation / conflict regression report
 - список известных рисков
 - ссылки на релевантные docs и ADR
 - дата и owner решения
@@ -84,4 +88,3 @@ flowchart TD
     H -->|Yes| I[Release]
     H -->|No| J[Block]
 ```
-

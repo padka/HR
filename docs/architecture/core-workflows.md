@@ -47,14 +47,14 @@ sequenceDiagram
     participant DOM as "backend.domain.candidates.portal_service"
     participant DB as "PostgreSQL"
 
-    C->>UI: Открывает /candidate/start?start=token
+    C->>UI: Открывает /candidate/start?start=signed_portal_token
     UI->>UIAPI: POST /api/candidate/session/exchange
-    UIAPI->>DOM: resolve token -> resolve candidate -> ensure session
+    UIAPI->>DOM: validate signed token + journey_session_id + session_version
     DOM->>DB: find/create candidate + journey session
     DOM-->>UIAPI: journey payload
     UIAPI-->>UI: candidate portal journey
     UI->>UIAPI: GET /api/candidate/journey
-    UIAPI->>DOM: build_candidate_portal_journey()
+    UIAPI->>DOM: build_candidate_portal_journey() / validate header recovery
     DOM->>DB: read profile / screening / active slot / messages
     DOM-->>UIAPI: full journey state
     UI-->>C: Render steps, next action and slot state
@@ -85,6 +85,10 @@ stateDiagram-v2
         InProgress --> Completed: all answers saved
     }
 ```
+
+### Reliability Contract
+- Header-token recovery without cookie is allowed only for an `active` journey session with matching `session_version`.
+- Invite rotation, relink and explicit security recovery bump `session_version`; stale browser/header tokens must fail closed and emit audit trail.
 
 ## 2. Slot Booking And Reschedule
 ### Sequence
@@ -132,19 +136,22 @@ sequenceDiagram
     participant R as "backend.domain.repositories"
     participant W as "Notification worker"
     participant REG as "Messenger registry"
+    participant REL as "Reliability classifier"
     participant AD as "Telegram / MAX adapter"
     participant DB as "PostgreSQL"
 
     D->>R: add_outbox_notification()
     R->>DB: insert or reuse pending outbox row
     W->>R: claim_outbox_batch()
-    R->>DB: lock pending rows with skip_locked
+    R->>DB: lock pending rows with skip_locked and skip degraded channels
     W->>REG: resolve_adapter_for_candidate()
     REG-->>W: platform adapter
     W->>AD: send_message()
     AD-->>W: success / failure
+    W->>REL: classify_delivery_failure(channel, error)
+    REL-->>W: transient / permanent / misconfiguration
     W->>R: update_outbox_entry() or mark_outbox_notification_sent()
-    R->>DB: persist sent / failed / next_retry_at
+    R->>DB: persist sent / retry_pending / dead_letter + failure metadata
     W-->>D: observable delivery outcome
 ```
 
@@ -152,12 +159,19 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Pending
-    Pending --> Locked: claim_outbox_batch
-    Locked --> Sent: provider accepted
-    Locked --> Failed: adapter error / retry limit
-    Failed --> Pending: reset_outbox_entry / retry window
+    Pending --> Claimed: claim_outbox_batch
+    Claimed --> Sent: provider accepted
+    Claimed --> RetryPending: transient failure
+    Claimed --> DeadLetter: permanent or misconfiguration
+    RetryPending --> Pending: retry window
+    DeadLetter --> Pending: explicit requeue after cause removal
     Sent --> [*]
 ```
+
+### Reliability Contract
+- Telegram and MAX are separate observable failure domains; degraded state is stored per channel and surfaced to operators.
+- `transient` failures stay retryable, `permanent` failures go directly to `dead_letter`, `misconfiguration` failures both dead-letter the item and mark the channel degraded.
+- Explicit requeue does not clear degraded state; operators recover the channel first, then requeue affected dead-letter items.
 
 ## 4. MAX Onboarding And Linking
 ### Sequence
@@ -172,12 +186,13 @@ sequenceDiagram
     participant DB as "PostgreSQL"
 
     A->>UI: POST /candidates/{id}/channels/max-link
-    UI->>UI: generate invite_token + mini_app_link
-    UI-->>A: deep_link + mini_app_link
+    UI->>UI: rotate previous active MAX invite
+    UI->>DOM: bump candidate portal session version
+    UI-->>A: deep_link + mini_app_link + invite metadata
     C->>M: Open MAX deep link / startapp payload
     M->>FLOW: process_bot_started()
-    FLOW->>DOM: resolve_candidate_portal_access_token() or invite token
-    DOM->>DB: find/create candidate + link max_user_id
+    FLOW->>DOM: resolve signed portal access token() or invite token
+    DOM->>DB: find/create candidate + idempotent/conflict-aware link max_user_id
     FLOW->>DOM: ensure_candidate_portal_session() + sign portal token
     DOM-->>FLOW: linked candidate + portal journey
     FLOW-->>C: Start MAX onboarding / continue portal
@@ -188,12 +203,19 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> Unlinked
     Unlinked --> InviteIssued: admin creates link
+    InviteIssued --> InviteSuperseded: admin rotates link
     InviteIssued --> Linked: candidate opens payload / invite
+    InviteIssued --> Conflict: same invite used by другой max_user_id
     Linked --> PortalReady: portal token issued
-    InviteIssued --> Conflict: token already bound elsewhere
-    Unlinked --> CreatedFromMAX: first MAX contact without invite
-    CreatedFromMAX --> Linked
+    Linked --> Linked: same invite same max_user_id
+    Unlinked --> PublicPlaceholder: feature flag only
+    PublicPlaceholder --> Linked
 ```
+
+### Reliability Contract
+- Only one active MAX invite is canonical per candidate. Rotation supersedes previous invite instead of leaving multiple active links.
+- Same invite + same `max_user_id` is idempotent. Same invite + different `max_user_id` is conflict with no duplicate candidate/journey rows.
+- `messenger_platform` becomes MAX automatically only when candidate has no existing Telegram identity; otherwise preferred channel is preserved until explicit operator action.
 
 ## 5. HH Sync And Import
 ### Sequence

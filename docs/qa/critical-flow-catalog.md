@@ -14,8 +14,9 @@
 | --- | --- | --- | --- |
 | Candidate lifecycle | Создание, просмотр, изменение, перевод между статусами | backend + SPA | `docs/data/data-dictionary.md`, `docs/architecture/core-workflows.md` |
 | Candidate portal | Доступ кандидата к своим данным и действиям | portal runtime + backend | `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md` |
-| MAX onboarding / linking | Связка кандидата с MAX каналом и идентификацией | max_bot + backend | `docs/security/trust-boundaries.md`, `docs/architecture/core-workflows.md` |
+| MAX onboarding / linking | Ротация invite, deep link, conflict-safe привязка и MAX mini-app resume | max_bot + backend | `docs/security/trust-boundaries.md`, `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md` |
 | Telegram messaging | Отправка и обработка сообщений | bot runtime + backend | `docs/architecture/core-workflows.md` |
+| Telegram/MAX delivery reliability | Channel-aware outbox, degraded mode, dead-letter/requeue, operator health surfaces | bot runtime + admin UI | `docs/architecture/core-workflows.md`, `docs/runbooks/broker-degradation.md` |
 | Slot booking / reschedule / intro-day | Запись, перенос, подтверждение временных слотов | backend + SPA + portal | `docs/data/data-dictionary.md`, `docs/architecture/core-workflows.md` |
 | Recruiter dashboard | Рабочий стол рекрутера, навигация, drawer, фильтры | frontend SPA | `docs/frontend/route-map.md`, `docs/frontend/screen-inventory.md` |
 | Notification delivery | Очереди, outbox, retry, idempotency | backend + Redis | `docs/architecture/core-workflows.md`, `docs/security/trust-boundaries.md` |
@@ -32,6 +33,7 @@
 - backend unit / integration
 - frontend unit / browser smoke
 - security / observability regression
+- delivery degradation / requeue verification for Telegram/MAX
 - миграционный или contract check при необходимости
 
 ## Mermaid
@@ -49,4 +51,3 @@ mindmap
     AI copilot / interview script
     Auth / session / CSRF
 ```
-

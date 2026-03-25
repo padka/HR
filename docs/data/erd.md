@@ -5,7 +5,7 @@
 - Owner: Backend / Data team
 - Status: canonical
 - Last Reviewed: 2026-03-25
-- Source Paths: [`backend/domain/models.py`](../../backend/domain/models.py), [`backend/domain/candidates/models.py`](../../backend/domain/candidates/models.py), [`backend/domain/detailization/models.py`](../../backend/domain/detailization/models.py), [`backend/domain/ai/models.py`](../../backend/domain/ai/models.py), [`backend/domain/hh_integration/models.py`](../../backend/domain/hh_integration/models.py), [`backend/domain/hh_sync/models.py`](../../backend/domain/hh_sync/models.py), [`backend/domain/cities/models.py`](../../backend/domain/cities/models.py), [`backend/domain/tests/models.py`](../../backend/domain/tests/models.py), [`backend/domain/auth_account.py`](../../backend/domain/auth_account.py), [`backend/domain/analytics_models.py`](../../backend/domain/analytics_models.py), [`backend/migrations/versions/0001_initial_schema.py`](../../backend/migrations/versions/0001_initial_schema.py), [`backend/migrations/versions/0062_slot_assignments.py`](../../backend/migrations/versions/0062_slot_assignments.py), [`backend/migrations/versions/0091_add_hh_integration_foundation.py`](../../backend/migrations/versions/0091_add_hh_integration_foundation.py), [`backend/migrations/versions/0095_add_candidate_portal_journey.py`](../../backend/migrations/versions/0095_add_candidate_portal_journey.py), [`backend/migrations/versions/0097_add_candidate_journey_archive_foundation.py`](../../backend/migrations/versions/0097_add_candidate_journey_archive_foundation.py)
+- Source Paths: [`backend/domain/models.py`](../../backend/domain/models.py), [`backend/domain/candidates/models.py`](../../backend/domain/candidates/models.py), [`backend/domain/detailization/models.py`](../../backend/domain/detailization/models.py), [`backend/domain/ai/models.py`](../../backend/domain/ai/models.py), [`backend/domain/hh_integration/models.py`](../../backend/domain/hh_integration/models.py), [`backend/domain/hh_sync/models.py`](../../backend/domain/hh_sync/models.py), [`backend/domain/cities/models.py`](../../backend/domain/cities/models.py), [`backend/domain/tests/models.py`](../../backend/domain/tests/models.py), [`backend/domain/auth_account.py`](../../backend/domain/auth_account.py), [`backend/domain/analytics_models.py`](../../backend/domain/analytics_models.py), [`backend/migrations/versions/0001_initial_schema.py`](../../backend/migrations/versions/0001_initial_schema.py), [`backend/migrations/versions/0062_slot_assignments.py`](../../backend/migrations/versions/0062_slot_assignments.py), [`backend/migrations/versions/0091_add_hh_integration_foundation.py`](../../backend/migrations/versions/0091_add_hh_integration_foundation.py), [`backend/migrations/versions/0095_add_candidate_portal_journey.py`](../../backend/migrations/versions/0095_add_candidate_portal_journey.py), [`backend/migrations/versions/0097_add_candidate_journey_archive_foundation.py`](../../backend/migrations/versions/0097_add_candidate_journey_archive_foundation.py), [`backend/migrations/versions/0098_tg_max_reliability_foundation.py`](../../backend/migrations/versions/0098_tg_max_reliability_foundation.py)
 - Related Diagrams: [`docs/data/data-dictionary.md`](./data-dictionary.md)
 - Change Policy: схема данных меняется только через миграции и согласованные изменения моделей; сначала добавление и backfill, потом ограничения и только затем возможное удаление старого поля или таблицы. Если код и docs расходятся, приоритет у live code + migrations.
 
@@ -182,7 +182,11 @@ erDiagram
         int id PK
         string candidate_id FK
         string token UK
+        string status
+        string channel
         datetime used_at
+        datetime superseded_at
+        string used_by_external_id
     }
 
     CANDIDATE_JOURNEY_SESSIONS {
@@ -193,6 +197,7 @@ erDiagram
         string entry_channel
         string current_step_key
         string status
+        int session_version
     }
 
     CANDIDATE_JOURNEY_STEP_STATES {
@@ -307,6 +312,11 @@ erDiagram
         string type
         string status
         string messenger_channel
+        string failure_class
+        string failure_code
+        string provider_message_id
+        datetime dead_lettered_at
+        string last_channel_attempted
         string correlation_id
     }
 
@@ -315,7 +325,11 @@ erDiagram
         int booking_id FK
         bigint candidate_tg_id
         string type
+        string channel
         string delivery_status
+        int attempt_no
+        string failure_class
+        string provider_message_id
     }
 
     ACTION_TOKENS {

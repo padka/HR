@@ -31,10 +31,10 @@
 | Сущность | Ownership | FK / relations | Назначение | Lifecycle / notes |
 | --- | --- | --- | --- | --- |
 | `users` | Candidate core | `responsible_recruiter_id -> recruiters.id` | Центральная запись кандидата и агрегат для портала, тестов, статусов и архива | `candidate_status` + `workflow_status` + `lifecycle_state` + `final_outcome` |
-| `candidate_journey_sessions` | Candidate core | `candidate_id -> users.id` | Сессия кандидатского journey (portal/web) | `status = active/completed/abandoned/blocked` |
+| `candidate_journey_sessions` | Candidate core | `candidate_id -> users.id` | Сессия кандидатского journey (portal/web) | `status = active/completed/abandoned/blocked`, `session_version` invalidates stale header/browser recovery |
 | `candidate_journey_step_states` | Candidate core | `session_id -> candidate_journey_sessions.id` | Статус каждого шага journey | `pending/in_progress/completed/skipped` |
 | `candidate_journey_events` | Candidate core | `candidate_id -> users.id` | Исторический event log по journey | stage-based журнал; не источник истины для статуса |
-| `candidate_invite_tokens` | Candidate core | `candidate_id -> users.candidate_id` | Токены приглашения в бота/портал | одноразовое использование, `used_at` фиксирует расход |
+| `candidate_invite_tokens` | Candidate core | `candidate_id -> users.candidate_id` | Токены приглашения в бота/портал | `status`, `channel`, `superseded_at`, `used_by_external_id` делают invite lifecycle auditable |
 | `test_results` | Candidate core | `user_id -> users.id` | Результат теста 1 | хранит скоринг и рейтинг |
 | `question_answers` | Candidate core | `test_result_id -> test_results.id` | Ответы на вопросы теста | уникальность на `(test_result_id, question_index)` |
 | `test2_invites` | Candidate core | `candidate_id -> users.id` | Приглашения на Тест 2 | `created/opened/completed/expired/revoked` |
@@ -109,8 +109,8 @@
 | --- | --- | --- | --- | --- |
 | `message_templates` | Comms content | `city_id -> cities.id` | Канонические markdown-шаблоны сообщений | unique `(key, locale, channel, city_id, version)` |
 | `message_template_history` | Comms content | `template_id -> message_templates.id`, `city_id -> cities.id` | История версий шаблона | immutable history row |
-| `outbox_notifications` | Delivery ops | `booking_id -> slots.id` | Outbox для отправки уведомлений | `status`, `attempts`, `locked_at`, `next_retry_at`, `correlation_id` |
-| `notification_logs` | Delivery audit | `booking_id -> slots.id` | Delivery log для уведомлений по слоту | unique на тип+booking+candidate |
+| `outbox_notifications` | Delivery ops | `booking_id -> slots.id` | Outbox для отправки уведомлений | `status`, `attempts`, `locked_at`, `next_retry_at`, `correlation_id`, `failure_class`, `failure_code`, `dead_lettered_at`, `last_channel_attempted` |
+| `notification_logs` | Delivery audit | `booking_id -> slots.id` | Delivery log для уведомлений по слоту | channel-aware audit trail with `channel`, `attempt_no`, `failure_class`, `provider_message_id` |
 | `message_logs` | Delivery audit | `slot_assignment_id -> slot_assignments.id` | Лог сообщений по каналу | `channel`, `recipient_type`, `delivery_status` |
 | `bot_message_logs` | Bot audit | `slot_id -> slots.id` | Логи сообщений бота | raw payload for diagnostics |
 | `telegram_callback_logs` | Bot audit | none | Дедупликация callback updates | `callback_id` unique |
@@ -121,8 +121,13 @@
 
 - `chat_messages.direction`: `inbound` | `outbound`
 - `chat_messages.status`: `queued` | `sent` | `failed` | `received`
-- `outbox_notifications.status`: строковый delivery lifecycle, чаще всего `pending`/`processing`/`sent`/`failed`.
-- `notification_logs.delivery_status`: строковый delivery lifecycle, используется для мониторинга отправки.
+- `candidate_invite_tokens.status`: `active`, `used`, `superseded`, `conflict`. Для MAX canonical policy допускает один active invite на кандидата и канал.
+- `candidate_invite_tokens.channel`: `generic`, `telegram`, `max`; sprint reliability hardening использует `max` для operator-issued MAX links и сохраняет `generic` как backward-compatible legacy default.
+- `candidate_journey_sessions.session_version`: integer version of recoverable portal session. Любой relink/rotation/security action инкрементирует версию и делает stale portal/header token недействительным.
+- `outbox_notifications.status`: строковый delivery lifecycle: `pending`, `failed`, `sent`, `cancelled`, `dead_letter`. `dead_letter` означает terminal delivery stop до явного operator requeue.
+- `outbox_notifications.failure_class`: `transient`, `permanent`, `misconfiguration`; совместно с `failure_code` объясняет retry/dead-letter/degraded branch.
+- `notification_logs.delivery_status`: строковый delivery lifecycle, используется для мониторинга отправки и должен совпадать по смыслу с outbox outcome.
+- `notification_logs.channel` и `outbox_notifications.last_channel_attempted`: source of truth для per-channel Telegram/MAX observability.
 
 ## HH / AI / Analytics / Ops
 
@@ -285,4 +290,3 @@ stateDiagram-v2
 - слот или перенос, обновляй `slots`, `slot_assignments`, `slot_reschedule_requests`, outbox notifications и связанные audit logs;
 - HH-интеграция, обновляй contracts, models, migration и sync/import tests;
 - AI/knowledge base, обновляй `ai/*`, `backend/core/ai/service.py`, логи и этот словарь.
-

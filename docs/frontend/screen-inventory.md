@@ -35,14 +35,14 @@ Canonical.
 | Login | `/app/login` | Auth card/page | Form state, auth redirect params | Войти в систему. |
 | Dashboard | `/app/dashboard` | KPI blocks, incoming queue, recruiter leaderboard, calendar/intake widgets | React Query dashboard endpoints, profile role | Быстрый обзор метрик и обработка входящих. |
 | Candidates list | `/app/candidates` | Table/board/calendar views, filters, bulk actions | React Query list payload, persisted filters, profile | Найти и сгруппировать кандидатов. |
-| Candidate detail | `/app/candidates/$candidateId` | Profile hero, pipeline, actions, tests, AI blocks, chat/insights drawers, modals | Candidate detail query, AI query, local UI state, query invalidation | Вести конкретного кандидата от карточки до действий. |
+| Candidate detail | `/app/candidates/$candidateId` | Profile hero, pipeline, actions, channel health card, tests, AI blocks, chat/insights drawers, modals | Candidate detail query, candidate channel health query, AI query, local UI state, query invalidation | Вести конкретного кандидата от карточки до действий и channel recovery. |
 | Slots | `/app/slots` | Table/cards/agenda, filters, sheet, booking/reschedule modals | Slots query, persisted filters, profile, city/recruiter options | Управлять слотами и их статусами. |
 | Calendar | `/app/calendar` | Calendar-centric schedule view | Calendar queries, profile, local view state | Оценивать загрузку и окна времени. |
 | Incoming | `/app/incoming` | Queue/list, filters, scheduling modal, test preview modal | Dashboard incoming query, candidate detail query, recruiter/city options | Обработать новых кандидатов и назначить слот. |
 | Messenger | `/app/messenger` | Thread list, conversation pane, template tray, message composer | Threads/messages/templates queries, draft persistence | Вести переписку и использовать шаблоны. |
 | Copilot | `/app/copilot` | AI workbench / generated assistance | Copilot queries, local draft state | Получить AI-подсказку и применить её в работе. |
 | Profile cabinet | `/app/profile` | Avatar, settings, theme toggle, password form, KPI snippets | Profile query, timezone query, KPI query, local theme state | Управлять профилем и локальными настройками. |
-| System | `/app/system` | Health, bot integration, reminder policy, delivery, HH section | System queries, mutations, polling | Проверять состояние платформы и интеграций. |
+| System | `/app/system` | Health, bot integration, reminder policy, Telegram/MAX delivery health, outbox triage, HH section | System queries, mutations, polling | Проверять состояние платформы, каналов доставки и интеграций. |
 | Admin CRUD | `/app/recruiters`, `/app/cities`, `/app/templates`, `/app/questions`, `/app/test-builder*`, `/app/message-templates` | Lists + editors + previews | Entity queries/mutations, profile role, local editor state | Админский CRUD и настройка шаблонов/вопросов. |
 | Detailization | `/app/detailization` | Record list, summary, create form, inline edits | Detailization query, cities/recruiters/candidates queries, dirty patch state | Вести учет закрепления/не-закрепления. |
 | Simulator | `/app/simulator` | Feature/demo surface | Feature flag, local demo state | Отладка и демонстрации. |
@@ -53,7 +53,7 @@ Canonical.
 | --- | --- | --- |
 | `CandidateHeader` | Hero, status, summary, high-level actions | `frontend/app/src/app/routes/app/candidate-detail/CandidateHeader.tsx` |
 | `CandidatePipeline` | Workflow visualization and stage summary | `frontend/app/src/app/components/CandidatePipeline/*` |
-| `CandidateActions` | Schedule, reject, MAX/Telegram, overflow actions | `frontend/app/src/app/routes/app/candidate-detail/CandidateActions.tsx` |
+| `CandidateActions` | Schedule, reject, MAX/Telegram, channel health and MAX invite rotation | `frontend/app/src/app/routes/app/candidate-detail/CandidateActions.tsx` |
 | `CandidateTests` | Test sections and related results | `frontend/app/src/app/routes/app/candidate-detail/CandidateTests.tsx` |
 | `CandidateDrawer` | Insights drawer | `frontend/app/src/app/routes/app/candidate-detail/CandidateDrawer.tsx` |
 | `CandidateChatDrawer` | Chat drawer and draft insertion target | `frontend/app/src/app/routes/app/candidate-detail/CandidateChatDrawer.tsx` |

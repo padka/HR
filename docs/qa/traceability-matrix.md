@@ -21,11 +21,11 @@
 | Flow / риск | Source of truth docs | Основные тесты | Owner | Gate |
 | --- | --- | --- | --- | --- |
 | Candidate lifecycle | `docs/architecture/core-workflows.md`, `docs/data/data-dictionary.md` | backend pytest, API integration, browser smoke | Backend + QA | Release Gate v2 |
-| Portal / MAX onboarding | `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md` | portal browser smoke, token/session regression | Backend + Frontend + Security | Release Gate v2 |
+| Portal / MAX onboarding | `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md`, `docs/runbooks/portal-max-deeplink-failure.md` | portal browser smoke, token/session regression, MAX linking integration | Backend + Frontend + Security | Release Gate v2 |
 | Slot booking / reschedule / intro-day | `docs/architecture/core-workflows.md`, `docs/data/data-dictionary.md` | backend pytest, browser flow, DB integration | Backend / QA | Release Gate v2 |
 | Recruiter dashboard / candidate drawer | `docs/frontend/route-map.md`, `docs/frontend/screen-inventory.md` | frontend unit, browser smoke, a11y spot checks | Frontend | Release Gate v2 |
-| Recruiter messenger | `docs/architecture/core-workflows.md`, `docs/security/trust-boundaries.md` | backend integration, Redis/outbox checks, smoke | Backend / Ops | Release Gate v2 |
-| Notification delivery | `docs/architecture/core-workflows.md`, `docs/qa/environment-matrix.md` | integration, retry/idempotency tests | Backend / QA | Release Gate v2 |
+| Recruiter messenger | `docs/architecture/core-workflows.md`, `docs/security/trust-boundaries.md`, `docs/frontend/state-flows.md` | backend integration, ThreadView unit, smoke | Backend / Frontend / Ops | Release Gate v2 |
+| Telegram/MAX delivery reliability | `docs/architecture/core-workflows.md`, `docs/runbooks/broker-degradation.md`, `docs/frontend/state-flows.md` | integration, retry/idempotency tests, delivery health unit, system delivery smoke | Backend / Frontend / QA | Release Gate v2 |
 | HH sync / import | `docs/architecture/core-workflows.md`, `docs/data/data-dictionary.md` | integration tests, mapping regressions | Backend | Release Gate v2 |
 | AI copilot / interview script | `docs/security/trust-boundaries.md`, `docs/architecture/core-workflows.md` | backend tests, frontend smoke, prompt/output guardrails | Backend + Security + QA | Release Gate v2 |
 | Auth / session / CSRF | `docs/security/auth-and-token-model.md`, `docs/security/trust-boundaries.md` | security regression matrix, integration tests | Security + Backend | Release Gate v2 |
@@ -47,3 +47,6 @@ flowchart LR
     D --> E[Release Gate v2]
 ```
 
+## Sprint Reliability Addendum
+- Telegram/MAX reliability tranche must map each known failure class (`transient`, `permanent`, `misconfiguration`) to at least one backend regression and one operator-facing doc/runbook.
+- Portal session invalidation and invite conflict handling are treated as release-blocking regressions, not support-only issues.

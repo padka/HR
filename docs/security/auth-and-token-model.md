@@ -43,9 +43,9 @@ Canonical
 | Session cookie | `SessionMiddleware` | admin/recruiter browser sessions | cookie lifetime, server-side session payload | browser cookie |
 | Bearer JWT | `/auth/token` | API clients / browser fallback | `access_token_ttl_hours` | client header |
 | CSRF token | `/api/csrf` | state-changing admin requests | session-bound | browser memory / header |
-| Candidate portal token | `sign_candidate_portal_token()` | `/api/candidate/session/exchange` and portal requests | `candidate_portal_token_ttl_seconds` | query param / header |
-| Candidate invite token | `generate_candidate_invite_token()` | MAX deep link generation | server-generated, single-purpose | query param / DB token table |
-| MAX mini-app token | `sign_candidate_portal_token(... entry_channel="max")` | MAX mini app entry | portal TTL | startapp token |
+| Candidate portal token | `sign_candidate_portal_token()` | `/api/candidate/session/exchange` and portal requests | `candidate_portal_token_ttl_seconds`, bound to `candidate_id + journey_session_id + session_version` | query param / header |
+| Candidate invite token | `generate_candidate_invite_token()` / `issue_candidate_invite_token()` | MAX deep link generation and linking | server-generated, rotated per candidate/channel, status-tracked in DB | query param / DB token table |
+| MAX mini-app token | `sign_candidate_portal_token(... entry_channel="max")` | MAX mini app entry | portal TTL, includes `journey_session_id + session_version` | startapp token |
 | HH OAuth state | `sign_hh_oauth_state()` | OAuth callback correlation | `hh_oauth_state_ttl_seconds` | query param |
 | HH webhook key | `webhook_url_key` | HH webhook receiver path | long-lived secret | path segment |
 | Webhook secret | `max_webhook_secret`, `hh_webhook_secret` | external webhook subscription verification | provider-defined | env secret |
@@ -73,17 +73,18 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   autonumber
-  participant C as Candidate browser
+  participant C as Candidate browser / MAX mini app
   participant P as /api/candidate
   participant D as DB
 
-  C->>P: POST /session/exchange {token}
-  P->>D: validate signed portal token
+  C->>P: POST /session/exchange {signed portal token}
+  P->>D: validate token signature + candidate_id + journey_session_id + session_version
   P->>D: create / touch portal session
   P-->>C: journey payload + server session
 
-  C->>P: POST /profile or /screening/save
-  P->>P: validate portal session / header token
+  C->>P: GET/POST portal API with cookie or x-candidate-portal-token
+  P->>P: validate portal session or header token
+  P->>D: verify active journey and matching session_version
   P->>D: persist candidate state
   P-->>C: refreshed journey
 ```
@@ -99,18 +100,24 @@ sequenceDiagram
 ## Candidate Portal Model
 
 - Portal token is a signed, time-limited token built with `itsdangerous.URLSafeTimedSerializer`.
-- Portal token payload contains candidate identity and entry channel only.
+- Portal token payload contains `candidate_id`, `entry_channel`, `journey_session_id` and `session_version`.
 - Portal session is server-managed and lives under `candidate_portal` session key.
 - Requests can recover from missing browser cookies by sending the portal token in one of:
   `x-candidate-portal-token`, `x-candidate-portal-access-token`, `x-candidate-portal-session-token`.
+- Header-token recovery is valid only when the referenced journey session still exists, remains `active`, and `session_version` matches the current DB value.
+- `relink`, invite rotation, explicit security recovery and similar ownership-changing actions bump `session_version` and invalidate stale browser/header sessions.
 - Portal responses must never be treated as admin/recruiter auth.
 
 ## MAX Model
 
 - Admin-generated MAX link uses an invite token plus an optional mini-app token.
 - Deep link format is provider-specific and uses `start=...` or `startapp=...`.
+- Raw invite tokens are treated as secrets after issuance: recruiter-facing `channel-health` surfaces expose only invite metadata, and audit log entries store invite ids / rotation metadata instead of token values.
 - MAX runtime deduplicates webhook updates before processing to prevent duplicate side effects.
-- Candidate may enter MAX either from a direct public flow or via recruiter-issued deep link that binds an existing CRM candidate.
+- Only one active MAX invite is canonical per candidate. New admin rotation supersedes previous active invite instead of creating parallel active links.
+- Reuse of the same invite by the same `max_user_id` is idempotent. Reuse by another `max_user_id` is treated as conflict and must not create duplicate linking side effects.
+- `messenger_platform` is no longer silently overwritten on every MAX entry. Preferred channel changes only when candidate has no linked channel yet or an explicit operator action rotates ownership.
+- Public MAX placeholder onboarding remains feature-flagged and is non-default for production. Invite-based linking is the canonical production path.
 
 ## HH Model
 
@@ -138,8 +145,7 @@ sequenceDiagram
 - Session fixation and cross-principal session reuse.
 - JWT acceptance for the wrong principal type or stale account.
 - CSRF header bypass on admin mutations.
-- Candidate portal token replay or accidental reuse as admin auth.
-- MAX invite token reuse, collision, or leakage in logs.
+- Candidate portal token replay, stale `session_version` reuse, or accidental reuse as admin auth.
+- MAX invite token reuse, conflict linking, superseded invite acceptance, or leakage in logs.
 - HH OAuth callback principal mismatch or replay.
 - Webhook secret exposure and webhook replay handling.
-
