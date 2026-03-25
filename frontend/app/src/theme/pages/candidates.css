@@ -1,5 +1,5 @@
 .candidates-page {
-  gap: var(--section-gap);
+  gap: var(--space-lg);
 }
 
 .candidates-page .ui-btn:active {
@@ -8,18 +8,18 @@
 
 .candidates-filter-bar {
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .candidates-filter-bar__search,
 .candidates-page .filter-bar select,
 .candidates-page .filter-bar input {
-  min-height: 40px;
+  min-height: 36px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
   color: var(--text-primary);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-2);
   transition:
     border-color var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-fast) var(--ease-out),
@@ -45,20 +45,20 @@
 .candidates-filter-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
+  gap: var(--space-1);
+  margin-top: var(--space-2);
 }
 
 .candidates-filter-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 30px;
-  padding: var(--space-1) var(--space-3);
+  min-height: 28px;
+  padding: 4px 10px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
@@ -71,13 +71,13 @@
 }
 
 .candidates-table-wrapper {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .candidates-table {
@@ -87,7 +87,7 @@
 }
 
 .candidates-thead th {
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-default);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -98,7 +98,7 @@
 }
 
 .candidate-row td {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
   transition: background var(--duration-fast) var(--ease-out);
@@ -110,7 +110,7 @@
 }
 
 .candidate-row:hover td {
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
 }
 
 .candidate-row__identity {
@@ -158,18 +158,22 @@
 
 .candidates-status-pill {
   border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: var(--font-semibold);
 }
 
 .candidate-score {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  min-height: 28px;
+  min-width: 48px;
+  min-height: 24px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
   font-size: var(--text-sm);
   font-weight: var(--font-semibold);
 }
@@ -199,8 +203,8 @@
 .kanban {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(280px, 320px);
-  gap: var(--space-4);
+  grid-auto-columns: minmax(260px, 300px);
+  gap: var(--space-3);
   overflow-x: auto;
   padding-bottom: var(--space-2);
 }
@@ -208,11 +212,11 @@
 .kanban-column {
   min-width: 280px;
   max-width: 320px;
-  padding: var(--space-3);
+  padding: var(--space-2);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .kanban-column-header {
@@ -220,8 +224,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-3);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: var(--font-semibold);
@@ -247,11 +251,11 @@
 
 .kanban-card {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   background: var(--bg-elevated);
   cursor: grab;
   transition:
@@ -263,13 +267,13 @@
 
 .kanban-card:hover {
   border-color: var(--border-default);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
   transform: translateY(-1px);
 }
 
 .kanban-card--dragging {
   opacity: 0.9;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   transform: rotate(2deg) scale(1.02);
 }
 
@@ -277,7 +281,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .kanban-card__identity {
@@ -312,12 +316,12 @@
 
 .candidate-mobile-card {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--card-padding);
-  border: 1px solid var(--border-subtle);
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .candidate-mobile-card__meta {
