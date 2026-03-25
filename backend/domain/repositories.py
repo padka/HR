@@ -339,6 +339,19 @@ async def _get_city_lookup() -> dict[str, tuple[int, Optional[str]]]:
         return lookup
 
 
+async def invalidate_city_lookup_cache() -> None:
+    """Invalidate the process-local city lookup cache.
+
+    City CRUD paths use this to avoid stale name->id resolution after rename,
+    create, or delete operations in long-running admin/bot processes.
+    """
+
+    global _CITY_LOOKUP, _CITY_LOOKUP_EXPIRES_AT
+    async with _CITY_LOOKUP_LOCK:
+        _CITY_LOOKUP = None
+        _CITY_LOOKUP_EXPIRES_AT = None
+
+
 async def resolve_city_id_and_tz_by_plain_name(
     name: Optional[str],
 ) -> tuple[Optional[int], Optional[str]]:

@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
+from backend.apps.bot.city_registry import invalidate_candidate_cities_cache
 from backend.core.cache import CacheKeys, CacheTTL, get_cache
 from backend.core.ai.service import schedule_refresh_active_city_candidates_ai_outputs
 from backend.core.db import async_session
 from backend.core.sanitizers import sanitize_plain_text
 from backend.domain.cities.models import CityExpert
+from backend.domain.candidates.models import User
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
-from backend.domain.repositories import city_has_available_slots, slot_status_free_clause
+from backend.domain.repositories import (
+    city_has_available_slots,
+    invalidate_city_lookup_cache,
+    slot_status_free_clause,
+)
 from backend.domain.errors import CityAlreadyExistsError
 from backend.apps.admin_ui.security import principal_ctx, Principal
 
@@ -34,6 +41,8 @@ __all__ = [
     "get_city_capacity",
     "city_experts_items",
 ]
+
+logger = logging.getLogger(__name__)
 
 _EXPERT_SPLIT_RE = re.compile(r"[\n,;]+")
 
@@ -154,6 +163,16 @@ def _sync_city_experts_from_text(city: City, value: Optional[str]) -> List[str]:
     return _sync_city_experts_from_items(city, desired)
 
 
+async def invalidate_city_caches() -> None:
+    """Invalidate all process-local city caches used by admin and bot flows."""
+
+    await invalidate_city_lookup_cache()
+    try:
+        await invalidate_candidate_cities_cache()
+    except Exception:
+        logger.warning("candidate city registry cache invalidation failed", exc_info=True)
+
+
 async def list_cities(order_by_name: bool = True, principal: Optional[Principal] = None) -> List[City]:
     principal = principal or principal_ctx.get()
     if principal is None:
@@ -252,6 +271,7 @@ async def create_city(
                     city.responsible_recruiter = recruiters_list[0]
             await session.commit()
             await session.refresh(city)
+            await invalidate_city_caches()
             return city
         except IntegrityError as exc:
             await session.rollback()
@@ -285,6 +305,7 @@ async def update_city_settings(
             city = city_result.scalar_one_or_none()
             if not city:
                 return "City not found", None, None
+            previous_name = city.name_plain
 
             assigned_recruiter: Optional[Recruiter] = None
 
@@ -333,6 +354,12 @@ async def update_city_settings(
                     await session.rollback()
                     return "Название города не может быть пустым", None, None
                 city.name = clean_name
+                if clean_name != previous_name:
+                    await session.execute(
+                        update(User)
+                        .where(func.trim(User.city) == previous_name)
+                        .values(city=clean_name)
+                    )
 
             if tz is not None:
                 try:
@@ -355,6 +382,7 @@ async def update_city_settings(
         except Exception:
             await session.rollback()
             raise
+    await invalidate_city_caches()
     if criteria_changed:
         schedule_refresh_active_city_candidates_ai_outputs(city_id, principal=principal_ctx.get(), refresh=True)
     return None, city, assigned_recruiter
@@ -383,6 +411,7 @@ async def update_city_owner(
         except Exception:
             await session.rollback()
             raise
+    await invalidate_city_caches()
     return None, city, recruiter_obj
 
 
@@ -398,6 +427,7 @@ async def set_city_active(city_id: int, active: bool) -> Tuple[Optional[str], Op
         except Exception:
             await session.rollback()
             raise
+    await invalidate_city_caches()
     return None, city
 
 
@@ -412,6 +442,7 @@ async def delete_city(city_id: int) -> bool:
         except Exception:
             await session.rollback()
             raise
+    await invalidate_city_caches()
     return True
 
 

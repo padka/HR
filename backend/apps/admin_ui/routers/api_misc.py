@@ -30,7 +30,7 @@ from backend.apps.admin_ui.security import (
     require_csrf_token,
     require_principal,
 )
-from backend.apps.admin_ui.services.cities import api_city_owners_payload
+from backend.apps.admin_ui.services.cities import api_city_owners_payload, invalidate_city_caches
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.calendar_events import (
     get_calendar_events,
@@ -2000,14 +2000,7 @@ async def api_bot_cities_refresh(
     __: None = Depends(require_csrf_token),
 ) -> JSONResponse:
     try:
-        from backend.apps.bot.city_registry import invalidate_candidate_cities_cache
-    except Exception:
-        return JSONResponse(
-            {"ok": False, "error": "bot_runtime_unavailable"}, status_code=503
-        )
-
-    try:
-        await invalidate_candidate_cities_cache()
+        await invalidate_city_caches()
     except Exception as exc:  # pragma: no cover - defensive
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
