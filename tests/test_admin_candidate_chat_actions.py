@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
@@ -22,10 +23,12 @@ from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import AuditLog, CalendarTask, City, Recruiter, Slot, SlotStatus
 
 
-@pytest.fixture(scope="session", autouse=True)
-def configure_backend(tmp_path_factory):
+@pytest.fixture(autouse=True)
+def configure_backend(tmp_path):
+    global async_session, candidate_services
     mp = pytest.MonkeyPatch()
-    db_dir = tmp_path_factory.mktemp("data_local")
+    db_dir = tmp_path / "data_local"
+    db_dir.mkdir(parents=True, exist_ok=True)
     db_path = db_dir / "bot.db"
     mp.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     mp.setenv("DATA_DIR", str(db_dir))
@@ -40,15 +43,14 @@ def configure_backend(tmp_path_factory):
 
     db_module = importlib.import_module("backend.core.db")
     importlib.reload(db_module)
+    candidate_services = importlib.reload(candidate_services)
+    async_session = db_module.async_session
 
     from backend.domain.base import Base
 
     Base.metadata.create_all(bind=db_module.sync_engine)
 
     yield
-
-    Base.metadata.drop_all(bind=db_module.sync_engine)
-    import asyncio
 
     loop = asyncio.new_event_loop()
     loop.run_until_complete(db_module.async_engine.dispose())
@@ -112,6 +114,11 @@ def admin_app(monkeypatch) -> Any:
         yield app
     finally:
         settings_module.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def clean_database() -> None:
+    yield
 
 
 async def _async_request(app, method: str, path: str, **kwargs) -> Any:
