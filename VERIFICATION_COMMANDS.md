@@ -57,6 +57,20 @@ Validates:
 - env loading for `MAX_BOT_TOKEN` / `MAX_WEBHOOK_URL`
 - webhook endpoint availability on port `8010` by default
 
+### Live-local MAX bootstrap
+
+```bash
+make dev-max-live
+```
+
+Validates:
+- `cloudflared` quick tunnels for admin UI and MAX webhook
+- process-local public `CRM_PUBLIC_URL` / `CANDIDATE_PORTAL_PUBLIC_URL`
+- process-local public `MAX_WEBHOOK_URL`
+- auto-resolution of `MAX_BOT_LINK_BASE` from provider when env value is absent
+- local admin UI on `8000` and MAX webhook service on `8010`
+- optional `DEV_MAX_LIVE_ADMIN_PORT` / `DEV_MAX_LIVE_MAX_PORT` overrides when the default ports are already occupied
+
 ### Frontend-only dev server
 
 ```bash

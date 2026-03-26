@@ -24,6 +24,7 @@ Canonical
 ## Related Diagrams
 - `docs/security/trust-boundaries.md`
 - `docs/security/auth-and-token-model.md`
+- `docs/runbooks/max-live-local-bootstrap.md`
 
 ## Change Policy
 - Never weaken token validation or bypass candidate identity checks to “make link work”.
@@ -85,6 +86,13 @@ flowchart TD
 8. If MAX bot is degraded, verify adapter registration, credentials and webhook health before requeue/retry.
 9. If only the mini app is broken, inspect `startapp` payload: it must be URL-safe, shorter than MAX limits and must not contain raw signed portal token segments.
 10. If only the browser link is broken, confirm that `portal_entry_ready=true` in `/api/system/messenger-health` and `/api/candidates/{id}/channel-health`.
+11. If system health reports `max_webhook_unreachable` or `max_subscription_not_ready`, restore live-local/public bootstrap first via `make dev-max-live`.
+
+## Operator Truths
+
+- Удаление диалога в MAX не сбрасывает journey/session кандидата в CRM.
+- `Переотправить ссылку` сохраняет текущий progress и bump-ает `session_version`.
+- `Начать заново` создаёт новую active journey и оставляет историю предыдущей попытки.
 
 ## Verification
 

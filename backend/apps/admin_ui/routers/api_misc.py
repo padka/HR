@@ -147,11 +147,11 @@ from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
-    build_candidate_public_max_mini_app_url,
+    build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
     bump_candidate_portal_session_version,
     ensure_candidate_portal_session,
-    get_candidate_portal_max_entry_status,
+    get_candidate_portal_max_entry_status_async,
     get_candidate_portal_public_status,
     restart_candidate_portal_journey,
 )
@@ -2354,9 +2354,9 @@ async def api_chat_retry(
     return JSONResponse(result)
 
 
-def _candidate_portal_link_errors() -> list[str]:
+async def _candidate_portal_link_errors_async() -> list[str]:
     portal_status = get_candidate_portal_public_status()
-    max_status = get_candidate_portal_max_entry_status()
+    max_status = await get_candidate_portal_max_entry_status_async()
     errors = []
     if portal_status.get("message"):
         errors.append(str(portal_status["message"]))
@@ -2448,15 +2448,43 @@ async def _deliver_candidate_portal_access_package(
     text: str,
     browser_link: str | None,
     mini_app_link: str | None,
+    delivery_allowed: bool,
+    skip_reason: str | None = None,
 ) -> dict[str, Any]:
+    if not delivery_allowed:
+        return {
+            "status": "skipped_by_preflight",
+            "sent": False,
+            "attempted": False,
+            "error": None,
+            "skipped_reason": skip_reason,
+        }
     if not browser_link and not mini_app_link:
-        return {"status": "skipped_no_entry", "sent": False, "error": "Нет публичной ссылки кабинета"}
+        return {
+            "status": "skipped_no_entry",
+            "sent": False,
+            "attempted": False,
+            "error": "Нет публичной ссылки кабинета",
+            "skipped_reason": skip_reason or "candidate_portal_entry_missing",
+        }
     if not str(candidate.max_user_id or "").strip():
-        return {"status": "not_linked", "sent": False, "error": "MAX ID не привязан"}
+        return {
+            "status": "not_linked",
+            "sent": False,
+            "attempted": False,
+            "error": "MAX ID не привязан",
+            "skipped_reason": skip_reason or "max_not_linked",
+        }
 
     adapter = await _ensure_max_access_adapter()
     if adapter is None:
-        return {"status": "adapter_unavailable", "sent": False, "error": "MAX bot не готов"}
+        return {
+            "status": "adapter_unavailable",
+            "sent": False,
+            "attempted": False,
+            "error": "MAX bot не готов",
+            "skipped_reason": skip_reason or "max_adapter_unavailable",
+        }
 
     try:
         result = await adapter.send_message(
@@ -2475,7 +2503,13 @@ async def _deliver_candidate_portal_access_package(
             success=False,
             error=str(exc),
         )
-        return {"status": "failed", "sent": False, "error": str(exc)}
+        return {
+            "status": "failed",
+            "sent": False,
+            "attempted": True,
+            "error": str(exc),
+            "skipped_reason": None,
+        }
 
     success = bool(getattr(result, "success", False) or getattr(result, "ok", False))
     error = None if success else str(getattr(result, "error", None) or "delivery_failed")
@@ -2489,7 +2523,9 @@ async def _deliver_candidate_portal_access_package(
     return {
         "status": "sent" if success else "failed",
         "sent": success,
+        "attempted": True,
         "error": error,
+        "skipped_reason": None,
     }
 
 
@@ -2532,7 +2568,7 @@ async def _candidate_portal_access_payload(
     restarted: bool = False,
 ) -> dict[str, Any]:
     portal_status = get_candidate_portal_public_status()
-    max_status = get_candidate_portal_max_entry_status()
+    max_status = await get_candidate_portal_max_entry_status_async()
     browser_link = build_candidate_public_portal_url(
         candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
         telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
@@ -2541,25 +2577,37 @@ async def _candidate_portal_access_payload(
         journey_session_id=int(journey.id),
         session_version=int(journey.session_version or 1),
     )
-    mini_app_link = build_candidate_public_max_mini_app_url(
+    mini_app_link = await build_candidate_public_max_mini_app_url_async(
         candidate_uuid=str(candidate.candidate_id),
         journey_session_id=int(journey.id),
         session_version=int(journey.session_version or 1),
         source_channel="max_app_restart" if restarted else "max_app",
     )
 
-    settings = get_settings()
-    public_link = str(getattr(settings, "max_bot_link_base", "") or "").strip().rstrip("/")
+    public_link = str(max_status.get("url") or "").strip().rstrip("/")
     deep_link = ""
     if public_link and invite.token:
         separator = "&" if "?" in public_link else "?"
         deep_link = f"{public_link}{separator}start={quote(str(invite.token), safe='')}"
+    delivery_block_reason = None
+    if not portal_status.get("ready"):
+        delivery_block_reason = str(portal_status.get("error") or "candidate_portal_public_url_invalid")
+    elif not max_status.get("ready"):
+        delivery_block_reason = str(max_status.get("error") or "max_entry_blocked")
+    elif not str(candidate.max_user_id or "").strip():
+        delivery_block_reason = "max_not_linked"
+    delivery_ready = delivery_block_reason is None
 
     return {
         "public_link": public_link,
         "portal_public_url": portal_status.get("url"),
         "portal_entry_ready": bool(portal_status.get("ready")),
         "max_entry_ready": bool(max_status.get("ready")),
+        "token_valid": max_status.get("token_valid"),
+        "bot_profile_resolved": bool(max_status.get("bot_profile_resolved")),
+        "bot_profile_name": max_status.get("bot_profile_name"),
+        "max_link_base_resolved": bool(max_status.get("max_link_base_resolved")),
+        "max_link_base_source": max_status.get("max_link_base_source"),
         "browser_link": browser_link or None,
         "invite_token": str(invite.token or ""),
         "deep_link": deep_link or None,
@@ -2575,7 +2623,10 @@ async def _candidate_portal_access_payload(
             "session_version": int(journey.session_version or 1),
             "restarted": bool(restarted),
         },
-        "config_errors": _candidate_portal_link_errors(),
+        "config_errors": await _candidate_portal_link_errors_async(),
+        "delivery_ready": delivery_ready,
+        "delivery_block_reason": delivery_block_reason,
+        "readiness_reason": delivery_block_reason or None,
     }
 
 
@@ -2647,6 +2698,8 @@ async def api_candidate_max_link(
         text=delivery_text,
         browser_link=payload.get("browser_link"),
         mini_app_link=payload.get("mini_app_link"),
+        delivery_allowed=bool(payload.get("delivery_ready")),
+        skip_reason=str(payload.get("delivery_block_reason") or "") or None,
     )
 
     await log_audit_action(
@@ -2752,6 +2805,8 @@ async def api_candidate_portal_restart(
         text=delivery_text,
         browser_link=payload.get("browser_link"),
         mini_app_link=payload.get("mini_app_link"),
+        delivery_allowed=bool(payload.get("delivery_ready")),
+        skip_reason=str(payload.get("delivery_block_reason") or "") or None,
     )
 
     await log_audit_action(

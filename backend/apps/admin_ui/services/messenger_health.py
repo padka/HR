@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 from sqlalchemy import func, or_, select
 
 from backend.core.db import async_session
 from backend.core.messenger.channel_state import get_messenger_channel_health
+from backend.core.messenger.protocol import MessengerPlatform
+from backend.core.messenger.registry import get_registry
+from backend.core.settings import get_settings
 from backend.domain.candidates.models import (
     CandidateInviteToken,
     CandidateJourneySession,
@@ -16,11 +20,12 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import (
-    build_candidate_public_max_mini_app_url,
+    build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
     get_candidate_active_slot,
-    get_candidate_portal_max_entry_status,
     get_candidate_portal_public_status,
+    get_candidate_portal_max_entry_status_async,
+    inspect_max_bot_profile_probe,
 )
 from backend.domain.models import OutboxNotification
 
@@ -42,6 +47,75 @@ def _delivery_stage(status_value: str | None) -> str:
     if normalized == ChatMessageStatus.FAILED.value:
         return "failed"
     return normalized or "unknown"
+
+
+def _is_public_https_url(value: str | None) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    if parsed.scheme.lower() != "https":
+        return False
+    normalized_host = str(parsed.hostname or "").strip().lower().strip("[]")
+    return normalized_host not in {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+async def _inspect_max_webhook_status() -> dict[str, Any]:
+    settings = get_settings()
+    webhook_url = str(settings.max_webhook_url or "").strip()
+    if not _is_public_https_url(webhook_url):
+        return {
+            "webhook_public_ready": False,
+            "webhook_url": webhook_url or None,
+            "webhook_error": "max_webhook_unreachable",
+            "webhook_message": "MAX_WEBHOOK_URL должен быть публичным HTTPS URL.",
+            "subscription_ready": False,
+            "subscription_error": "max_subscription_not_ready",
+            "subscription_message": "Подписка webhook не может быть подтверждена без публичного URL.",
+        }
+
+    adapter = get_registry().get(MessengerPlatform.MAX)
+    if adapter is None or not hasattr(adapter, "list_subscriptions"):
+        return {
+            "webhook_public_ready": True,
+            "webhook_url": webhook_url,
+            "webhook_error": None,
+            "webhook_message": None,
+            "subscription_ready": False,
+            "subscription_error": "max_subscription_not_ready",
+            "subscription_message": "MAX adapter не инициализирован.",
+        }
+
+    try:
+        subscriptions = await adapter.list_subscriptions()
+    except Exception as exc:
+        return {
+            "webhook_public_ready": True,
+            "webhook_url": webhook_url,
+            "webhook_error": None,
+            "webhook_message": None,
+            "subscription_ready": False,
+            "subscription_error": "max_subscription_not_ready",
+            "subscription_message": str(exc),
+        }
+
+    for item in subscriptions:
+        if str(item.get("url") or "").strip() == webhook_url:
+            return {
+                "webhook_public_ready": True,
+                "webhook_url": webhook_url,
+                "webhook_error": None,
+                "webhook_message": None,
+                "subscription_ready": True,
+                "subscription_error": None,
+                "subscription_message": None,
+            }
+    return {
+        "webhook_public_ready": True,
+        "webhook_url": webhook_url,
+        "webhook_error": None,
+        "webhook_message": None,
+        "subscription_ready": False,
+        "subscription_error": "max_subscription_not_ready",
+        "subscription_message": "Текущий MAX webhook не зарегистрирован у провайдера.",
+    }
 
 
 def _serialize_invite(invite: CandidateInviteToken | None, *, candidate: User) -> dict[str, Any] | None:
@@ -124,7 +198,9 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         active_slot = await get_candidate_active_slot(session, candidate)
 
     portal_status = get_candidate_portal_public_status()
-    max_status = get_candidate_portal_max_entry_status()
+    max_status = await get_candidate_portal_max_entry_status_async()
+    degraded_channels = await get_messenger_channel_health()
+    max_channel_state = degraded_channels.get("max") or {}
     active_slot_status = str(getattr(active_slot, "status", "") or "").strip().lower()
     restart_allowed = active_slot_status not in {"confirmed", "confirmed_by_candidate"}
     config_errors = []
@@ -142,12 +218,23 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
             journey_session_id=int(active_journey.id),
             session_version=int(active_journey.session_version or 1),
         )
-        mini_app_link = build_candidate_public_max_mini_app_url(
+        mini_app_link = await build_candidate_public_max_mini_app_url_async(
             candidate_uuid=str(candidate.candidate_id),
             journey_session_id=int(active_journey.id),
             session_version=int(active_journey.session_version or 1),
             source_channel="admin_health",
         )
+
+    delivery_block_reason = None
+    if not portal_status.get("ready"):
+        delivery_block_reason = str(portal_status.get("error") or "candidate_portal_public_url_invalid")
+    elif not max_status.get("ready"):
+        delivery_block_reason = str(max_status.get("error") or "max_entry_blocked")
+    elif not str(candidate.max_user_id or "").strip():
+        delivery_block_reason = "max_not_linked"
+    elif str(max_channel_state.get("status") or "").strip().lower() == "degraded":
+        delivery_block_reason = str(max_channel_state.get("reason") or "max_channel_degraded")
+    delivery_ready = delivery_block_reason is None
 
     return {
         "candidate_id": candidate_id,
@@ -167,6 +254,11 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "portal_public_url": portal_status.get("url"),
         "portal_entry_ready": bool(portal_status.get("ready")),
         "max_entry_ready": bool(max_status.get("ready")),
+        "token_valid": max_status.get("token_valid"),
+        "bot_profile_resolved": bool(max_status.get("bot_profile_resolved")),
+        "bot_profile_name": max_status.get("bot_profile_name"),
+        "max_link_base_resolved": bool(max_status.get("max_link_base_resolved")),
+        "max_link_base_source": max_status.get("max_link_base_source"),
         "browser_link": browser_link or None,
         "mini_app_link": mini_app_link or None,
         "config_errors": config_errors,
@@ -174,6 +266,9 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "session_version": int(active_journey.session_version or 1) if active_journey is not None else None,
         "last_link_issued_at": _iso(latest_invite.created_at) if latest_invite is not None else None,
         "restart_allowed": restart_allowed,
+        "delivery_ready": delivery_ready,
+        "delivery_block_reason": delivery_block_reason,
+        "degraded_channels": degraded_channels,
     }
 
 
@@ -239,7 +334,9 @@ async def get_messenger_health(
             }
 
     portal_status = get_candidate_portal_public_status()
-    max_status = get_candidate_portal_max_entry_status()
+    max_status = await get_candidate_portal_max_entry_status_async()
+    profile_probe = await inspect_max_bot_profile_probe()
+    webhook_status = await _inspect_max_webhook_status()
 
     return {
         "channels": channel_payloads,
@@ -252,6 +349,18 @@ async def get_messenger_health(
             "max_entry_error": max_status.get("error"),
             "max_entry_message": max_status.get("message"),
             "max_link_base": max_status.get("url"),
+            "token_valid": profile_probe.get("token_valid"),
+            "bot_profile_resolved": bool(profile_probe.get("bot_profile_resolved")),
+            "bot_profile_name": profile_probe.get("bot_profile_name"),
+            "max_link_base_resolved": bool(profile_probe.get("max_link_base_resolved")),
+            "max_link_base_source": profile_probe.get("max_link_base_source"),
+            "webhook_public_ready": webhook_status.get("webhook_public_ready"),
+            "webhook_url": webhook_status.get("webhook_url"),
+            "webhook_error": webhook_status.get("webhook_error"),
+            "webhook_message": webhook_status.get("webhook_message"),
+            "subscription_ready": webhook_status.get("subscription_ready"),
+            "subscription_error": webhook_status.get("subscription_error"),
+            "subscription_message": webhook_status.get("subscription_message"),
         },
     }
 

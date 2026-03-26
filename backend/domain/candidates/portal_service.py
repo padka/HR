@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import re
+import time
 from urllib.parse import quote, urlparse
 from typing import Any, Optional
 
@@ -18,6 +20,9 @@ from sqlalchemy.orm import selectinload
 
 from backend.apps.bot.config import DEFAULT_TZ, TEST1_QUESTIONS, refresh_questions_bank
 from backend.apps.bot.test1_validation import apply_partial_validation, convert_age
+from backend.core.messenger.max_adapter import MaxAdapterAuthError, MaxAdapterRequestError
+from backend.core.messenger.protocol import MessengerPlatform
+from backend.core.messenger.registry import get_registry
 from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidate_status_service import CandidateStatusService
@@ -55,6 +60,12 @@ PORTAL_ACTIVE_SLOT_STATUSES = {
     SlotStatus.BOOKED,
     SlotStatus.CONFIRMED,
     SlotStatus.CONFIRMED_BY_CANDIDATE,
+}
+MAX_BOT_PROFILE_CACHE_TTL_SECONDS = 60
+_max_bot_profile_cache: dict[str, Any] = {
+    "key": None,
+    "fetched_at": 0.0,
+    "payload": None,
 }
 
 _status_service = CandidateStatusService()
@@ -183,8 +194,265 @@ def get_candidate_portal_max_entry_status() -> dict[str, Any]:
     }
 
 
+def _max_bot_profile_cache_key() -> str:
+    settings = get_settings()
+    source = "\n".join(
+        [
+            str(settings.max_bot_enabled),
+            str(settings.max_bot_token or ""),
+            str(settings.max_bot_link_base or ""),
+        ]
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _get_cached_max_profile_probe() -> dict[str, Any] | None:
+    cache_key = _max_bot_profile_cache_key()
+    if _max_bot_profile_cache.get("key") != cache_key:
+        return None
+    fetched_at = float(_max_bot_profile_cache.get("fetched_at") or 0.0)
+    if fetched_at <= 0 or (time.monotonic() - fetched_at) > MAX_BOT_PROFILE_CACHE_TTL_SECONDS:
+        return None
+    payload = _max_bot_profile_cache.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _store_max_profile_probe(payload: dict[str, Any]) -> dict[str, Any]:
+    cached = dict(payload)
+    _max_bot_profile_cache["key"] = _max_bot_profile_cache_key()
+    _max_bot_profile_cache["fetched_at"] = time.monotonic()
+    _max_bot_profile_cache["payload"] = cached
+    return dict(cached)
+
+
+def _extract_max_profile_root(payload: dict[str, Any]) -> dict[str, Any]:
+    nested = payload.get("user")
+    if isinstance(nested, dict):
+        return nested
+    return payload
+
+
+def _extract_max_profile_name(payload: dict[str, Any]) -> str | None:
+    profile = _extract_max_profile_root(payload)
+    for key in ("name", "display_name", "full_name", "title", "username"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _extract_max_profile_link_base(payload: dict[str, Any]) -> str | None:
+    profile = _extract_max_profile_root(payload)
+    for key in ("link", "url", "public_url"):
+        value = str(profile.get(key) or "").strip().rstrip("/")
+        parsed = urlparse(value)
+        if parsed.scheme.lower() == "https" and str(parsed.netloc or "").strip():
+            return value
+
+    for key in ("username", "slug", "handle", "public_name", "login"):
+        value = str(profile.get(key) or "").strip().lstrip("@")
+        if re.fullmatch(r"[A-Za-z0-9._-]{1,120}", value):
+            return f"https://max.ru/{value}"
+
+    for key in ("user_id", "id", "uid"):
+        value = str(profile.get(key) or "").strip()
+        digits = "".join(ch for ch in value if ch.isdigit())
+        if digits:
+            return f"https://max.ru/id{digits}_bot"
+    return None
+
+
+async def _ensure_max_bot_profile_adapter():
+    adapter = get_registry().get(MessengerPlatform.MAX)
+    if adapter is not None:
+        return adapter
+
+    settings = get_settings()
+    if not settings.max_bot_enabled or not settings.max_bot_token:
+        return None
+
+    try:
+        from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
+
+        await bootstrap_messenger_adapters(
+            bot=None,
+            max_bot_enabled=settings.max_bot_enabled,
+            max_bot_token=settings.max_bot_token,
+        )
+    except Exception:
+        return None
+    return get_registry().get(MessengerPlatform.MAX)
+
+
+async def inspect_max_bot_profile_probe() -> dict[str, Any]:
+    cached = _get_cached_max_profile_probe()
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    explicit_link_base = str(settings.max_bot_link_base or "").strip().rstrip("/")
+    payload: dict[str, Any] = {
+        "token_valid": None,
+        "bot_profile_resolved": False,
+        "bot_profile_name": None,
+        "max_link_base_resolved": False,
+        "max_link_base_source": "env" if explicit_link_base else "missing",
+        "max_link_base": explicit_link_base or None,
+        "error": None,
+        "message": None,
+    }
+
+    if not settings.max_bot_enabled:
+        payload.update(
+            {
+                "token_valid": False,
+                "error": "max_bot_disabled",
+                "message": "MAX_BOT_ENABLED должен быть включен.",
+            }
+        )
+        return _store_max_profile_probe(payload)
+    if not settings.max_bot_token:
+        payload.update(
+            {
+                "token_valid": False,
+                "error": "max_token_missing",
+                "message": "MAX_BOT_TOKEN не настроен.",
+            }
+        )
+        return _store_max_profile_probe(payload)
+
+    adapter = await _ensure_max_bot_profile_adapter()
+    if adapter is None or not (hasattr(adapter, "get_bot_profile") or hasattr(adapter, "get_me")):
+        payload.update(
+            {
+                "error": "max_profile_unavailable",
+                "message": "MAX adapter не инициализирован.",
+            }
+        )
+        return _store_max_profile_probe(payload)
+
+    try:
+        profile_loader = getattr(adapter, "get_bot_profile", None) or getattr(adapter, "get_me")
+        profile_payload = await profile_loader()
+    except MaxAdapterAuthError:
+        payload.update(
+            {
+                "token_valid": False,
+                "error": "max_token_invalid",
+                "message": "MAX_BOT_TOKEN отклонён провайдером.",
+            }
+        )
+        return _store_max_profile_probe(payload)
+    except MaxAdapterRequestError as exc:
+        payload.update(
+            {
+                "token_valid": None,
+                "error": "max_profile_unavailable",
+                "message": str(exc),
+            }
+        )
+        return _store_max_profile_probe(payload)
+    except Exception as exc:
+        payload.update(
+            {
+                "token_valid": None,
+                "error": "max_profile_unavailable",
+                "message": str(exc),
+            }
+        )
+        return _store_max_profile_probe(payload)
+
+    resolved_link_base = explicit_link_base or _extract_max_profile_link_base(profile_payload)
+    payload.update(
+        {
+            "token_valid": True,
+            "bot_profile_resolved": True,
+            "bot_profile_name": _extract_max_profile_name(profile_payload),
+            "max_link_base_resolved": bool(resolved_link_base),
+            "max_link_base_source": "env" if explicit_link_base else ("provider" if resolved_link_base else "missing"),
+            "max_link_base": resolved_link_base or None,
+        }
+    )
+    if not resolved_link_base:
+        payload.update(
+            {
+                "error": "max_bot_link_base_unresolved",
+                "message": "Не удалось определить публичную ссылку бота MAX.",
+            }
+        )
+    return _store_max_profile_probe(payload)
+
+
+async def get_candidate_portal_max_entry_status_async() -> dict[str, Any]:
+    portal_status = get_candidate_portal_public_status()
+    profile_probe = await inspect_max_bot_profile_probe()
+    link_base = str(profile_probe.get("max_link_base") or "").strip().rstrip("/")
+    token_valid = profile_probe.get("token_valid")
+    if token_valid is False:
+        return {
+            "ready": False,
+            "url": link_base or None,
+            "error": str(profile_probe.get("error") or "max_token_invalid"),
+            "message": str(profile_probe.get("message") or "MAX токен недействителен."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not profile_probe.get("bot_profile_resolved"):
+        return {
+            "ready": False,
+            "url": link_base or None,
+            "error": str(profile_probe.get("error") or "max_profile_unavailable"),
+            "message": str(profile_probe.get("message") or "Профиль MAX бота недоступен."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not link_base:
+        return {
+            "ready": False,
+            "url": None,
+            "error": str(profile_probe.get("error") or "max_bot_link_base_unresolved"),
+            "message": str(profile_probe.get("message") or "Не удалось определить публичную ссылку бота MAX."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+
+    parsed = urlparse(link_base)
+    if parsed.scheme.lower() != "https":
+        return {
+            "ready": False,
+            "url": link_base,
+            "error": "max_bot_link_base_not_https",
+            "message": "MAX_BOT_LINK_BASE должен использовать HTTPS.",
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not portal_status["ready"]:
+        return {
+            "ready": False,
+            "url": link_base,
+            "error": str(portal_status["error"] or "candidate_portal_public_url_invalid"),
+            "message": str(portal_status["message"] or "Публичный URL кабинета кандидата не готов."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    return {
+        "ready": True,
+        "url": link_base,
+        "error": None,
+        "message": None,
+        "portal": portal_status,
+        **profile_probe,
+    }
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def invalidate_max_bot_profile_probe_cache() -> None:
+    _max_bot_profile_cache["key"] = None
+    _max_bot_profile_cache["fetched_at"] = 0.0
+    _max_bot_profile_cache["payload"] = None
 
 
 def _portal_vacancy_label(candidate: User) -> str:
@@ -400,9 +668,10 @@ def build_candidate_max_mini_app_url(
     *,
     start_param: str | None = None,
     invite_token: str | None = None,
+    link_base: str | None = None,
 ) -> str:
     settings = get_settings()
-    base = (settings.max_bot_link_base or "").rstrip("/")
+    base = (link_base or settings.max_bot_link_base or "").rstrip("/")
     if not base:
         return ""
     token = (start_param or invite_token or "").strip()
@@ -455,7 +724,29 @@ def build_candidate_public_max_mini_app_url(
         session_version=session_version,
         source_channel=source_channel,
     )
-    return build_candidate_max_mini_app_url(start_param=token)
+    return build_candidate_max_mini_app_url(start_param=token, link_base=str(status["url"] or ""))
+
+
+async def build_candidate_public_max_mini_app_url_async(
+    *,
+    candidate_uuid: str,
+    journey_session_id: int,
+    session_version: int,
+    source_channel: str = "max_app",
+) -> str:
+    status = await get_candidate_portal_max_entry_status_async()
+    if not status["ready"]:
+        return ""
+    token = sign_candidate_portal_max_launch_token(
+        candidate_uuid=candidate_uuid,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+        source_channel=source_channel,
+    )
+    return build_candidate_max_mini_app_url(
+        start_param=token,
+        link_base=str(status["url"] or ""),
+    )
 
 
 def is_candidate_portal_session_valid(payload: object) -> bool:

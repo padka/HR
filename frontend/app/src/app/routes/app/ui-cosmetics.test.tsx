@@ -456,15 +456,22 @@ const candidateChannelHealthData = {
   candidate_id: 101,
   preferred_channel: 'max',
   portal_entry_ready: true,
-  max_entry_ready: true,
+  max_entry_ready: false,
+  token_valid: false,
+  bot_profile_resolved: false,
+  bot_profile_name: null,
+  max_link_base_resolved: false,
+  max_link_base_source: 'missing',
   portal_public_url: 'https://crm.example.test',
   browser_link: 'https://crm.example.test/candidate/start?start=signed-token',
-  mini_app_link: 'https://max.ru/recruitsmartbot?startapp=mx1token',
+  mini_app_link: null,
   active_journey_id: 401,
   session_version: 3,
   last_link_issued_at: '2031-07-01T08:45:00Z',
   restart_allowed: true,
-  config_errors: [],
+  delivery_ready: false,
+  delivery_block_reason: 'max_token_invalid',
+  config_errors: ['MAX_BOT_TOKEN отклонён провайдером.'],
   telegram_linked: true,
   max_linked: true,
   telegram: {
@@ -1040,8 +1047,10 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
       expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+      expect(screen.getByText(/delivery: blocked/)).toBeInTheDocument()
+      expect(screen.getByText(/MAX delivery: MAX токен отклонён провайдером/)).toBeInTheDocument()
       expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Переотправить ссылку' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Подготовить browser link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть browser link' })).toBeInTheDocument()
     })
   })

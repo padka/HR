@@ -34,6 +34,11 @@ export type CandidateMaxLinkPayload = {
   portal_public_url?: string | null
   portal_entry_ready?: boolean
   max_entry_ready?: boolean
+  token_valid?: boolean | null
+  bot_profile_resolved?: boolean
+  bot_profile_name?: string | null
+  max_link_base_resolved?: boolean
+  max_link_base_source?: 'env' | 'provider' | 'missing' | null
   browser_link?: string | null
   invite_token: string
   deep_link?: string | null
@@ -50,10 +55,15 @@ export type CandidateMaxLinkPayload = {
   } | null
   issued_at?: string | null
   config_errors?: string[] | null
+  delivery_ready?: boolean
+  delivery_block_reason?: string | null
+  readiness_reason?: string | null
   delivery?: {
     status?: string | null
     sent?: boolean
+    attempted?: boolean
     error?: string | null
+    skipped_reason?: string | null
   } | null
 }
 
@@ -91,6 +101,11 @@ export type CandidateChannelHealth = {
   portal_public_url?: string | null
   portal_entry_ready?: boolean
   max_entry_ready?: boolean
+  token_valid?: boolean | null
+  bot_profile_resolved?: boolean
+  bot_profile_name?: string | null
+  max_link_base_resolved?: boolean
+  max_link_base_source?: 'env' | 'provider' | 'missing' | null
   browser_link?: string | null
   mini_app_link?: string | null
   config_errors?: string[] | null
@@ -98,6 +113,8 @@ export type CandidateChannelHealth = {
   session_version?: number | null
   last_link_issued_at?: string | null
   restart_allowed?: boolean
+  delivery_ready?: boolean
+  delivery_block_reason?: string | null
   telegram_linked?: boolean
   max_linked?: boolean
   last_outbound_delivery?: {

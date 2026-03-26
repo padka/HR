@@ -31,6 +31,11 @@ describe('MessengerHealthCards', () => {
           public_url: 'https://crm.example.test',
           public_ready: true,
           max_entry_ready: false,
+          bot_profile_resolved: true,
+          bot_profile_name: 'Attila MAX Bot',
+          max_link_base_source: 'missing',
+          webhook_public_ready: false,
+          webhook_message: 'MAX_WEBHOOK_URL должен быть публичным HTTPS URL.',
           max_entry_message: 'MAX_BOT_LINK_BASE не настроен.',
           max_link_base: null,
         }}
@@ -44,5 +49,7 @@ describe('MessengerHealthCards', () => {
     expect(screen.getByText(/queue: 1 · dlq: 3/)).toBeInTheDocument()
     expect(screen.getByText(/max:invalid_token/)).toBeInTheDocument()
     expect(screen.getByText(/MAX_BOT_LINK_BASE не настроен/)).toBeInTheDocument()
+    expect(screen.getByText(/profile: Attila MAX Bot/)).toBeInTheDocument()
+    expect(screen.getByText(/webhook: blocked/)).toBeInTheDocument()
   })
 })

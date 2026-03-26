@@ -8,8 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+import backend.core.messenger.registry as registry_mod
 from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.bot_service import BotSendResult
+from backend.core.messenger.protocol import MessengerPlatform, SendResult
+from backend.core.messenger.registry import MessengerRegistry
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import (
@@ -78,6 +81,24 @@ class DummyBotService:
         return BotSendResult(ok=True, status="sent", telegram_message_id=777)
 
 
+class _FakeMaxAccessAdapter:
+    platform = MessengerPlatform.MAX
+
+    async def configure(self, **kwargs) -> None:
+        return None
+
+    async def get_bot_profile(self) -> dict[str, Any]:
+        return {
+            "user": {
+                "id": 312260558067,
+                "name": "Attila MAX Bot",
+            }
+        }
+
+    async def send_message(self, chat_id, text, **kwargs) -> SendResult:
+        return SendResult(success=True, message_id="max_msg_1")
+
+
 @pytest.fixture
 def admin_app(monkeypatch) -> Any:
     bot_stub = DummyBotService()
@@ -94,6 +115,8 @@ def admin_app(monkeypatch) -> Any:
     monkeypatch.setenv("ADMIN_PASSWORD", "admin")
     monkeypatch.setenv("ALLOW_LEGACY_BASIC", "1")
     monkeypatch.setenv("LOG_FILE", "data/logs/test_app.log")
+    monkeypatch.setenv("MAX_BOT_ENABLED", "1")
+    monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
     monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
     monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
     monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
@@ -102,17 +125,23 @@ def admin_app(monkeypatch) -> Any:
 
     settings_module.get_settings.cache_clear()
     import importlib
+    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
 
     state_module = importlib.import_module("backend.apps.admin_ui.state")
     app_module = importlib.import_module("backend.apps.admin_ui.app")
     monkeypatch.setattr(state_module, "setup_bot_state", fake_setup)
     monkeypatch.setattr(app_module, "setup_bot_state", fake_setup, raising=False)
+    reg = MessengerRegistry()
+    reg.register(_FakeMaxAccessAdapter())
+    monkeypatch.setattr(registry_mod, "_registry", reg)
+    invalidate_max_bot_profile_probe_cache()
     from backend.apps.admin_ui.app import create_app
 
     app = create_app()
     try:
         yield app
     finally:
+        invalidate_max_bot_profile_probe_cache()
         settings_module.get_settings.cache_clear()
 
 
@@ -333,6 +362,84 @@ async def test_generate_max_link(admin_app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_max_link_resolves_public_link_from_provider(admin_app, monkeypatch) -> None:
+    from backend.core import settings as settings_module
+    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
+
+    monkeypatch.delenv("MAX_BOT_LINK_BASE", raising=False)
+    settings_module.get_settings.cache_clear()
+    invalidate_max_bot_profile_probe_cache()
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90125,
+        fio="MAX Provider Link Tester",
+        city="Москва",
+        username="max_provider_link_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["public_link"] == "https://max.ru/id312260558067_bot"
+    assert payload["max_link_base_source"] == "provider"
+    assert payload["token_valid"] is True
+    assert payload["bot_profile_resolved"] is True
+    assert payload["deep_link"].startswith("https://max.ru/id312260558067_bot?start=")
+    assert payload["mini_app_link"].startswith("https://max.ru/id312260558067_bot?startapp=")
+
+
+@pytest.mark.asyncio
+async def test_generate_max_link_returns_deterministic_block_reason_when_provider_link_missing(
+    admin_app,
+    monkeypatch,
+) -> None:
+    from backend.core import settings as settings_module
+    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
+
+    class _NoLinkAdapter(_FakeMaxAccessAdapter):
+        async def get_bot_profile(self) -> dict[str, Any]:
+            return {"user": {"name": "MAX Bot Without Public Handle"}}
+
+    reg = MessengerRegistry()
+    reg.register(_NoLinkAdapter())
+    monkeypatch.setattr(registry_mod, "_registry", reg)
+    monkeypatch.delenv("MAX_BOT_LINK_BASE", raising=False)
+    settings_module.get_settings.cache_clear()
+    invalidate_max_bot_profile_probe_cache()
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90126,
+        fio="MAX Missing Link Tester",
+        city="Москва",
+        username="max_missing_link_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["public_link"] == ""
+    assert payload["max_entry_ready"] is False
+    assert payload["max_link_base_source"] == "missing"
+    assert payload["delivery_ready"] is False
+    assert payload["delivery_block_reason"] == "max_bot_link_base_unresolved"
+    assert payload["delivery"]["status"] == "skipped_by_preflight"
+    assert payload["delivery"]["attempted"] is False
+    assert payload["delivery"]["skipped_reason"] == "max_bot_link_base_unresolved"
+
+
+@pytest.mark.asyncio
 async def test_restart_candidate_portal_creates_new_active_journey(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=90123,
@@ -362,7 +469,9 @@ async def test_restart_candidate_portal_creates_new_active_journey(admin_app) ->
     assert payload["journey"]["session_version"] == 1
     assert payload["invite"]["rotated"] is True
     assert payload["browser_link"].startswith("https://crm.example.test/candidate/start?start=")
-    assert payload["delivery"]["status"] == "not_linked"
+    assert payload["delivery"]["status"] == "skipped_by_preflight"
+    assert payload["delivery"]["attempted"] is False
+    assert payload["delivery"]["skipped_reason"] == "max_not_linked"
 
     async with async_session() as session:
         journeys = (

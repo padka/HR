@@ -73,6 +73,15 @@ This starts the standalone MAX webhook app on `http://localhost:8010` by default
 For real MAX delivery the webhook URL must be public HTTPS and point to `/webhook`.
 Current MAX flow supports both public and linked entry: a candidate can open the bot directly and start profile + screening in MAX immediately, while admin-issued deep links `https://max.ru/<botName>?start=<invite_token>` still bind MAX to an existing CRM candidate before continuing the same flow.
 
+### Live-local MAX bootstrap
+
+```bash
+make dev-max-live
+```
+
+This target opens public HTTPS tunnels for admin UI and MAX webhook through `cloudflared`, resolves `MAX_BOT_LINK_BASE` when possible, and starts both services with live-ready public URLs for candidate portal and MAX mini app testing.
+If `8000/8010` are already occupied, pass `DEV_MAX_LIVE_ADMIN_PORT` / `DEV_MAX_LIVE_MAX_PORT` to run the live bootstrap on alternate local ports.
+
 ## Common Commands
 
 ### Backend
@@ -81,6 +90,7 @@ Current MAX flow supports both public and linked entry: a candidate can open the
 make dev-migrate
 make dev-admin
 make dev-bot
+make dev-max-live
 make test
 make test-cov
 ```

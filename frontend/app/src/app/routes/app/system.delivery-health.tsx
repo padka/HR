@@ -23,9 +23,15 @@ export function MessengerHealthCards({
           </div>
           <div className="subtitle">public: {portal.public_ready ? 'ready' : 'blocked'}</div>
           <div className="subtitle">MAX mini app: {portal.max_entry_ready ? 'ready' : 'blocked'}</div>
-          <div className="subtitle">{portal.public_url || portal.max_link_base || 'Публичный URL не задан'}</div>
+          <div className="subtitle">webhook: {portal.webhook_public_ready ? 'ready' : 'blocked'}</div>
           <div className="subtitle">
-            {portal.public_message || portal.max_entry_message || 'Портал кандидата готов к выдаче ссылок'}
+            profile: {portal.bot_profile_resolved ? (portal.bot_profile_name || 'resolved') : 'unavailable'}
+          </div>
+          <div className="subtitle">
+            link base: {portal.max_link_base_source || 'missing'} · {portal.max_link_base || portal.public_url || 'Публичный URL не задан'}
+          </div>
+          <div className="subtitle">
+            {portal.public_message || portal.max_entry_message || portal.webhook_message || portal.subscription_message || 'Портал кандидата готов к выдаче ссылок'}
           </div>
         </article>
       ) : null}

@@ -2,6 +2,26 @@ import type { Ref } from 'react'
 import type { CandidateAction, CandidateChannelHealth, CandidateDetail, TestSection } from '@/api/services/candidates'
 import { normalizeConferenceUrl, normalizeTelegramUsername } from '@/shared/utils/normalizers'
 
+const DELIVERY_REASON_LABELS: Record<string, string> = {
+  candidate_portal_public_url_missing: 'не настроен публичный URL кабинета',
+  candidate_portal_public_url_not_https: 'публичный URL кабинета должен быть HTTPS',
+  candidate_portal_public_url_loopback: 'публичный URL кабинета указывает на loopback',
+  max_bot_disabled: 'MAX bot выключен в конфиге',
+  max_token_missing: 'не настроен MAX_BOT_TOKEN',
+  max_token_invalid: 'MAX токен отклонён провайдером',
+  max_profile_unavailable: 'профиль MAX бота недоступен',
+  max_bot_link_base_unresolved: 'не удалось определить публичную ссылку MAX бота',
+  max_bot_link_base_not_https: 'публичная ссылка MAX бота должна быть HTTPS',
+  max_not_linked: 'кандидат ещё не привязан к MAX',
+  max_channel_degraded: 'канал MAX сейчас деградирован',
+}
+
+function describeDeliveryReason(reason?: string | null) {
+  const normalized = String(reason || '').trim()
+  if (!normalized) return null
+  return DELIVERY_REASON_LABELS[normalized] || normalized
+}
+
 type CandidateActionsProps = {
   candidate: CandidateDetail
   channelHealth?: CandidateChannelHealth | null
@@ -62,6 +82,11 @@ export function CandidateActions({
   const browserLink = channelHealth?.browser_link || null
   const configErrors = channelHealth?.config_errors || []
   const restartAllowed = channelHealth?.restart_allowed !== false
+  const deliveryReady = channelHealth?.delivery_ready !== false
+  const deliveryBlockReason = describeDeliveryReason(channelHealth?.delivery_block_reason)
+  const maxLinkBaseSource = channelHealth?.max_link_base_source || null
+  const canReissuePortalAccess = Boolean(channelHealth?.portal_entry_ready)
+  const reissueLabel = channelHealth?.max_entry_ready ? 'Переотправить ссылку' : 'Подготовить browser link'
 
   const hasUpcomingSlot = slots.some((slot) => {
     const status = String(slot.status || '').toUpperCase()
@@ -224,6 +249,15 @@ export function CandidateActions({
               {' · '}
               MAX entry: {channelHealth.max_entry_ready ? 'ready' : 'blocked'}
             </p>
+            <p className="subtitle" style={{ margin: '4px 0 0' }}>
+              delivery: {deliveryReady ? 'ready' : 'blocked'}
+              {maxLinkBaseSource ? ` · link base: ${maxLinkBaseSource}` : ''}
+            </p>
+            {channelHealth.bot_profile_name ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                MAX profile: {channelHealth.bot_profile_name}
+              </p>
+            ) : null}
             {channelHealth.active_journey_id ? (
               <p className="subtitle" style={{ margin: '4px 0 0' }}>
                 journey: #{channelHealth.active_journey_id} · session v{channelHealth.session_version || 1}
@@ -247,9 +281,19 @@ export function CandidateActions({
                 {lastOutboundError}
               </p>
             ) : null}
+            {deliveryBlockReason ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                MAX delivery: {deliveryBlockReason}
+              </p>
+            ) : null}
             {configErrors.length > 0 ? (
               <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
                 {configErrors.join(' · ')}
+              </p>
+            ) : null}
+            {!channelHealth.max_entry_ready && browserLink ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                MAX недоступен для live-доставки. Browser link остаётся резервным входом.
               </p>
             ) : null}
           </div>
@@ -259,9 +303,10 @@ export function CandidateActions({
               type="button"
               className="ui-btn ui-btn--primary ui-btn--sm"
               onClick={onCopyMaxLink}
-              disabled={maxLinkPending}
+              disabled={maxLinkPending || !canReissuePortalAccess}
+              title={!canReissuePortalAccess ? deliveryBlockReason || 'Публичный вход в кабинет не готов' : undefined}
             >
-              {maxLinkPending ? 'Отправляем…' : 'Переотправить ссылку'}
+              {maxLinkPending ? 'Отправляем…' : reissueLabel}
             </button>
             <button
               type="button"
@@ -275,7 +320,8 @@ export function CandidateActions({
               type="button"
               className="ui-btn ui-btn--ghost ui-btn--sm"
               onClick={onRestartPortal}
-              disabled={restartPending || !restartAllowed}
+              disabled={restartPending || !restartAllowed || !canReissuePortalAccess}
+              title={!canReissuePortalAccess ? deliveryBlockReason || 'Публичный вход в кабинет не готов' : undefined}
             >
               {restartPending ? 'Перезапускаем…' : 'Начать заново'}
             </button>

@@ -18,6 +18,7 @@ from backend.domain.candidates.services import create_candidate_invite_token
 from backend.domain.candidates.models import TestResult, User
 from backend.domain.candidates.portal_service import (
     get_candidate_portal_questions,
+    invalidate_max_bot_profile_probe_cache,
     sign_candidate_portal_token,
 )
 from backend.domain.models import City
@@ -31,6 +32,14 @@ class _FakeMaxAdapter(MessengerProtocol):
 
     async def configure(self, **kwargs):
         return None
+
+    async def get_bot_profile(self) -> dict[str, object]:
+        return {
+            "user": {
+                "id": 312260558067,
+                "name": "Attila MAX Bot",
+            }
+        }
 
     async def send_message(
         self,
@@ -64,6 +73,9 @@ def _isolated_registry(monkeypatch):
 @pytest.fixture
 def client(monkeypatch):
     settings_module.get_settings.cache_clear()
+    invalidate_max_bot_profile_probe_cache()
+    monkeypatch.setenv("MAX_BOT_ENABLED", "1")
+    monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
     monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
     monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
     monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
@@ -87,6 +99,7 @@ def client(monkeypatch):
             app.router.lifespan_context = None  # type: ignore[assignment]
             yield TestClient(app, raise_server_exceptions=False)
     finally:
+        invalidate_max_bot_profile_probe_cache()
         settings_module.get_settings.cache_clear()
 
 

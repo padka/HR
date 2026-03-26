@@ -26,6 +26,29 @@ logger = logging.getLogger(__name__)
 MAX_API_BASE = "https://platform-api.max.ru"
 
 
+class MaxAdapterError(RuntimeError):
+    """Base error for MAX adapter request failures."""
+
+
+class MaxAdapterAuthError(MaxAdapterError):
+    """Raised when MAX rejects the configured bot token."""
+
+
+class MaxAdapterRequestError(MaxAdapterError):
+    """Raised when a MAX API request fails."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        message: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = int(status_code)
+        self.payload = payload or {}
+
+
 class MaxAdapter(MessengerProtocol):
     """MessengerProtocol implementation for VK Max messenger.
 
@@ -199,7 +222,8 @@ class MaxAdapter(MessengerProtocol):
                     params=params,
                     json_body=payload,
                 )
-                msg = data.get("message", {}) if isinstance(data, dict) else {}
+                msg_raw = data.get("message") if isinstance(data, dict) else None
+                msg = msg_raw if isinstance(msg_raw, dict) else {}
                 message_id = str(
                     msg.get("mid")
                     or msg.get("message_id")
@@ -258,6 +282,25 @@ class MaxAdapter(MessengerProtocol):
             extra={"chat_id": chat_id, "attempts": attempt, "error": last_error},
         )
         return SendResult(success=False, error=last_error)
+
+    async def get_bot_profile(self) -> Dict[str, Any]:
+        """Fetch bot profile metadata from MAX provider."""
+        self._ensure_ready()
+        response, data = await self._request_json("GET", "/me")
+        if response.status_code in (401, 403):
+            raise MaxAdapterAuthError("MAX bot token rejected by provider.")
+        if not 200 <= response.status_code < 300:
+            message = str(data.get("description") or data.get("error") or "MAX profile unavailable")
+            raise MaxAdapterRequestError(
+                status_code=response.status_code,
+                message=message,
+                payload=data,
+            )
+        return data
+
+    async def get_me(self) -> Dict[str, Any]:
+        """Compatibility alias for provider profile inspection."""
+        return await self.get_bot_profile()
 
     async def answer_callback(
         self,

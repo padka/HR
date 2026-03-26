@@ -163,15 +163,26 @@ export function CandidateDetailPage() {
   const describePortalDelivery = (
     payload: {
       browser_link?: string | null
-      delivery?: { sent?: boolean; status?: string | null; error?: string | null } | null
+      delivery_block_reason?: string | null
+      delivery?: {
+        sent?: boolean
+        status?: string | null
+        attempted?: boolean
+        error?: string | null
+        skipped_reason?: string | null
+      } | null
     } | null | undefined,
     actionLabel: string,
   ) => {
     const delivery = payload?.delivery || null
     if (delivery?.sent) return `${actionLabel}: ссылка отправлена кандидату в MAX`
+    if (delivery?.status === 'skipped_by_preflight' && payload?.browser_link) {
+      return `${actionLabel}: MAX недоступен, используйте browser link`
+    }
     if (delivery?.status === 'not_linked') return `${actionLabel}: MAX не привязан, используйте browser link`
     if (delivery?.status === 'skipped_no_entry') return `${actionLabel}: публичный вход в кабинет не настроен`
     if (delivery?.error) return `${actionLabel}: ${delivery.error}`
+    if (payload?.delivery_block_reason) return `${actionLabel}: ${payload.delivery_block_reason}`
     if (payload?.browser_link) return `${actionLabel}: browser link готов`
     return `${actionLabel}: доступ обновлён`
   }
@@ -248,9 +259,11 @@ export function CandidateDetailPage() {
           if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(maxLink)
             setActionMessage(
-              payload?.invite?.rotated
-                ? 'MAX-ссылка обновлена, скопирована и отправлена кандидату'
-                : 'MAX-ссылка скопирована и отправлена кандидату',
+              payload?.delivery?.sent
+                ? (payload?.invite?.rotated
+                  ? 'MAX-ссылка обновлена, скопирована и отправлена кандидату'
+                  : 'MAX-ссылка скопирована и отправлена кандидату')
+                : 'Ссылка подготовлена и скопирована. Отправка в MAX пропущена, используйте browser link.',
             )
             return
           }

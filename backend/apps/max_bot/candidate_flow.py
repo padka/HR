@@ -38,7 +38,7 @@ from backend.domain.candidates.models import (
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
-    build_candidate_public_max_mini_app_url,
+    build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
     bump_candidate_portal_session_version,
     complete_screening,
@@ -184,7 +184,7 @@ def _screening_question(answers: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _portal_mini_app_url(
+async def _portal_mini_app_url(
     candidate: User,
     *,
     journey_session_id: int,
@@ -192,7 +192,7 @@ def _portal_mini_app_url(
 ) -> str:
     if not candidate.candidate_id:
         return ""
-    return build_candidate_public_max_mini_app_url(
+    return await build_candidate_public_max_mini_app_url_async(
         candidate_uuid=str(candidate.candidate_id),
         journey_session_id=journey_session_id,
         session_version=session_version,
@@ -200,7 +200,7 @@ def _portal_mini_app_url(
     )
 
 
-def _portal_entry_urls(
+async def _portal_entry_urls(
     candidate: User,
     *,
     journey_session_id: int,
@@ -214,7 +214,7 @@ def _portal_entry_urls(
         journey_session_id=journey_session_id,
         session_version=session_version,
     )
-    mini_app_url = _portal_mini_app_url(
+    mini_app_url = await _portal_mini_app_url(
         candidate,
         journey_session_id=journey_session_id,
         session_version=session_version,
@@ -549,7 +549,7 @@ async def _render_status_message(
     next_action = payload["journey"].get("next_action") or "Следующий шаг уже сохранён в вашем профиле."
     status_label = payload["candidate"].get("status_label") or "В обработке"
     active_slot = payload["journey"]["slots"].get("active")
-    mini_app_url = _portal_mini_app_url(
+    mini_app_url = await _portal_mini_app_url(
         candidate,
         journey_session_id=int(journey.id),
         session_version=int(journey.session_version or 1),
@@ -597,7 +597,7 @@ async def _render_profile_prompt(
         preview = ", ".join(city.display_name for city in cities[:8])
         if preview:
             prompt = f"{prompt}\n\nСейчас доступны города: <i>{html.escape(preview)}</i>"
-    portal_url, mini_app_url = _portal_entry_urls(
+    portal_url, mini_app_url = await _portal_entry_urls(
         candidate,
         journey_session_id=int(journey.id),
         session_version=int(journey.session_version or 1),
@@ -650,7 +650,7 @@ async def _render_screening_prompt(
     if helper:
         text += f"\n\n<i>{helper}</i>"
     buttons = _question_buttons(question)
-    portal_url, mini_app_url = _portal_entry_urls(
+    portal_url, mini_app_url = await _portal_entry_urls(
         candidate,
         journey_session_id=int(journey.id),
         session_version=int(journey.session_version or 1),

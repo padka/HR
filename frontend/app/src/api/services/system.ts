@@ -156,6 +156,18 @@ export type MessengerHealthPayload = {
     max_entry_error?: string | null
     max_entry_message?: string | null
     max_link_base?: string | null
+    token_valid?: boolean | null
+    bot_profile_resolved?: boolean
+    bot_profile_name?: string | null
+    max_link_base_resolved?: boolean
+    max_link_base_source?: 'env' | 'provider' | 'missing' | null
+    webhook_public_ready?: boolean
+    webhook_url?: string | null
+    webhook_error?: string | null
+    webhook_message?: string | null
+    subscription_ready?: boolean
+    subscription_error?: string | null
+    subscription_message?: string | null
   } | null
 }
 

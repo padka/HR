@@ -480,6 +480,24 @@ class TestMaxAdapter:
         assert "400" in result.error
 
     @pytest.mark.asyncio
+    async def test_send_api_error_with_string_message_does_not_raise(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.json.return_value = {"message": "recipient not found"}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        result = await adapter.send_message("missing_user", "Test")
+        assert result.success is False
+        assert "404" in (result.error or "")
+
+    @pytest.mark.asyncio
     async def test_send_retries_on_500(self):
         from backend.core.messenger.max_adapter import MaxAdapter
 
@@ -503,6 +521,46 @@ class TestMaxAdapter:
         result = await adapter.send_message("user_123", "Retry test")
         assert result.success is True
         assert mock_client.request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_bot_profile_success(self):
+        from backend.core.messenger.max_adapter import MaxAdapter
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"user": {"id": 42, "name": "Attila MAX Bot"}}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        profile = await adapter.get_bot_profile()
+        assert profile["user"]["id"] == 42
+        mock_client.request.assert_awaited_once_with(
+            "GET",
+            "/me",
+            params=None,
+            json=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_bot_profile_invalid_token_raises(self):
+        from backend.core.messenger.max_adapter import MaxAdapter, MaxAdapterAuthError
+
+        adapter = MaxAdapter()
+        adapter._token = "test_token"
+
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.json.return_value = {"error": "unauthorized"}
+        mock_client.request.return_value = mock_resp
+        adapter._client = mock_client
+
+        with pytest.raises(MaxAdapterAuthError, match="token rejected"):
+            await adapter.get_bot_profile()
 
     @pytest.mark.asyncio
     async def test_answer_callback_sends_notification(self):

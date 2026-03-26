@@ -1,4 +1,4 @@
-.PHONY: help test test-cov migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-max-bot dev-up gate-sprint12
+.PHONY: help test test-cov migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-max-bot dev-max-live dev-up gate-sprint12
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -14,6 +14,7 @@ help:
 	@echo "  make dev-admin        - Start admin UI (dev)"
 	@echo "  make dev-bot          - Start bot (dev, polling)"
 	@echo "  make dev-max-bot      - Start MAX bot webhook service (dev)"
+	@echo "  make dev-max-live     - Start admin + MAX webhook with public HTTPS tunnels"
 	@echo "  make dev-up           - Print dev run instructions (admin + bot)"
 	@echo "  make gate-sprint12    - Run formal Sprint 1/2 gate and generate report"
 	@echo ""
@@ -102,12 +103,16 @@ dev-bot:
 dev-max-bot:
 	./scripts/dev_max_bot.sh
 
+dev-max-live:
+	./scripts/dev_max_live.sh
+
 dev-up:
 	@echo "Run services in separate terminals:"
 	@echo "  make dev-migrate"
 	@echo "  make dev-admin"
 	@echo "  make dev-bot"
 	@echo "  make dev-max-bot"
+	@echo "  make dev-max-live    # admin + MAX + public HTTPS tunnels"
 	@echo "Using env file: $(DEV_ENV_FILE)"
 
 gate-sprint12: ensure-venv
