@@ -2,7 +2,7 @@ import logging
 import secrets
 from datetime import date as date_type, datetime, time, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -93,12 +93,6 @@ from backend.apps.admin_ui.services.recruiter_plan import (
     delete_recruiter_plan_entry,
     get_recruiter_plan,
 )
-from backend.domain.candidates.portal_service import (
-    build_candidate_max_mini_app_url,
-    bump_candidate_portal_session_version,
-    ensure_candidate_portal_session,
-    sign_candidate_portal_token,
-)
 from backend.apps.admin_ui.services.slots import (
     assign_existing_candidate_slot_silent,
     approve_slot_booking,
@@ -137,10 +131,30 @@ from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content
 from backend.core.db import async_session
 from backend.core.guards import ensure_slot_scope
 from backend.core.messenger.channel_state import mark_messenger_channel_healthy
+from backend.core.messenger.protocol import InlineButton, MessengerPlatform
+from backend.core.messenger.registry import get_registry
 from backend.core.sanitizers import sanitize_plain_text
 from backend.core.settings import get_settings
-from backend.domain.candidates.models import CandidateInviteToken, User
+from backend.domain.candidates.models import (
+    CandidateInviteToken,
+    CandidateJourneySession,
+    ChatMessage,
+    ChatMessageDirection,
+    ChatMessageStatus,
+    User,
+)
 from backend.domain.candidates.services import issue_candidate_invite_token
+from backend.domain.candidates.portal_service import (
+    CandidatePortalError,
+    build_candidate_portal_journey,
+    build_candidate_public_max_mini_app_url,
+    build_candidate_public_portal_url,
+    bump_candidate_portal_session_version,
+    ensure_candidate_portal_session,
+    get_candidate_portal_max_entry_status,
+    get_candidate_portal_public_status,
+    restart_candidate_portal_journey,
+)
 from backend.domain.hh_integration.summary import build_candidate_hh_summary
 from backend.domain.models import ActionToken, City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
 from backend.domain.slot_service import (
@@ -151,6 +165,7 @@ from backend.apps.bot.runtime_config import (
     get_reminder_policy_config,
     save_reminder_policy_config,
 )
+from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
 from starlette_wtf import csrf_token
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -2339,6 +2354,231 @@ async def api_chat_retry(
     return JSONResponse(result)
 
 
+def _candidate_portal_link_errors() -> list[str]:
+    portal_status = get_candidate_portal_public_status()
+    max_status = get_candidate_portal_max_entry_status()
+    errors = []
+    if portal_status.get("message"):
+        errors.append(str(portal_status["message"]))
+    if max_status.get("message") and str(max_status["message"]) not in errors:
+        errors.append(str(max_status["message"]))
+    return errors
+
+
+async def _ensure_max_access_adapter():
+    adapter = get_registry().get(MessengerPlatform.MAX)
+    if adapter is not None:
+        return adapter
+
+    settings = get_settings()
+    if not settings.max_bot_enabled or not settings.max_bot_token:
+        return None
+
+    try:
+        await bootstrap_messenger_adapters(
+            bot=None,
+            max_bot_enabled=settings.max_bot_enabled,
+            max_bot_token=settings.max_bot_token,
+        )
+    except Exception:
+        logger.exception("candidate_portal.max_adapter_bootstrap_failed")
+        return None
+    return get_registry().get(MessengerPlatform.MAX)
+
+
+def _candidate_portal_entry_buttons(*, browser_link: str | None, mini_app_link: str | None) -> list[list[InlineButton]] | None:
+    buttons: list[list[InlineButton]] = []
+    if mini_app_link:
+        buttons.append([InlineButton(text="Открыть кабинет", url=mini_app_link, kind="web_app")])
+    if browser_link:
+        buttons.append([InlineButton(text="Открыть в браузере", url=browser_link, kind="link")])
+    return buttons or None
+
+
+def _candidate_portal_access_message(
+    *,
+    candidate_name: str,
+    status_label: str,
+    next_action: str,
+    restarted: bool,
+    browser_link: str | None,
+    mini_app_link: str | None,
+) -> str:
+    lines = [
+        "Личный кабинет кандидата обновлён." if not restarted else "Кабинет сброшен и готов к повторному прохождению.",
+        f"Кандидат: <b>{candidate_name}</b>",
+        f"Статус: <b>{status_label}</b>",
+        next_action,
+    ]
+    if mini_app_link:
+        lines.append("Откройте кабинет в MAX.")
+    elif browser_link:
+        lines.append("Откройте кабинет в браузере по новой ссылке.")
+    return "\n".join(lines)
+
+
+async def _record_candidate_portal_access_message(
+    *,
+    candidate_id: int,
+    channel: str,
+    text: str,
+    success: bool,
+    error: str | None = None,
+) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            session.add(
+                ChatMessage(
+                    candidate_id=int(candidate_id),
+                    direction=ChatMessageDirection.OUTBOUND.value,
+                    channel=channel,
+                    text=text,
+                    status=ChatMessageStatus.SENT.value if success else ChatMessageStatus.FAILED.value,
+                    error=error,
+                    author_label="System",
+                    payload_json={"kind": "portal_access_package"},
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+
+
+async def _deliver_candidate_portal_access_package(
+    *,
+    candidate: User,
+    text: str,
+    browser_link: str | None,
+    mini_app_link: str | None,
+) -> dict[str, Any]:
+    if not browser_link and not mini_app_link:
+        return {"status": "skipped_no_entry", "sent": False, "error": "Нет публичной ссылки кабинета"}
+    if not str(candidate.max_user_id or "").strip():
+        return {"status": "not_linked", "sent": False, "error": "MAX ID не привязан"}
+
+    adapter = await _ensure_max_access_adapter()
+    if adapter is None:
+        return {"status": "adapter_unavailable", "sent": False, "error": "MAX bot не готов"}
+
+    try:
+        result = await adapter.send_message(
+            str(candidate.max_user_id),
+            text,
+            buttons=_candidate_portal_entry_buttons(browser_link=browser_link, mini_app_link=mini_app_link),
+            parse_mode="HTML",
+            correlation_id=f"candidate-portal-access:{candidate.id}:{int(datetime.now(timezone.utc).timestamp())}",
+        )
+    except Exception as exc:
+        logger.exception("candidate_portal.max_delivery_failed", extra={"candidate_id": candidate.id})
+        await _record_candidate_portal_access_message(
+            candidate_id=int(candidate.id),
+            channel="max",
+            text=text,
+            success=False,
+            error=str(exc),
+        )
+        return {"status": "failed", "sent": False, "error": str(exc)}
+
+    success = bool(getattr(result, "success", False) or getattr(result, "ok", False))
+    error = None if success else str(getattr(result, "error", None) or "delivery_failed")
+    await _record_candidate_portal_access_message(
+        candidate_id=int(candidate.id),
+        channel="max",
+        text=text,
+        success=success,
+        error=error,
+    )
+    return {
+        "status": "sent" if success else "failed",
+        "sent": success,
+        "error": error,
+    }
+
+
+async def _build_candidate_portal_access_delivery_text(
+    *,
+    candidate_id: int,
+    journey_id: int,
+    restarted: bool,
+    browser_link: str | None,
+    mini_app_link: str | None,
+) -> str:
+    async with async_session() as session:
+        candidate = await session.get(User, int(candidate_id))
+        journey = await session.get(CandidateJourneySession, int(journey_id))
+        if candidate is None or journey is None:
+            return "Личный кабинет кандидата обновлён. Откройте его по новой ссылке."
+        journey_payload = await build_candidate_portal_journey(
+            session,
+            candidate,
+            entry_channel="max",
+            journey=journey,
+        )
+    return _candidate_portal_access_message(
+        candidate_name=str(candidate.fio or f"#{candidate.id}"),
+        status_label=str(journey_payload["candidate"].get("status_label") or "В обработке"),
+        next_action=str(journey_payload["journey"].get("next_action") or "Откройте кабинет, чтобы продолжить."),
+        restarted=restarted,
+        browser_link=browser_link,
+        mini_app_link=mini_app_link,
+    )
+
+
+async def _candidate_portal_access_payload(
+    *,
+    session,
+    candidate: User,
+    journey: CandidateJourneySession,
+    invite: CandidateInviteToken,
+    rotated: bool,
+    restarted: bool = False,
+) -> dict[str, Any]:
+    portal_status = get_candidate_portal_public_status()
+    max_status = get_candidate_portal_max_entry_status()
+    browser_link = build_candidate_public_portal_url(
+        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
+        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
+        entry_channel="max",
+        source_channel="max_browser" if not restarted else "max_browser_restart",
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    )
+    mini_app_link = build_candidate_public_max_mini_app_url(
+        candidate_uuid=str(candidate.candidate_id),
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+        source_channel="max_app_restart" if restarted else "max_app",
+    )
+
+    settings = get_settings()
+    public_link = str(getattr(settings, "max_bot_link_base", "") or "").strip().rstrip("/")
+    deep_link = ""
+    if public_link and invite.token:
+        separator = "&" if "?" in public_link else "?"
+        deep_link = f"{public_link}{separator}start={quote(str(invite.token), safe='')}"
+
+    return {
+        "public_link": public_link,
+        "portal_public_url": portal_status.get("url"),
+        "portal_entry_ready": bool(portal_status.get("ready")),
+        "max_entry_ready": bool(max_status.get("ready")),
+        "browser_link": browser_link or None,
+        "invite_token": str(invite.token or ""),
+        "deep_link": deep_link or None,
+        "mini_app_link": mini_app_link or None,
+        "invite": {
+            "channel": "max",
+            "status": "active",
+            "rotated": bool(rotated),
+        },
+        "issued_at": invite.created_at.isoformat() if invite.created_at else None,
+        "journey": {
+            "id": int(journey.id),
+            "session_version": int(journey.session_version or 1),
+            "restarted": bool(restarted),
+        },
+        "config_errors": _candidate_portal_link_errors(),
+    }
+
+
 @router.post("/candidates/{candidate_id}/channels/max-link")
 async def api_candidate_max_link(
     candidate_id: int,
@@ -2346,12 +2586,11 @@ async def api_candidate_max_link(
     _: None = Depends(require_csrf_token),
 ) -> JSONResponse:
     candidate = await _get_accessible_candidate(candidate_id, principal)
-    settings = get_settings()
-    link_base = str(getattr(settings, "max_bot_link_base", "") or "").strip()
-    if not link_base:
+    portal_status = get_candidate_portal_public_status()
+    if not portal_status["ready"]:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": "MAX_BOT_LINK_BASE не настроен"},
+            detail={"message": portal_status["message"]},
         )
 
     async with async_session() as session:
@@ -2379,24 +2618,36 @@ async def api_candidate_max_link(
                 session=session,
             )
             invite_id = int(invite.id)
-            await bump_candidate_portal_session_version(session, candidate_id=int(stored_candidate.id))
             journey = await ensure_candidate_portal_session(
                 session,
                 stored_candidate,
                 entry_channel="max",
             )
-            invite_token = str(invite.token)
+            await bump_candidate_portal_session_version(session, candidate_id=int(stored_candidate.id))
+            await session.refresh(journey)
             previous_invite_id = int(previous_invite.id) if previous_invite is not None else None
-            mini_app_token = sign_candidate_portal_token(
-                candidate_uuid=str(stored_candidate.candidate_id),
-                telegram_id=int(stored_candidate.telegram_id)
-                if stored_candidate.telegram_id is not None and not stored_candidate.candidate_id
-                else None,
-                entry_channel="max",
-                source_channel="max_app",
-                journey_session_id=int(journey.id),
-                session_version=int(journey.session_version or 1),
+            payload = await _candidate_portal_access_payload(
+                session=session,
+                candidate=stored_candidate,
+                journey=journey,
+                invite=invite,
+                rotated=bool(previous_invite is not None or superseded_ids),
             )
+            delivery_candidate = stored_candidate
+
+    delivery_text = await _build_candidate_portal_access_delivery_text(
+        candidate_id=int(delivery_candidate.id),
+        journey_id=int(payload["journey"]["id"]),
+        restarted=False,
+        browser_link=payload.get("browser_link"),
+        mini_app_link=payload.get("mini_app_link"),
+    )
+    payload["delivery"] = await _deliver_candidate_portal_access_package(
+        candidate=delivery_candidate,
+        text=delivery_text,
+        browser_link=payload.get("browser_link"),
+        mini_app_link=payload.get("mini_app_link"),
+    )
 
     await log_audit_action(
         "invite_issued",
@@ -2415,23 +2666,123 @@ async def api_candidate_max_link(
                 "superseded_ids": superseded_ids,
             },
         )
-
-    separator = "&" if "?" in link_base else "?"
-    deep_link = f"{link_base}{separator}start={quote(invite_token, safe='')}"
-    mini_app_link = build_candidate_max_mini_app_url(start_param=mini_app_token)
-    return JSONResponse(
-        {
-            "public_link": link_base,
-            "invite_token": invite_token,
-            "deep_link": deep_link,
-            "mini_app_link": mini_app_link,
-            "invite": {
-                "channel": "max",
-                "status": "active",
-                "rotated": bool(previous_invite is not None or superseded_ids),
-            },
-        }
+    await log_audit_action(
+        "candidate_portal_reissued",
+        "candidate",
+        candidate_id,
+        changes={
+            "channel": "max",
+            "journey_id": payload["journey"]["id"],
+            "session_version": payload["journey"]["session_version"],
+            "delivered": bool((payload.get("delivery") or {}).get("sent")),
+        },
     )
+    return JSONResponse(payload)
+
+
+@router.post("/candidates/{candidate_id}/portal/restart")
+async def api_candidate_portal_restart(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+) -> JSONResponse:
+    candidate = await _get_accessible_candidate(candidate_id, principal)
+    portal_status = get_candidate_portal_public_status()
+    if not portal_status["ready"]:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": portal_status["message"]},
+        )
+
+    async with async_session() as session:
+        async with session.begin():
+            stored_candidate = await session.get(User, candidate.id)
+            if stored_candidate is None or not stored_candidate.candidate_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"message": "Не удалось перезапустить кабинет кандидата"},
+                )
+            previous_invite = await session.scalar(
+                select(CandidateInviteToken)
+                .where(
+                    CandidateInviteToken.candidate_id == stored_candidate.candidate_id,
+                    CandidateInviteToken.channel == "max",
+                    CandidateInviteToken.status == "active",
+                )
+                .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
+                .limit(1)
+            )
+            try:
+                journey, released_slot_id = await restart_candidate_portal_journey(
+                    session,
+                    stored_candidate,
+                    entry_channel="max",
+                )
+            except CandidatePortalError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"message": str(exc)},
+                ) from exc
+            invite, superseded_ids = await issue_candidate_invite_token(
+                stored_candidate.candidate_id,
+                channel="max",
+                rotate_active=True,
+                session=session,
+            )
+            previous_invite_id = int(previous_invite.id) if previous_invite is not None else None
+            payload = await _candidate_portal_access_payload(
+                session=session,
+                candidate=stored_candidate,
+                journey=journey,
+                invite=invite,
+                rotated=bool(previous_invite is not None or superseded_ids),
+                restarted=True,
+            )
+            delivery_candidate = stored_candidate
+
+    delivery_text = await _build_candidate_portal_access_delivery_text(
+        candidate_id=int(delivery_candidate.id),
+        journey_id=int(payload["journey"]["id"]),
+        restarted=True,
+        browser_link=payload.get("browser_link"),
+        mini_app_link=payload.get("mini_app_link"),
+    )
+    payload["delivery"] = await _deliver_candidate_portal_access_package(
+        candidate=delivery_candidate,
+        text=delivery_text,
+        browser_link=payload.get("browser_link"),
+        mini_app_link=payload.get("mini_app_link"),
+    )
+
+    await log_audit_action(
+        "candidate_portal_restarted",
+        "candidate",
+        candidate_id,
+        changes={
+            "journey_id": payload["journey"]["id"],
+            "session_version": payload["journey"]["session_version"],
+            "released_slot_id": released_slot_id,
+            "delivered": bool((payload.get("delivery") or {}).get("sent")),
+        },
+    )
+    await log_audit_action(
+        "invite_issued",
+        "candidate",
+        candidate_id,
+        changes={"channel": "max", "invite_id": int(invite.id)},
+    )
+    if previous_invite is not None or superseded_ids:
+        await log_audit_action(
+            "invite_superseded",
+            "candidate",
+            candidate_id,
+            changes={
+                "channel": "max",
+                "previous_invite_id": previous_invite_id,
+                "superseded_ids": superseded_ids,
+            },
+        )
+    return JSONResponse(payload)
 
 
 @router.get("/candidates/{candidate_id}/channel-health")

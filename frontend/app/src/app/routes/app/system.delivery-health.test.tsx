@@ -27,13 +27,22 @@ describe('MessengerHealthCards', () => {
             degraded_reason: 'max:invalid_token',
           },
         }}
+        portal={{
+          public_url: 'https://crm.example.test',
+          public_ready: true,
+          max_entry_ready: false,
+          max_entry_message: 'MAX_BOT_LINK_BASE не настроен.',
+          max_link_base: null,
+        }}
       />,
     )
 
+    expect(screen.getByTestId('messenger-health-portal')).toBeInTheDocument()
     expect(screen.getByTestId('messenger-health-telegram')).toBeInTheDocument()
     expect(screen.getByTestId('messenger-health-max')).toBeInTheDocument()
     expect(screen.getByText(/queue: 2 · dlq: 0/)).toBeInTheDocument()
     expect(screen.getByText(/queue: 1 · dlq: 3/)).toBeInTheDocument()
     expect(screen.getByText(/max:invalid_token/)).toBeInTheDocument()
+    expect(screen.getByText(/MAX_BOT_LINK_BASE не настроен/)).toBeInTheDocument()
   })
 })

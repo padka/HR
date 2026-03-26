@@ -155,4 +155,46 @@ describe('CandidateStartPage', () => {
       expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
     })
   })
+
+  it('prefers fresh startapp token over stale session storage token', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.setItem('candidate-portal:access-token', 'stale-token')
+    window.history.pushState({}, '', '/candidate/start?startapp=fresh-token')
+    exchangeCandidatePortalTokenMock.mockResolvedValue({
+      candidate: { id: 1, candidate_id: 'cid' },
+      journey: { current_step: 'profile' },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('fresh-token')
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
+    })
+  })
+
+  it('does not fall back to stale stored token when a fresh link fails', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.setItem('candidate-portal:access-token', 'stale-token')
+    window.history.pushState({}, '', '/candidate/start?startapp=fresh-token')
+    exchangeCandidatePortalTokenMock.mockRejectedValue(
+      Object.assign(new Error('Ссылка устарела'), { status: 401 }),
+    )
+    fetchCandidatePortalJourneyMock.mockRejectedValue(
+      Object.assign(new Error('Ссылка устарела'), { status: 401 }),
+    )
+    parseCandidatePortalErrorMock.mockImplementation((error: unknown) => ({
+      message: error instanceof Error ? error.message : 'Ссылка устарела',
+      state: 'needs_new_link',
+      status: 401,
+    }))
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(fetchCandidatePortalJourneyMock).toHaveBeenCalledWith({ skipStoredPortalToken: true })
+      expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()
+    })
+  })
 })

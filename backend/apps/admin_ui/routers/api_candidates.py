@@ -17,3 +17,4 @@ router.add_api_route('/candidates/{candidate_id}/available-slots', api_misc.api_
 router.add_api_route('/candidates/{candidate_id}/schedule-slot', api_misc.api_schedule_slot, methods=['POST'])
 router.add_api_route('/candidates/{candidate_id}/schedule-intro-day', api_misc.api_schedule_intro_day, methods=['POST'])
 router.add_api_route('/candidates/{candidate_id}/channels/max-link', api_misc.api_candidate_max_link, methods=['POST'])
+router.add_api_route('/candidates/{candidate_id}/portal/restart', api_misc.api_candidate_portal_restart, methods=['POST'])

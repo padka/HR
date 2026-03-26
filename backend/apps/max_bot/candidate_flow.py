@@ -38,8 +38,8 @@ from backend.domain.candidates.models import (
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
-    build_candidate_max_mini_app_url,
-    build_candidate_portal_url,
+    build_candidate_public_max_mini_app_url,
+    build_candidate_public_portal_url,
     bump_candidate_portal_session_version,
     complete_screening,
     ensure_candidate_portal_session,
@@ -48,7 +48,6 @@ from backend.domain.candidates.portal_service import (
     save_screening_draft,
     resolve_candidate_portal_access_token,
     resolve_candidate_portal_user,
-    sign_candidate_portal_token,
     upsert_step_state,
 )
 from backend.domain.candidates.status import CandidateStatus
@@ -191,17 +190,14 @@ def _portal_mini_app_url(
     journey_session_id: int,
     session_version: int,
 ) -> str:
-    if not (candidate.candidate_id or candidate.telegram_id):
+    if not candidate.candidate_id:
         return ""
-    portal_token = sign_candidate_portal_token(
-        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
-        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
-        entry_channel="max",
-        source_channel="max_app",
+    return build_candidate_public_max_mini_app_url(
+        candidate_uuid=str(candidate.candidate_id),
         journey_session_id=journey_session_id,
         session_version=session_version,
+        source_channel="max_app",
     )
-    return build_candidate_max_mini_app_url(start_param=portal_token)
 
 
 def _portal_entry_urls(
@@ -210,7 +206,7 @@ def _portal_entry_urls(
     journey_session_id: int,
     session_version: int,
 ) -> tuple[str | None, str | None]:
-    portal_url = build_candidate_portal_url(
+    portal_url = build_candidate_public_portal_url(
         candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
         telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
         entry_channel="max",

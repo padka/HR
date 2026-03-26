@@ -19,7 +19,7 @@ import {
   type CandidatePortalSlot,
 } from '@/api/candidate'
 import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
-import { markCandidateWebAppReady } from './webapp'
+import { ensureCandidateWebAppBridge, markCandidateWebAppReady } from './webapp'
 import '../candidate-portal.css'
 
 const JOURNEY_QUERY_KEY = ['candidate-portal-journey']
@@ -140,9 +140,9 @@ function applyJourneyPayload(
 
 export function CandidateJourneyPage() {
   const queryClient = useQueryClient()
-  const journeyQuery = useQuery({
+  const journeyQuery = useQuery<CandidatePortalJourneyResponse>({
     queryKey: JOURNEY_QUERY_KEY,
-    queryFn: fetchCandidatePortalJourney,
+    queryFn: () => fetchCandidatePortalJourney(),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -162,6 +162,7 @@ export function CandidateJourneyPage() {
   const [messageText, setMessageText] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [pendingSlotId, setPendingSlotId] = useState<number | null>(null)
+  const [supportMessage, setSupportMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!payload) return
@@ -175,7 +176,24 @@ export function CandidateJourneyPage() {
 
   useEffect(() => {
     markCandidateWebAppReady()
+    void ensureCandidateWebAppBridge().finally(() => {
+      markCandidateWebAppReady()
+    })
   }, [])
+
+  const handleCopySupportMessage = async () => {
+    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку в кабинет кандидата MAX.'
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(requestText)
+        setSupportMessage('Текст для рекрутера скопирован.')
+        return
+      }
+    } catch {
+      // Fall through to inline fallback.
+    }
+    setSupportMessage(requestText)
+  }
 
   const setMutationError = (error: unknown) => {
     setLocalError(error instanceof Error ? error.message : 'Не удалось выполнить действие.')
@@ -331,7 +349,9 @@ export function CandidateJourneyPage() {
         ? 'Доступ к кабинету недоступен'
         : recoveryState === 'needs_new_link'
           ? 'Нужна новая ссылка'
-          : 'Не удалось восстановить кабинет'
+          : recoveryState === 'recoverable'
+            ? 'Сессия кабинета истекла'
+            : 'Не удалось восстановить кабинет'
     const errorSubtitle =
       recoveryState === 'blocked'
         ? 'Сессия отозвана или кандидат не найден. Попросите рекрутера восстановить доступ.'
@@ -353,9 +373,15 @@ export function CandidateJourneyPage() {
                 Повторить
               </button>
               <Link className="ui-btn ui-btn--ghost" to="/candidate/start">
-                Открыть заново
+                Открыть новую ссылку
               </Link>
+              <button className="ui-btn ui-btn--ghost" onClick={handleCopySupportMessage}>
+                Запросить новую ссылку у рекрутера
+              </button>
             </div>
+            <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
+              {supportMessage || 'Если проблема повторяется, попросите рекрутера переотправить доступ или запустить анкету заново.'}
+            </p>
           </div>
         </div>
       </div>

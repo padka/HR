@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -64,6 +65,8 @@ def _isolated_registry(monkeypatch):
 def client(monkeypatch):
     settings_module.get_settings.cache_clear()
     monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
+    monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
+    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
     settings = SimpleNamespace(
         max_bot_enabled=True,
         max_bot_token="test_max_token",
@@ -71,6 +74,8 @@ def client(monkeypatch):
         max_webhook_secret="test_secret",
         environment="test",
         max_bot_link_base="https://max.ru/recruitsmartbot",
+        crm_public_url="https://crm.example.test",
+        candidate_portal_public_url="https://crm.example.test",
     )
     from unittest.mock import patch
 
@@ -256,7 +261,11 @@ def test_max_flow_completes_profile_and_screening(client: TestClient, _isolated_
     assert buttons
     assert buttons[0][0].url
     assert buttons[0][0].kind == "web_app"
-    assert "startapp=" in str(buttons[0][0].url)
+    mini_app_url = str(buttons[0][0].url)
+    assert "startapp=" in mini_app_url
+    launch_token = parse_qs(urlparse(mini_app_url).query).get("startapp", [""])[0]
+    assert launch_token.startswith("mx1")
+    assert "." not in launch_token
     if len(buttons) > 1:
         assert buttons[1][0].url
         assert "start=" in str(buttons[1][0].url)

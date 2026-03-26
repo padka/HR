@@ -21,8 +21,8 @@ from backend.domain.candidates.portal_service import (
     confirm_candidate_portal_slot,
     create_candidate_portal_message,
     ensure_candidate_portal_session,
+    get_latest_test1_result_for_journey,
     get_candidate_portal_user,
-    get_latest_test1_result,
     is_candidate_portal_session_valid,
     resolve_candidate_portal_access_token,
     reserve_candidate_portal_slot,
@@ -117,6 +117,8 @@ def _candidate_portal_auth_error(
             "message": message,
             "code": code,
             "state": state,
+            "can_resume": state == PORTAL_RECOVERY_STATE_RECOVERABLE,
+            "requires_fresh_link": state == PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
         },
         headers=_candidate_portal_resume_cookie_clear_headers() if clear_resume_cookie else None,
     )
@@ -191,6 +193,8 @@ def _candidate_portal_not_found_error(
             "message": message,
             "code": "portal_candidate_not_found",
             "state": PORTAL_RECOVERY_STATE_BLOCKED,
+            "can_resume": False,
+            "requires_fresh_link": False,
         },
         headers=_candidate_portal_resume_cookie_clear_headers() if clear_resume_cookie else None,
     )
@@ -226,6 +230,8 @@ async def _candidate_session_payload(
                             "message": str(exc),
                             "code": "portal_link_invalid",
                             "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                            "can_resume": False,
+                            "requires_fresh_link": True,
                         },
                         headers=_candidate_portal_resume_cookie_clear_headers()
                         if portal_token_from_resume_cookie
@@ -267,6 +273,8 @@ async def _candidate_session_payload(
                             "message": "Сессия портала устарела. Откройте новую ссылку.",
                             "code": "portal_session_version_mismatch",
                             "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                            "can_resume": False,
+                            "requires_fresh_link": True,
                         },
                         headers=_candidate_portal_resume_cookie_clear_headers()
                         if portal_token_from_resume_cookie
@@ -299,6 +307,8 @@ async def _candidate_session_payload(
                         "message": "Сессия портала устарела. Откройте новую ссылку.",
                         "code": "portal_session_version_mismatch",
                         "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                        "can_resume": False,
+                        "requires_fresh_link": True,
                     },
                 )
     next_payload = touch_candidate_portal_session(dict(payload))
@@ -344,6 +354,8 @@ async def exchange_candidate_portal_session(
                         "message": str(exc),
                         "code": "portal_link_invalid",
                         "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                        "can_resume": False,
+                        "requires_fresh_link": True,
                     },
                 ) from exc
             candidate = await resolve_candidate_portal_user(session, access)
@@ -354,6 +366,8 @@ async def exchange_candidate_portal_session(
                         "message": "Кандидатская сессия не найдена.",
                         "code": "portal_candidate_not_found",
                         "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                        "can_resume": False,
+                        "requires_fresh_link": False,
                     },
                 )
             journey = await ensure_candidate_portal_session(
@@ -385,9 +399,15 @@ async def exchange_candidate_portal_session(
                         "message": "Сессия портала устарела. Откройте новую ссылку.",
                         "code": "portal_session_version_mismatch",
                         "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                        "can_resume": False,
+                        "requires_fresh_link": True,
                     },
                 )
-            test1_result = await get_latest_test1_result(session, candidate.id)
+            test1_result = await get_latest_test1_result_for_journey(
+                session,
+                candidate_id=int(candidate.id),
+                journey=journey,
+            )
             journey_meta = dict(journey.payload_json or {})
             if test1_result is None and not journey_meta.get("screening_started_logged_at"):
                 await analytics.log_funnel_event(

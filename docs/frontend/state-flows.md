@@ -10,7 +10,7 @@ Frontend platform / UI engineering.
 Canonical.
 
 ## Last Reviewed
-2026-03-25.
+2026-03-26.
 
 ## Source Paths
 - `frontend/app/src/app/main.tsx`
@@ -82,6 +82,7 @@ sequenceDiagram
   Page->>AI: load AI summary/coach queries
   Page->>Page: build pipeline/tests/view model
   User->>Drawer: open insights/chat/script surfaces
+  User->>Actions: reissue access / restart portal journey
   User->>Modal: schedule slot / intro day / reject / report preview
   Modal->>Actions: execute mutation
   Actions-->>Page: success message
@@ -108,7 +109,7 @@ sequenceDiagram
   participant Journey as CandidateJourneyPage
 
   Browser->>Start: Open /candidate/start[/token]
-  Start->>Token: resolve token from route/session
+  Start->>Token: resolve token route -> query -> MAX Bridge start_param -> stored token
   alt token found
     Start->>API: exchangeCandidatePortalToken(token)
     API-->>Start: journey payload
@@ -122,7 +123,8 @@ sequenceDiagram
 
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
-- If token exchange fails with recoverable state, the flow falls back to the journey payload and retries once without stale stored token so the resume cookie can rehydrate the session.
+- Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
+- Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 
 ## Candidate Portal Journey Flow

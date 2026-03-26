@@ -12,6 +12,7 @@ from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import (
+    CandidateJourneySession,
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
@@ -92,6 +93,8 @@ def admin_app(monkeypatch) -> Any:
     monkeypatch.setenv("ALLOW_LEGACY_BASIC", "1")
     monkeypatch.setenv("LOG_FILE", "data/logs/test_app.log")
     monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
+    monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
+    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
 
     from backend.core import settings as settings_module
 
@@ -269,11 +272,15 @@ async def test_generate_max_link(admin_app) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["public_link"] == "https://max.ru/recruitsmartbot"
+    assert payload["portal_public_url"] == "https://crm.example.test"
+    assert payload["portal_entry_ready"] is True
+    assert payload["max_entry_ready"] is True
     assert payload["invite_token"]
     assert payload["deep_link"].startswith("https://max.ru/recruitsmartbot?start=")
     assert payload["invite_token"] in payload["deep_link"]
     assert payload["mini_app_link"].startswith("https://max.ru/recruitsmartbot?startapp=")
     assert payload["invite_token"] not in payload["mini_app_link"]
+    assert payload["browser_link"].startswith("https://crm.example.test/candidate/start?start=")
     assert payload["invite"] == {"channel": "max", "status": "active", "rotated": False}
 
     rotated = await _async_request(
@@ -316,6 +323,96 @@ async def test_generate_max_link(admin_app) -> None:
         changes = row.changes or {}
         assert "token" not in changes
         assert "previous_token" not in changes
+
+
+@pytest.mark.asyncio
+async def test_restart_candidate_portal_creates_new_active_journey(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90123,
+        fio="Portal Restart Tester",
+        city="Москва",
+        username="portal_restart_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    first_link = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+    assert first_link.status_code == 200
+    first_payload = first_link.json()
+
+    restart_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/portal/restart",
+    )
+    assert restart_response.status_code == 200
+    payload = restart_response.json()
+    assert payload["journey"]["restarted"] is True
+    assert payload["journey"]["id"] != first_payload["journey"]["id"]
+    assert payload["journey"]["session_version"] == 1
+    assert payload["invite"]["rotated"] is True
+    assert payload["browser_link"].startswith("https://crm.example.test/candidate/start?start=")
+    assert payload["delivery"]["status"] == "not_linked"
+
+    async with async_session() as session:
+        journeys = (
+            await session.scalars(
+                select(CandidateJourneySession)
+                .where(CandidateJourneySession.candidate_id == candidate.id)
+                .order_by(CandidateJourneySession.id.asc())
+            )
+        ).all()
+        assert len(journeys) >= 2
+        assert journeys[-1].status == "active"
+        assert journeys[0].status == "abandoned"
+
+        refreshed_candidate = await session.get(User, candidate.id)
+        assert refreshed_candidate is not None
+        assert refreshed_candidate.candidate_status == CandidateStatus.LEAD
+
+
+@pytest.mark.asyncio
+async def test_restart_candidate_portal_blocks_confirmed_interview(admin_app) -> None:
+    recruiter_id = await _create_recruiter("Restart Slot Recruiter", city_name="Самара")
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90124,
+        fio="Portal Restart Blocked",
+        city="Самара",
+        username="portal_restart_blocked",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        city = await session.scalar(select(City).where(City.name == "Самара"))
+        assert city is not None
+        slot = Slot(
+            recruiter_id=recruiter_id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+            purpose="interview",
+            candidate_id=candidate.id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+            tz_name="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/portal/restart",
+    )
+
+    assert response.status_code == 409
+    assert "подтверждено собеседование" in response.json()["detail"]["message"].lower()
 
 
 @pytest.mark.asyncio

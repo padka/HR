@@ -195,12 +195,16 @@ export const exchangeCandidatePortalToken = async (token: string) =>
   await candidateFetch<CandidatePortalJourneyResponse>('/session/exchange', {
     method: 'POST',
     json: { token },
+    skipStoredPortalToken: true,
   })
 
-export const fetchCandidatePortalJourney = async () => {
-  const storedToken = readCandidatePortalAccessToken()
+export const fetchCandidatePortalJourney = async (options?: { skipStoredPortalToken?: boolean }) => {
+  const skipStoredPortalToken = Boolean(options?.skipStoredPortalToken)
+  const storedToken = skipStoredPortalToken ? '' : readCandidatePortalAccessToken()
   try {
-    return await candidateFetch<CandidatePortalJourneyResponse>('/journey')
+    return await candidateFetch<CandidatePortalJourneyResponse>('/journey', {
+      skipStoredPortalToken,
+    })
   } catch (error) {
     const parsed = parseCandidatePortalError(error)
     if (storedToken && parsed?.status === 401) {

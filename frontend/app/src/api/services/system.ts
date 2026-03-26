@@ -147,6 +147,16 @@ export type MessengerHealthChannel = {
 
 export type MessengerHealthPayload = {
   channels: Record<string, MessengerHealthChannel>
+  portal?: {
+    public_url?: string | null
+    public_ready?: boolean
+    public_error?: string | null
+    public_message?: string | null
+    max_entry_ready?: boolean
+    max_entry_error?: string | null
+    max_entry_message?: string | null
+    max_link_base?: string | null
+  } | null
 }
 
 export type QuestionGroup = {
@@ -199,6 +209,7 @@ export function fetchMessengerHealth() {
         },
       ]),
     ),
+    portal: payload.portal || null,
   }))
 }
 

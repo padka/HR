@@ -455,6 +455,16 @@ const candidateChatTemplatesData = {
 const candidateChannelHealthData = {
   candidate_id: 101,
   preferred_channel: 'max',
+  portal_entry_ready: true,
+  max_entry_ready: true,
+  portal_public_url: 'https://crm.example.test',
+  browser_link: 'https://crm.example.test/candidate/start?start=signed-token',
+  mini_app_link: 'https://max.ru/recruitsmartbot?startapp=mx1token',
+  active_journey_id: 401,
+  session_version: 3,
+  last_link_issued_at: '2031-07-01T08:45:00Z',
+  restart_allowed: true,
+  config_errors: [],
   telegram_linked: true,
   max_linked: true,
   telegram: {
@@ -467,7 +477,6 @@ const candidateChannelHealthData = {
     max_user_id: 'max-101',
   },
   active_invite: {
-    token: 'invite-101',
     status: 'active',
     channel: 'max',
     used_by_external_id: 'max-101',
@@ -1031,6 +1040,9 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
       expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+      expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Переотправить ссылку' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть browser link' })).toBeInTheDocument()
     })
   })
 

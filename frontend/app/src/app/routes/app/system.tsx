@@ -1117,7 +1117,10 @@ export function SystemPage() {
 
             {outboxQuery.data && (
               <>
-                <MessengerHealthCards channels={messengerHealthQuery.data?.channels} />
+                <MessengerHealthCards
+                  channels={messengerHealthQuery.data?.channels}
+                  portal={messengerHealthQuery.data?.portal}
+                />
                 <p className="subtitle">Latest ID: {outboxQuery.data.latest_id}</p>
                 <div className="glass panel--tight" style={{ overflowX: 'auto' }}>
                   <table className="data-table">

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+import hashlib
+import hmac
+import json
+from urllib.parse import quote, urlparse
 from typing import Any, Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -38,6 +42,7 @@ PORTAL_JOURNEY_KEY = "candidate_portal"
 PORTAL_JOURNEY_VERSION = "v1"
 PORTAL_SESSION_KEY = "candidate_portal"
 PORTAL_TOKEN_SALT = "candidate-portal-link"
+MAX_PORTAL_LAUNCH_TOKEN_PREFIX = "mx1"
 PORTAL_DEFAULT_ENTRY_CHANNEL = "web"
 PORTAL_STEP_LABELS = {
     "profile": "Профиль",
@@ -76,6 +81,106 @@ class CandidatePortalAccess:
 def _serializer() -> URLSafeTimedSerializer:
     settings = get_settings()
     return URLSafeTimedSerializer(settings.session_secret, salt=PORTAL_TOKEN_SALT)
+
+
+def _urlsafe_b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _urlsafe_b64decode(value: str) -> bytes:
+    raw = str(value or "").strip()
+    if not raw:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+    padding = "=" * (-len(raw) % 4)
+    try:
+        return base64.urlsafe_b64decode(f"{raw}{padding}".encode("ascii"))
+    except Exception as exc:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.") from exc
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    normalized = str(hostname or "").strip().lower().strip("[]")
+    return normalized in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def get_candidate_portal_public_base_url() -> str:
+    settings = get_settings()
+    return (
+        settings.candidate_portal_public_url
+        or settings.crm_public_url
+        or settings.bot_backend_url
+        or ""
+    ).strip().rstrip("/")
+
+
+def get_candidate_portal_public_status() -> dict[str, Any]:
+    base_url = get_candidate_portal_public_base_url()
+    if not base_url:
+        return {
+            "ready": False,
+            "url": None,
+            "error": "candidate_portal_public_url_missing",
+            "message": "CANDIDATE_PORTAL_PUBLIC_URL не настроен.",
+        }
+    parsed = urlparse(base_url)
+    if parsed.scheme.lower() != "https":
+        return {
+            "ready": False,
+            "url": base_url,
+            "error": "candidate_portal_public_url_not_https",
+            "message": "CANDIDATE_PORTAL_PUBLIC_URL должен использовать HTTPS.",
+        }
+    if _is_loopback_host(parsed.hostname):
+        return {
+            "ready": False,
+            "url": base_url,
+            "error": "candidate_portal_public_url_loopback",
+            "message": "CANDIDATE_PORTAL_PUBLIC_URL не может указывать на localhost или loopback.",
+        }
+    return {
+        "ready": True,
+        "url": base_url,
+        "error": None,
+        "message": None,
+    }
+
+
+def get_candidate_portal_max_entry_status() -> dict[str, Any]:
+    portal_status = get_candidate_portal_public_status()
+    settings = get_settings()
+    link_base = str(settings.max_bot_link_base or "").strip().rstrip("/")
+    if not link_base:
+        return {
+            "ready": False,
+            "url": None,
+            "error": "max_bot_link_base_missing",
+            "message": "MAX_BOT_LINK_BASE не настроен.",
+            "portal": portal_status,
+        }
+    parsed = urlparse(link_base)
+    if parsed.scheme.lower() != "https":
+        return {
+            "ready": False,
+            "url": link_base,
+            "error": "max_bot_link_base_not_https",
+            "message": "MAX_BOT_LINK_BASE должен использовать HTTPS.",
+            "portal": portal_status,
+        }
+    if not portal_status["ready"]:
+        return {
+            "ready": False,
+            "url": link_base,
+            "error": str(portal_status["error"] or "candidate_portal_public_url_invalid"),
+            "message": str(portal_status["message"] or "Публичный URL кабинета кандидата не готов."),
+            "portal": portal_status,
+        }
+    return {
+        "ready": True,
+        "url": link_base,
+        "error": None,
+        "message": None,
+        "portal": portal_status,
+    }
 
 
 def _utcnow() -> datetime:
@@ -152,6 +257,40 @@ def sign_candidate_portal_token(
     )
 
 
+def sign_candidate_portal_max_launch_token(
+    *,
+    candidate_uuid: str,
+    journey_session_id: int,
+    session_version: int,
+    source_channel: str = "max_app",
+) -> str:
+    candidate_uuid_value = str(candidate_uuid or "").strip()
+    if not candidate_uuid_value:
+        raise CandidatePortalError("MAX launch token requires candidate_uuid")
+    if int(journey_session_id or 0) <= 0 or int(session_version or 0) <= 0:
+        raise CandidatePortalError("MAX launch token requires journey_session_id and session_version")
+
+    payload = {
+        "cid": candidate_uuid_value,
+        "jid": int(journey_session_id),
+        "sv": int(session_version),
+        "src": str(source_channel or "max_app").strip() or "max_app",
+        "iat": int(_utcnow().timestamp()),
+    }
+    body = _urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    )
+    settings = get_settings()
+    signature = _urlsafe_b64encode(
+        hmac.new(
+            settings.session_secret.encode("utf-8"),
+            body.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+    )
+    return f"{MAX_PORTAL_LAUNCH_TOKEN_PREFIX}{signature}{body}"
+
+
 def parse_candidate_portal_token(value: str) -> CandidatePortalAccess:
     settings = get_settings()
     try:
@@ -177,6 +316,56 @@ def parse_candidate_portal_token(value: str) -> CandidatePortalAccess:
         source_channel=str(payload.get("source_channel") or "portal"),
         journey_session_id=int(payload["journey_session_id"]) if payload.get("journey_session_id") not in (None, "") else None,
         session_version=int(payload["session_version"]) if payload.get("session_version") not in (None, "") else None,
+    )
+
+
+def parse_candidate_portal_max_launch_token(value: str) -> CandidatePortalAccess:
+    raw = (value or "").strip()
+    if not raw.startswith(MAX_PORTAL_LAUNCH_TOKEN_PREFIX):
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    signature_length = 43
+    offset = len(MAX_PORTAL_LAUNCH_TOKEN_PREFIX)
+    if len(raw) <= offset + signature_length:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+    provided_signature = raw[offset : offset + signature_length]
+    body = raw[offset + signature_length :]
+
+    settings = get_settings()
+    expected_signature = _urlsafe_b64encode(
+        hmac.new(
+            settings.session_secret.encode("utf-8"),
+            body.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+    )
+    if not hmac.compare_digest(provided_signature, expected_signature):
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    try:
+        payload = json.loads(_urlsafe_b64decode(body).decode("utf-8"))
+    except CandidatePortalAuthError:
+        raise
+    except Exception as exc:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.") from exc
+
+    candidate_uuid = str(payload.get("cid") or "").strip() or None
+    journey_session_id = int(payload.get("jid") or 0)
+    session_version = int(payload.get("sv") or 0)
+    issued_at = int(payload.get("iat") or 0)
+    if not candidate_uuid or journey_session_id <= 0 or session_version <= 0 or issued_at <= 0:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    if int(_utcnow().timestamp()) - issued_at > int(settings.candidate_portal_token_ttl_seconds):
+        raise CandidatePortalAuthError("Ссылка для входа устарела.")
+
+    return CandidatePortalAccess(
+        candidate_uuid=candidate_uuid,
+        telegram_id=None,
+        entry_channel="max",
+        source_channel=str(payload.get("src") or "max_app"),
+        journey_session_id=journey_session_id,
+        session_version=session_version,
     )
 
 
@@ -221,6 +410,52 @@ def build_candidate_max_mini_app_url(
         return ""
     separator = "&" if "?" in base else "?"
     return f"{base}{separator}startapp={quote(token, safe='')}"
+
+
+def build_candidate_public_portal_url(
+    *,
+    candidate_uuid: str | None = None,
+    telegram_id: int | None = None,
+    entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
+    source_channel: str = "portal",
+    journey_session_id: int | None = None,
+    session_version: int | None = None,
+) -> str:
+    status = get_candidate_portal_public_status()
+    if not status["ready"]:
+        return ""
+    token = sign_candidate_portal_token(
+        candidate_uuid=candidate_uuid,
+        telegram_id=telegram_id,
+        entry_channel=entry_channel,
+        source_channel=source_channel,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+    )
+    encoded_token = quote(str(token).strip(), safe="")
+    base = str(status["url"] or "").rstrip("/")
+    if base.endswith("/candidate"):
+        return f"{base}/start?start={encoded_token}"
+    return f"{base}/candidate/start?start={encoded_token}"
+
+
+def build_candidate_public_max_mini_app_url(
+    *,
+    candidate_uuid: str,
+    journey_session_id: int,
+    session_version: int,
+    source_channel: str = "max_app",
+) -> str:
+    status = get_candidate_portal_max_entry_status()
+    if not status["ready"]:
+        return ""
+    token = sign_candidate_portal_max_launch_token(
+        candidate_uuid=candidate_uuid,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+        source_channel=source_channel,
+    )
+    return build_candidate_max_mini_app_url(start_param=token)
 
 
 def is_candidate_portal_session_valid(payload: object) -> bool:
@@ -311,10 +546,9 @@ async def resolve_candidate_portal_access_token(
     if not raw_token:
         raise CandidatePortalAuthError("Ссылка для входа недействительна.")
 
-    try:
-        return parse_candidate_portal_token(raw_token)
-    except CandidatePortalAuthError as signed_exc:
-        raise signed_exc
+    if raw_token.startswith(MAX_PORTAL_LAUNCH_TOKEN_PREFIX):
+        return parse_candidate_portal_max_launch_token(raw_token)
+    return parse_candidate_portal_token(raw_token)
 
 
 async def get_candidate_portal_user(
@@ -547,6 +781,27 @@ async def get_latest_test1_result(session: AsyncSession, candidate_id: int) -> T
     )
 
 
+async def get_latest_test1_result_for_journey(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+    journey: CandidateJourneySession,
+) -> TestResult | None:
+    stmt = (
+        select(TestResult)
+        .where(
+            TestResult.user_id == candidate_id,
+            TestResult.rating == "TEST1",
+        )
+        .order_by(TestResult.created_at.desc(), TestResult.id.desc())
+        .limit(1)
+    )
+    journey_meta = dict(journey.payload_json or {}) if journey.payload_json else {}
+    if bool(journey_meta.get("restart_from_scratch")) and journey.started_at is not None:
+        stmt = stmt.where(TestResult.created_at >= journey.started_at)
+    return await session.scalar(stmt)
+
+
 async def get_candidate_active_slot(session: AsyncSession, candidate: User) -> Slot | None:
     telegram_ids = {
         int(value)
@@ -673,7 +928,11 @@ async def build_candidate_portal_journey(
     profile_state = step_map.get("profile")
     screening_state = step_map.get("screening")
 
-    test1_result = await get_latest_test1_result(session, candidate.id)
+    test1_result = await get_latest_test1_result_for_journey(
+        session,
+        candidate_id=int(candidate.id),
+        journey=journey,
+    )
     active_slot = await get_candidate_active_slot(session, candidate)
     current_city = await _resolve_city(
         session,
@@ -690,11 +949,18 @@ async def build_candidate_portal_journey(
     )
     company_name = _portal_company_name()
 
+    journey_meta = dict(journey.payload_json or {}) if journey.payload_json else {}
+    restart_from_scratch = bool(journey_meta.get("restart_from_scratch"))
     profile_complete = (
         not _is_placeholder_fio(candidate.fio)
         and bool((candidate.phone or "").strip())
         and current_city is not None
     )
+    if restart_from_scratch:
+        profile_complete = bool(
+            profile_state is not None
+            and profile_state.status == CandidateJourneyStepStatus.COMPLETED.value
+        )
     screening_complete = test1_result is not None
     has_available_slots = len(available_slots) > 0
 
@@ -866,6 +1132,78 @@ async def build_candidate_portal_journey(
             "cities": await list_candidate_portal_cities(session),
         },
     }
+
+
+async def restart_candidate_portal_journey(
+    session: AsyncSession,
+    candidate: User,
+    *,
+    entry_channel: str = "max",
+) -> tuple[CandidateJourneySession, int | None]:
+    active_slot = await get_candidate_active_slot(session, candidate)
+    active_slot_status = str(active_slot.status or "").lower() if active_slot is not None else ""
+    if active_slot_status in {SlotStatus.CONFIRMED.lower(), SlotStatus.CONFIRMED_BY_CANDIDATE.lower()}:
+        raise CandidatePortalError("У кандидата уже подтверждено собеседование. Сначала решите запись вручную.")
+
+    released_slot_id: int | None = None
+    if active_slot is not None and active_slot_status in {SlotStatus.PENDING.lower(), SlotStatus.BOOKED.lower()}:
+        released_slot_id = int(active_slot.id)
+        if _dialect_name(session) == "sqlite":
+            active_slot.status = SlotStatus.FREE
+            active_slot.candidate_id = None
+            active_slot.candidate_tg_id = None
+            active_slot.candidate_fio = None
+            active_slot.candidate_tz = None
+            active_slot.candidate_city_id = None
+            active_slot.purpose = "interview"
+            await session.flush()
+        else:
+            await reject_slot(active_slot.id)
+
+    now = _utcnow()
+    active_journeys = (
+        await session.scalars(
+            select(CandidateJourneySession)
+            .where(
+                CandidateJourneySession.candidate_id == candidate.id,
+                CandidateJourneySession.journey_key == PORTAL_JOURNEY_KEY,
+                CandidateJourneySession.status == CandidateJourneySessionStatus.ACTIVE.value,
+            )
+            .options(selectinload(CandidateJourneySession.step_states))
+            .with_for_update()
+        )
+    ).all()
+
+    for current_journey in active_journeys:
+        current_journey.status = CandidateJourneySessionStatus.ABANDONED.value
+        current_journey.completed_at = now
+        current_journey.last_activity_at = now
+        meta = dict(current_journey.payload_json or {})
+        meta["abandoned_reason"] = "operator_restart"
+        meta["abandoned_at"] = now.isoformat()
+        current_journey.payload_json = meta
+
+    await _status_service.force(candidate, CandidateStatus.LEAD, reason="candidate portal restarted")
+    candidate.last_activity = now
+
+    journey = CandidateJourneySession(
+        candidate_id=candidate.id,
+        journey_key=PORTAL_JOURNEY_KEY,
+        journey_version=PORTAL_JOURNEY_VERSION,
+        entry_channel=entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL,
+        current_step_key="profile",
+        status=CandidateJourneySessionStatus.ACTIVE.value,
+        session_version=1,
+        started_at=now,
+        last_activity_at=now,
+        payload_json={
+            "restart_from_scratch": True,
+            "restarted_at": now.isoformat(),
+        },
+    )
+    session.add(journey)
+    await session.flush()
+    return journey, released_slot_id
 
 
 async def save_candidate_profile(

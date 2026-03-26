@@ -261,6 +261,9 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
         assert payload["channels"]["max"]["dead_letter_count"] >= 1
         assert payload["channels"]["max"]["degraded"] is True
         assert payload["channels"]["max"]["degraded_reason"] == "max:invalid_token"
+        assert "portal" in payload
+        assert "public_ready" in payload["portal"]
+        assert "max_entry_ready" in payload["portal"]
     finally:
         _run(mark_messenger_channel_healthy("max"))
 

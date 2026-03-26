@@ -9,11 +9,14 @@ type CandidateActionsProps = {
   test2Section?: TestSection
   actionPending: boolean
   maxLinkPending: boolean
+  restartPending: boolean
   showInsightsAction?: boolean
   actionsRef?: Ref<HTMLDivElement>
   onOpenChat: () => void
   onOpenInsights: () => void
   onCopyMaxLink: () => void
+  onRestartPortal: () => void
+  onOpenBrowserPortal: () => void
   onScheduleSlot: () => void
   onScheduleIntroDay: () => void
   onActionClick: (action: CandidateAction) => void
@@ -26,11 +29,14 @@ export function CandidateActions({
   test2Section,
   actionPending,
   maxLinkPending,
+  restartPending,
   showInsightsAction = false,
   actionsRef,
   onOpenChat,
   onOpenInsights,
   onCopyMaxLink,
+  onRestartPortal,
+  onOpenBrowserPortal,
   onScheduleSlot,
   onScheduleIntroDay,
   onActionClick,
@@ -53,6 +59,9 @@ export function CandidateActions({
     || null
   const lastOutboundError = channelHealth?.last_outbound_delivery?.error || null
   const activeInvite = channelHealth?.active_invite || null
+  const browserLink = channelHealth?.browser_link || null
+  const configErrors = channelHealth?.config_errors || []
+  const restartAllowed = channelHealth?.restart_allowed !== false
 
   const hasUpcomingSlot = slots.some((slot) => {
     const status = String(slot.status || '').toUpperCase()
@@ -210,19 +219,66 @@ export function CandidateActions({
           </div>
 
           <div style={{ marginTop: 10 }}>
+            <p className="subtitle" style={{ margin: 0 }}>
+              portal: {channelHealth.portal_entry_ready ? 'public ready' : 'public blocked'}
+              {' · '}
+              MAX entry: {channelHealth.max_entry_ready ? 'ready' : 'blocked'}
+            </p>
+            {channelHealth.active_journey_id ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                journey: #{channelHealth.active_journey_id} · session v{channelHealth.session_version || 1}
+              </p>
+            ) : null}
             {activeInvite?.used_by_external_id ? (
-              <p className="subtitle" style={{ margin: 0 }}>
+              <p className="subtitle" style={{ margin: channelHealth.active_journey_id ? '4px 0 0' : 0 }}>
                 invite user: {activeInvite.used_by_external_id}
               </p>
             ) : null}
             <p className="subtitle" style={{ margin: activeInvite?.used_by_external_id ? '4px 0 0' : 0 }}>
               last inbound: {channelHealth.last_inbound_at ? new Date(channelHealth.last_inbound_at).toLocaleString('ru-RU') : '—'}
             </p>
+            {channelHealth.last_link_issued_at ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last link: {new Date(channelHealth.last_link_issued_at).toLocaleString('ru-RU')}
+              </p>
+            ) : null}
             {lastOutboundError ? (
               <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
                 {lastOutboundError}
               </p>
             ) : null}
+            {configErrors.length > 0 ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                {configErrors.join(' · ')}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            <button
+              type="button"
+              className="ui-btn ui-btn--primary ui-btn--sm"
+              onClick={onCopyMaxLink}
+              disabled={maxLinkPending}
+            >
+              {maxLinkPending ? 'Отправляем…' : 'Переотправить ссылку'}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={onOpenBrowserPortal}
+              disabled={!browserLink}
+            >
+              Открыть browser link
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={onRestartPortal}
+              disabled={restartPending || !restartAllowed}
+            >
+              {restartPending ? 'Перезапускаем…' : 'Начать заново'}
+            </button>
           </div>
         </section>
       )}

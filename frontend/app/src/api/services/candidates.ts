@@ -30,18 +30,31 @@ export type CandidateSlot = {
 }
 
 export type CandidateMaxLinkPayload = {
-  public_link: string
+  public_link?: string | null
+  portal_public_url?: string | null
+  portal_entry_ready?: boolean
+  max_entry_ready?: boolean
+  browser_link?: string | null
   invite_token: string
-  deep_link: string
+  deep_link?: string | null
   mini_app_link?: string | null
   invite?: {
     channel?: string | null
     status?: string | null
     rotated?: boolean
   } | null
-  invite_status?: string | null
+  journey?: {
+    id?: number
+    session_version?: number
+    restarted?: boolean
+  } | null
   issued_at?: string | null
-  preferred_channel?: string | null
+  config_errors?: string[] | null
+  delivery?: {
+    status?: string | null
+    sent?: boolean
+    error?: string | null
+  } | null
 }
 
 export type CandidateChannelHealth = {
@@ -75,6 +88,16 @@ export type CandidateChannelHealth = {
     author?: string | null
     text?: string | null
   } | null
+  portal_public_url?: string | null
+  portal_entry_ready?: boolean
+  max_entry_ready?: boolean
+  browser_link?: string | null
+  mini_app_link?: string | null
+  config_errors?: string[] | null
+  active_journey_id?: number | null
+  session_version?: number | null
+  last_link_issued_at?: string | null
+  restart_allowed?: boolean
   telegram_linked?: boolean
   max_linked?: boolean
   last_outbound_delivery?: {
@@ -652,6 +675,12 @@ export function markCandidateChatRead(candidateId: number) {
 
 export function createCandidateMaxLink(candidateId: number) {
   return apiFetch<CandidateMaxLinkPayload>(`/candidates/${candidateId}/channels/max-link`, {
+    method: 'POST',
+  })
+}
+
+export function restartCandidatePortal(candidateId: number) {
+  return apiFetch<CandidateMaxLinkPayload>(`/candidates/${candidateId}/portal/restart`, {
     method: 'POST',
   })
 }

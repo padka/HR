@@ -49,7 +49,7 @@ export function CandidateDetailPage() {
   const testsSectionRef = useRef<HTMLDivElement | null>(null)
 
   const detailQuery = useCandidateDetail(candidateId)
-  const { actionMutation, createMaxLinkMutation } = useCandidateActions(candidateId)
+  const { actionMutation, createMaxLinkMutation, restartPortalMutation } = useCandidateActions(candidateId)
   const channelHealthQuery = useCandidateChannelHealth(candidateId, detailQuery.isSuccess)
   const ai = useCandidateAi(candidateId)
 
@@ -150,6 +150,32 @@ export function CandidateDetailPage() {
     void queryClient.invalidateQueries({ queryKey: ['candidates'] })
   }
 
+  const refreshCandidateSurfaces = async () => {
+    await Promise.all([
+      detailQuery.refetch(),
+      channelHealthQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['candidate-channel-health', candidateId] }),
+      queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] }),
+      queryClient.invalidateQueries({ queryKey: ['candidates'] }),
+    ])
+  }
+
+  const describePortalDelivery = (
+    payload: {
+      browser_link?: string | null
+      delivery?: { sent?: boolean; status?: string | null; error?: string | null } | null
+    } | null | undefined,
+    actionLabel: string,
+  ) => {
+    const delivery = payload?.delivery || null
+    if (delivery?.sent) return `${actionLabel}: ссылка отправлена кандидату в MAX`
+    if (delivery?.status === 'not_linked') return `${actionLabel}: MAX не привязан, используйте browser link`
+    if (delivery?.status === 'skipped_no_entry') return `${actionLabel}: публичный вход в кабинет не настроен`
+    if (delivery?.error) return `${actionLabel}: ${delivery.error}`
+    if (payload?.browser_link) return `${actionLabel}: browser link готов`
+    return `${actionLabel}: доступ обновлён`
+  }
+
   const handleActionClick = (action: CandidateAction) => {
     const isRejection =
       action.key === 'reject'
@@ -212,14 +238,10 @@ export function CandidateDetailPage() {
   const handleCopyMaxLink = () => {
     createMaxLinkMutation.mutate(undefined, {
       onSuccess: async (payload) => {
-        await Promise.all([
-          detailQuery.refetch(),
-          channelHealthQuery.refetch(),
-          queryClient.invalidateQueries({ queryKey: ['candidate-channel-health', candidateId] }),
-        ])
+        await refreshCandidateSurfaces()
         const maxLink = String(payload?.mini_app_link || payload?.deep_link || payload?.public_link || '').trim()
         if (!maxLink) {
-          setActionMessage('MAX-ссылка не была получена')
+          setActionMessage(describePortalDelivery(payload, 'Ссылка переотправлена'))
           return
         }
         try {
@@ -227,8 +249,8 @@ export function CandidateDetailPage() {
             await navigator.clipboard.writeText(maxLink)
             setActionMessage(
               payload?.invite?.rotated
-                ? 'MAX-ссылка обновлена и скопирована'
-                : 'MAX-ссылка скопирована',
+                ? 'MAX-ссылка обновлена, скопирована и отправлена кандидату'
+                : 'MAX-ссылка скопирована и отправлена кандидату',
             )
             return
           }
@@ -236,6 +258,35 @@ export function CandidateDetailPage() {
           // Fall through to inline fallback.
         }
         setActionMessage(`MAX-ссылка: ${maxLink}`)
+      },
+      onError: (error) => {
+        setActionMessage((error as Error).message)
+      },
+    })
+  }
+
+  const handleOpenBrowserPortal = () => {
+    const browserLink = String(channelHealth?.browser_link || '').trim()
+    if (!browserLink) {
+      setActionMessage('Browser link пока недоступен. Переотправьте ссылку после настройки публичного URL.')
+      return
+    }
+    window.open(browserLink, '_blank', 'noopener,noreferrer')
+    setActionMessage('Browser link открыт в новой вкладке')
+  }
+
+  const handleRestartPortal = () => {
+    if (!window.confirm('Начать анкету кандидата заново? Текущий прогресс сохранится в истории.')) {
+      return
+    }
+    restartPortalMutation.mutate(undefined, {
+      onSuccess: async (payload) => {
+        await refreshCandidateSurfaces()
+        const browserLink = String(payload?.browser_link || '').trim()
+        setActionMessage(describePortalDelivery(payload, 'Кандидат перезапущен'))
+        if (browserLink) {
+          window.open(browserLink, '_blank', 'noopener,noreferrer')
+        }
       },
       onError: (error) => {
         setActionMessage((error as Error).message)
@@ -315,6 +366,7 @@ export function CandidateDetailPage() {
                     test2Section={test2Section}
                     actionPending={actionMutation.isPending}
                     maxLinkPending={createMaxLinkMutation.isPending}
+                    restartPending={restartPortalMutation.isPending}
                     showInsightsAction={!isMobile}
                     actionsRef={pipelineActionsRef}
                     onOpenChat={handleOpenChat}
@@ -323,6 +375,8 @@ export function CandidateDetailPage() {
                       setIsInsightsOpen(true)
                     }}
                     onCopyMaxLink={handleCopyMaxLink}
+                    onRestartPortal={handleRestartPortal}
+                    onOpenBrowserPortal={handleOpenBrowserPortal}
                     onScheduleSlot={() => setShowScheduleSlotModal(true)}
                     onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}
                     onActionClick={handleActionClick}

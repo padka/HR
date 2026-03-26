@@ -10,7 +10,7 @@ Platform Engineering
 Canonical
 
 ## Last Reviewed
-2026-03-25
+2026-03-26
 
 ## Source Paths
 - `backend/apps/admin_ui/routers/candidate_portal.py`
@@ -67,7 +67,8 @@ sequenceDiagram
 
 ### Entry Surfaces
 - Candidate portal can be opened from signed browser links, MAX `startapp` payloads and Telegram `web_app` buttons.
-- The portal token remains the source of truth for journey recovery; native app entry only changes the launch surface, not the auth contract.
+- Browser entry uses the signed portal token directly. MAX mini-app entry uses a separate URL-safe launch token that resolves to the same candidate journey contract.
+- The portal token remains the source of truth for browser recovery; native app entry only changes the launch surface, not the journey/session invariants.
 
 ### State
 ```mermaid
@@ -92,6 +93,7 @@ stateDiagram-v2
 
 ### Reliability Contract
 - Browser reopen recovery first uses the short-lived HttpOnly resume cookie; if the cookie is missing, the portal may still recover from an explicit header token only for an `active` journey session with matching `session_version`.
+- Frontend bootstrap order is fixed: route token -> query `token/start/startapp` -> `window.WebApp.initDataUnsafe.start_param` from MAX Bridge -> stored session token.
 - If no bootstrap source is available, the candidate portal returns structured recovery states (`recoverable`, `needs_new_link`, `blocked`) so the UI can explain the next step instead of showing a dead-end 401.
 - Invite rotation, relink and explicit security recovery bump `session_version`; stale browser/header tokens must fail closed and emit audit trail.
 
@@ -193,7 +195,8 @@ sequenceDiagram
     A->>UI: POST /candidates/{id}/channels/max-link
     UI->>UI: rotate previous active MAX invite
     UI->>DOM: bump candidate portal session version
-    UI-->>A: deep_link + mini_app_link + invite metadata
+    UI->>DOM: build public browser link + MAX-safe mini-app launch token
+    UI-->>A: deep_link + mini_app_link + browser_link + invite metadata
     C->>M: Open MAX deep link / startapp payload
     M->>FLOW: process_bot_started()
     FLOW->>DOM: resolve signed portal access token() or invite token
@@ -205,7 +208,12 @@ sequenceDiagram
 
 ### Launch Contract
 - Candidate-facing MAX messages may include `open_app` and browser link buttons that point to the same signed portal journey.
+- `startapp` payload must be MAX-safe and public browser fallback must use a public HTTPS candidate portal URL; loopback or non-HTTPS portal URLs are treated as config errors and are surfaced to operators.
 - Telegram and MAX adapters normalize button metadata so the same portal flow can be launched as a native web app or as a browser fallback without changing journey/session semantics.
+
+### Recruiter Control
+- `Переотправить ссылку` rotates the active MAX invite, bumps `session_version`, keeps current portal progress and emits a fresh access package.
+- `Начать заново` abandons the active journey, creates a new `profile` journey, preserves history/audit trail and blocks restart when the candidate already has a confirmed interview.
 
 ### State
 ```mermaid

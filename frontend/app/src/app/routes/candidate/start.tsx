@@ -7,7 +7,10 @@ import {
   parseCandidatePortalError,
 } from '@/api/candidate'
 import { queryClient } from '@/api/client'
+import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
 import {
+  ensureCandidateWebAppBridge,
+  hasCandidatePortalLocationToken,
   markCandidateWebAppReady,
   persistCandidatePortalAccessToken,
   resolveCandidatePortalToken,
@@ -19,6 +22,7 @@ export function CandidateStartPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<string | null>(null)
+  const [supportMessage, setSupportMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -26,9 +30,13 @@ export function CandidateStartPage() {
     const run = async () => {
       setError(null)
       setErrorState(null)
+      setSupportMessage(null)
+      if (!hasCandidatePortalLocationToken(token)) {
+        await ensureCandidateWebAppBridge()
+      }
       markCandidateWebAppReady()
       const resolvedToken = resolveCandidatePortalToken(token)
-      if (!resolvedToken) {
+      if (!resolvedToken.token) {
         try {
           const payload = await fetchCandidatePortalJourney()
           if (cancelled) return
@@ -45,9 +53,9 @@ export function CandidateStartPage() {
         return
       }
       try {
-        const payload = await exchangeCandidatePortalToken(resolvedToken)
+        const payload = await exchangeCandidatePortalToken(resolvedToken.token)
         if (cancelled) return
-        persistCandidatePortalAccessToken(resolvedToken)
+        persistCandidatePortalAccessToken(resolvedToken.token)
         queryClient.setQueryData(['candidate-portal-journey'], payload)
         startTransition(() => {
           void navigate({ to: '/candidate/journey' })
@@ -56,8 +64,15 @@ export function CandidateStartPage() {
         if (cancelled) return
         const status = err instanceof Error && 'status' in err ? Number((err as { status?: number }).status) : undefined
         if (status === 401 || status === 422) {
+          const initialError = parseCandidatePortalError(err)
+          const shouldSkipStoredToken = resolvedToken.direct
+          if (shouldSkipStoredToken) {
+            clearCandidatePortalAccessToken()
+          }
           try {
-            const payload = await fetchCandidatePortalJourney()
+            const payload = await fetchCandidatePortalJourney({
+              skipStoredPortalToken: shouldSkipStoredToken,
+            })
             if (cancelled) return
             queryClient.setQueryData(['candidate-portal-journey'], payload)
             startTransition(() => {
@@ -66,7 +81,7 @@ export function CandidateStartPage() {
             return
           } catch (fallbackError) {
             if (cancelled) return
-            const info = parseCandidatePortalError(fallbackError)
+            const info = shouldSkipStoredToken ? initialError : parseCandidatePortalError(fallbackError)
             setError(info?.message || 'Ссылка для кабинета повреждена или неполная. Откройте новую ссылку из MAX.')
             setErrorState(info?.state || null)
             return
@@ -83,6 +98,20 @@ export function CandidateStartPage() {
       cancelled = true
     }
   }, [navigate, token])
+
+  const handleCopySupportMessage = async () => {
+    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку в кабинет кандидата MAX.'
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(requestText)
+        setSupportMessage('Текст для рекрутера скопирован.')
+        return
+      }
+    } catch {
+      // Fall through to inline fallback.
+    }
+    setSupportMessage(requestText)
+  }
 
   return (
     <div className="candidate-portal">
@@ -117,7 +146,15 @@ export function CandidateStartPage() {
               <button className="ui-btn ui-btn--primary" onClick={() => window.location.reload()}>
                 Повторить
               </button>
+              <button className="ui-btn ui-btn--ghost" onClick={handleCopySupportMessage}>
+                Запросить новую ссылку у рекрутера
+              </button>
             </div>
+          ) : null}
+          {error ? (
+            <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
+              {supportMessage || 'Если свежая ссылка не открывается, запросите новое приглашение у рекрутера.'}
+            </p>
           ) : null}
         </div>
       </div>

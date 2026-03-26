@@ -13,7 +13,9 @@ from backend.core.db import async_session
 from backend.domain.candidates.models import ChatMessage, User
 from backend.domain.candidates.portal_service import (
     bump_candidate_portal_session_version,
+    ensure_candidate_portal_session,
     get_candidate_portal_questions,
+    sign_candidate_portal_max_launch_token,
     sign_candidate_portal_token,
 )
 from backend.domain.candidates.services import create_candidate_invite_token
@@ -198,6 +200,54 @@ def test_candidate_portal_exchange_accepts_signed_portal_token(monkeypatch):
     assert "анкет" in payload["company"]["summary"].lower()
     assert payload["journey"]["entry_channel"] == "max"
     assert payload["candidate"]["fio"] == "MAX Invite Tester"
+
+
+def test_candidate_portal_exchange_accepts_max_safe_launch_token(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+
+    async def _seed_candidate() -> tuple[str, int, int, int]:
+        async with async_session() as session:
+            candidate = User(
+                fio="MAX Launch Tester",
+                telegram_id=700211,
+                telegram_user_id=700211,
+                city="Москва",
+                phone="+79990000002",
+                source="max_bot",
+                messenger_platform="max",
+            )
+            session.add(candidate)
+            await session.flush()
+            portal_journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
+            await session.commit()
+            return (
+                str(candidate.candidate_id),
+                int(candidate.id),
+                int(portal_journey.id),
+                int(portal_journey.session_version or 1),
+            )
+
+    candidate_uuid, candidate_id, journey_id, session_version = asyncio.run(_seed_candidate())
+    launch_token = sign_candidate_portal_max_launch_token(
+        candidate_uuid=candidate_uuid,
+        journey_session_id=journey_id,
+        session_version=session_version,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/candidate/session/exchange", json={"token": launch_token})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == candidate_id
+    assert payload["journey"]["session_id"] == journey_id
+    assert payload["journey"]["entry_channel"] == "max"
+    assert payload["candidate"]["fio"] == "MAX Launch Tester"
 
 
 def test_candidate_portal_exchange_rejects_raw_invite_token(monkeypatch):

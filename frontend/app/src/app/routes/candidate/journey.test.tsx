@@ -34,6 +34,7 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 vi.mock('./webapp', () => ({
+  ensureCandidateWebAppBridge: () => Promise.resolve(null),
   markCandidateWebAppReady: () => readyMock(),
 }))
 
@@ -157,6 +158,7 @@ describe('CandidateJourneyPage', () => {
     expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
     expect(screen.getByText(/Откройте свежую ссылку из MAX или Telegram/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Повторить' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Открыть заново' })).toHaveAttribute('href', '/candidate/start')
+    expect(screen.getByRole('link', { name: 'Открыть новую ссылку' })).toHaveAttribute('href', '/candidate/start')
+    expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()
   })
 })

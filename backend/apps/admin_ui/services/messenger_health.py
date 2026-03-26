@@ -9,10 +9,18 @@ from backend.core.db import async_session
 from backend.core.messenger.channel_state import get_messenger_channel_health
 from backend.domain.candidates.models import (
     CandidateInviteToken,
+    CandidateJourneySession,
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
     User,
+)
+from backend.domain.candidates.portal_service import (
+    build_candidate_public_max_mini_app_url,
+    build_candidate_public_portal_url,
+    get_candidate_active_slot,
+    get_candidate_portal_max_entry_status,
+    get_candidate_portal_public_status,
 )
 from backend.domain.models import OutboxNotification
 
@@ -104,6 +112,42 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(1)
         )
+        active_journey = await session.scalar(
+            select(CandidateJourneySession)
+            .where(
+                CandidateJourneySession.candidate_id == candidate_id,
+                CandidateJourneySession.status == "active",
+            )
+            .order_by(CandidateJourneySession.id.desc())
+            .limit(1)
+        )
+        active_slot = await get_candidate_active_slot(session, candidate)
+
+    portal_status = get_candidate_portal_public_status()
+    max_status = get_candidate_portal_max_entry_status()
+    active_slot_status = str(getattr(active_slot, "status", "") or "").strip().lower()
+    restart_allowed = active_slot_status not in {"confirmed", "confirmed_by_candidate"}
+    config_errors = []
+    if portal_status.get("message"):
+        config_errors.append(str(portal_status["message"]))
+    if max_status.get("message") and str(max_status["message"]) not in config_errors:
+        config_errors.append(str(max_status["message"]))
+    browser_link = None
+    mini_app_link = None
+    if active_journey is not None and candidate.candidate_id:
+        browser_link = build_candidate_public_portal_url(
+            candidate_uuid=str(candidate.candidate_id),
+            entry_channel="max",
+            source_channel="admin_health",
+            journey_session_id=int(active_journey.id),
+            session_version=int(active_journey.session_version or 1),
+        )
+        mini_app_link = build_candidate_public_max_mini_app_url(
+            candidate_uuid=str(candidate.candidate_id),
+            journey_session_id=int(active_journey.id),
+            session_version=int(active_journey.session_version or 1),
+            source_channel="admin_health",
+        )
 
     return {
         "candidate_id": candidate_id,
@@ -120,6 +164,16 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "active_invite": _serialize_invite(latest_invite, candidate=candidate),
         "last_inbound_at": _iso(last_inbound_at),
         "last_outbound": _serialize_outbound_message(last_outbound),
+        "portal_public_url": portal_status.get("url"),
+        "portal_entry_ready": bool(portal_status.get("ready")),
+        "max_entry_ready": bool(max_status.get("ready")),
+        "browser_link": browser_link or None,
+        "mini_app_link": mini_app_link or None,
+        "config_errors": config_errors,
+        "active_journey_id": int(active_journey.id) if active_journey is not None else None,
+        "session_version": int(active_journey.session_version or 1) if active_journey is not None else None,
+        "last_link_issued_at": _iso(latest_invite.created_at) if latest_invite is not None else None,
+        "restart_allowed": restart_allowed,
     }
 
 
@@ -184,7 +238,22 @@ async def get_messenger_health(
                 "degraded_at": degraded.get("updated_at"),
             }
 
-    return {"channels": channel_payloads}
+    portal_status = get_candidate_portal_public_status()
+    max_status = get_candidate_portal_max_entry_status()
+
+    return {
+        "channels": channel_payloads,
+        "portal": {
+            "public_url": portal_status.get("url"),
+            "public_ready": bool(portal_status.get("ready")),
+            "public_error": portal_status.get("error"),
+            "public_message": portal_status.get("message"),
+            "max_entry_ready": bool(max_status.get("ready")),
+            "max_entry_error": max_status.get("error"),
+            "max_entry_message": max_status.get("message"),
+            "max_link_base": max_status.get("url"),
+        },
+    }
 
 
 async def get_messenger_health_snapshot() -> dict[str, Any]:
