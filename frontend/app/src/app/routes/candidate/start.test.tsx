@@ -43,6 +43,7 @@ describe('CandidateStartPage', () => {
     useParamsMock.mockReturnValue({ token: 'signed-token' })
     window.history.pushState({}, '', '/candidate/start')
     window.sessionStorage.clear()
+    window.localStorage.clear()
     ;(window as typeof window & { WebApp?: unknown }).WebApp = undefined
     ;(window as typeof window & { Telegram?: unknown }).Telegram = undefined
   })
@@ -78,7 +79,7 @@ describe('CandidateStartPage', () => {
     render(<CandidateStartPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
+      expect(screen.getByText('Продолжим через выбор канала')).toBeInTheDocument()
       expect(screen.getByText('Ссылка устарела')).toBeInTheDocument()
     })
   })
@@ -199,8 +200,55 @@ describe('CandidateStartPage', () => {
 
     await waitFor(() => {
       expect(fetchCandidatePortalJourneyMock).toHaveBeenCalledWith({ skipStoredPortalToken: true })
-      expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()
+      expect(screen.getByText('Продолжим через выбор канала')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Вернуться к выбору способа входа' })).toHaveAttribute('href', '/candidate/start')
+    })
+  })
+
+  it('recovers into the stored HH entry chooser when direct cabinet token is stale', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.setItem('candidate-portal:access-token', 'stale-token')
+    window.localStorage.setItem('candidate-portal:entry-token', 'hh-entry-token')
+    window.history.pushState({}, '', '/candidate/start?startapp=fresh-token')
+    exchangeCandidatePortalTokenMock.mockRejectedValue(
+      Object.assign(new Error('Ссылка устарела'), { status: 401 }),
+    )
+    fetchCandidatePortalJourneyMock.mockRejectedValue(
+      Object.assign(new Error('Ссылка устарела'), { status: 401 }),
+    )
+    resolveCandidateEntryGatewayMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        company: 'SMART SERVICE',
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'screening',
+        current_step_label: 'Анкета',
+        status_label: 'Тест 1',
+        next_action: 'Выберите удобный канал, чтобы пройти анкету.',
+      },
+      company_preview: {
+        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
+      },
+      suggested_channel: 'web',
+      options: {
+        web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
+        max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+        telegram: { channel: 'telegram', enabled: true, launch_url: 'https://t.me/test_bot?start=token', type: 'external' },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
+      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
     })
   })
 

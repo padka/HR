@@ -11,7 +11,12 @@ import {
   type CandidateEntryGatewayResponse,
 } from '@/api/candidate'
 import { queryClient } from '@/api/client'
-import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
+import {
+  clearCandidatePortalAccessToken,
+  persistCandidatePortalEntryTokenFromUrl,
+  readCandidatePortalEntryToken,
+  writeCandidatePortalEntryToken,
+} from '@/shared/candidate-portal-session'
 import {
   ensureCandidateWebAppBridge,
   hasCandidatePortalLocationToken,
@@ -26,7 +31,6 @@ export function CandidateStartPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<string | null>(null)
-  const [supportMessage, setSupportMessage] = useState<string | null>(null)
   const [entryGateway, setEntryGateway] = useState<CandidateEntryGatewayResponse | null>(null)
   const [entryPendingChannel, setEntryPendingChannel] = useState<CandidateEntryChannel | null>(null)
 
@@ -34,6 +38,14 @@ export function CandidateStartPage() {
     if (typeof window === 'undefined') return ''
     return new URLSearchParams(window.location.search).get('entry')?.trim() || ''
   }, [])
+  const recoveryEntryToken = useMemo(
+    () => entryToken || readCandidatePortalEntryToken(),
+    [entryToken],
+  )
+  const recoveryEntryUrl = useMemo(
+    () => (recoveryEntryToken ? `/candidate/start?entry=${encodeURIComponent(recoveryEntryToken)}` : '/candidate/start'),
+    [recoveryEntryToken],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -41,19 +53,36 @@ export function CandidateStartPage() {
     const run = async () => {
       setError(null)
       setErrorState(null)
-      setSupportMessage(null)
       setEntryGateway(null)
       setEntryPendingChannel(null)
+
+      const recoverWithEntryToken = async () => {
+        const fallbackEntryToken = entryToken || readCandidatePortalEntryToken()
+        if (!fallbackEntryToken) return false
+        try {
+          const payload = await resolveCandidateEntryGateway(fallbackEntryToken)
+          if (cancelled) return true
+          writeCandidatePortalEntryToken(fallbackEntryToken)
+          setEntryGateway(payload)
+          setError(null)
+          setErrorState(null)
+          return true
+        } catch {
+          return false
+        }
+      }
+
       if (entryToken) {
         try {
           const payload = await resolveCandidateEntryGateway(entryToken)
           if (cancelled) return
+          writeCandidatePortalEntryToken(entryToken)
           setEntryGateway(payload)
           return
         } catch (gatewayError) {
           if (cancelled) return
           const info = parseCandidatePortalError(gatewayError)
-          setError(info?.message || 'Не удалось подготовить варианты входа. Откройте свежую ссылку от рекрутера.')
+          setError(info?.message || 'Не удалось подготовить варианты входа. Попробуйте открыть кабинет на этом устройстве ещё раз.')
           setErrorState(info?.state || null)
           return
         }
@@ -67,14 +96,18 @@ export function CandidateStartPage() {
         try {
           const payload = await fetchCandidatePortalJourney()
           if (cancelled) return
+          persistCandidatePortalEntryTokenFromUrl(payload.candidate?.entry_url)
           queryClient.setQueryData(['candidate-portal-journey'], payload)
           startTransition(() => {
             void navigate({ to: '/candidate/journey' })
           })
         } catch (fallbackError) {
           if (cancelled) return
+          if (await recoverWithEntryToken()) {
+            return
+          }
           const info = parseCandidatePortalError(fallbackError)
-          setError(info?.message || 'Ссылка не содержит токен доступа. Откройте её заново из сообщения рекрутера.')
+          setError(info?.message || 'Не удалось восстановить доступ автоматически.')
           setErrorState(info?.state || null)
         }
         return
@@ -82,6 +115,7 @@ export function CandidateStartPage() {
       try {
         const payload = await exchangeCandidatePortalToken(resolvedToken.token)
         if (cancelled) return
+        persistCandidatePortalEntryTokenFromUrl(payload.candidate?.entry_url)
         persistCandidatePortalAccessToken(resolvedToken.token)
         queryClient.setQueryData(['candidate-portal-journey'], payload)
         startTransition(() => {
@@ -101,6 +135,7 @@ export function CandidateStartPage() {
               skipStoredPortalToken: shouldSkipStoredToken,
             })
             if (cancelled) return
+            persistCandidatePortalEntryTokenFromUrl(payload.candidate?.entry_url)
             queryClient.setQueryData(['candidate-portal-journey'], payload)
             startTransition(() => {
               void navigate({ to: '/candidate/journey' })
@@ -108,8 +143,11 @@ export function CandidateStartPage() {
             return
           } catch (fallbackError) {
             if (cancelled) return
+            if (await recoverWithEntryToken()) {
+              return
+            }
             const info = shouldSkipStoredToken ? initialError : parseCandidatePortalError(fallbackError)
-            setError(info?.message || 'Ссылка для кабинета повреждена или неполная. Откройте новую ссылку из сообщения или письма от рекрутера.')
+            setError(info?.message || 'Не удалось восстановить кабинет автоматически.')
             setErrorState(info?.state || null)
             return
           }
@@ -134,31 +172,17 @@ export function CandidateStartPage() {
       const payload = await selectCandidateEntryChannel(entryToken, channel)
       const launchUrl = String(payload.launch?.url || payload.cabinet_url || '').trim()
       if (!launchUrl) {
-        setError('Ссылка для запуска канала не подготовлена. Попросите рекрутера переотправить доступ.')
+        setError('Ссылка для запуска канала пока не подготовлена. Продолжайте через веб-кабинет.')
         setEntryPendingChannel(null)
         return
       }
       window.location.assign(launchUrl)
     } catch (selectError) {
       const info = parseCandidatePortalError(selectError)
-      setError(info?.message || 'Не удалось запустить выбранный канал. Откройте новый доступ от рекрутера.')
+      setError(info?.message || 'Не удалось запустить выбранный канал. Попробуйте ещё раз или продолжайте через веб-кабинет.')
       setErrorState(info?.state || null)
       setEntryPendingChannel(null)
     }
-  }
-
-  const handleCopySupportMessage = async () => {
-    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку для входа в кабинет кандидата.'
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(requestText)
-        setSupportMessage('Текст для рекрутера скопирован.')
-        return
-      }
-    } catch {
-      // Fall through to inline fallback.
-    }
-    setSupportMessage(requestText)
   }
 
   return (
@@ -173,9 +197,9 @@ export function CandidateStartPage() {
                 ? errorState === 'blocked'
                   ? 'Доступ к кабинету недоступен'
                   : errorState === 'recoverable'
-                    ? 'Сессия кабинета истекла'
+                    ? 'Восстанавливаю доступ'
                     : errorState === 'needs_new_link'
-                      ? 'Нужна новая ссылка'
+                      ? 'Продолжим через выбор канала'
                       : 'Не удалось восстановить кабинет'
                 : 'Открываю ваш кабинет'}
           </h1>
@@ -184,11 +208,11 @@ export function CandidateStartPage() {
               ? entryGateway.journey.next_action || 'Можно продолжить в браузере, MAX или Telegram без потери прогресса.'
               : error
                 ? errorState === 'blocked'
-                  ? 'Сессия отозвана или кабинет не найден. Попросите рекрутера восстановить доступ.'
+                  ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
                   : errorState === 'recoverable'
-                    ? 'Откройте кабинет заново по свежей ссылке от рекрутера. Если resume-cookie ещё жив, доступ поднимется автоматически.'
+                    ? 'Пробую вернуть вас в кабинет на этом устройстве без потери прогресса.'
                     : errorState === 'needs_new_link'
-                      ? 'Старая ссылка устарела. Откройте свежую ссылку из сообщения или письма от рекрутера.'
+                      ? 'Текущий вход устарел, поэтому вернёмся к выбору Web, MAX или Telegram.'
                       : 'Сейчас попробую открыть кабинет заново на этом устройстве.'
                 : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
           </p>
@@ -267,14 +291,16 @@ export function CandidateStartPage() {
               <button className="ui-btn ui-btn--primary" onClick={() => window.location.reload()}>
                 Повторить
               </button>
-              <button className="ui-btn ui-btn--ghost" onClick={handleCopySupportMessage}>
-                Запросить новую ссылку у рекрутера
-              </button>
+              <a className="ui-btn ui-btn--ghost" href={recoveryEntryUrl}>
+                Вернуться к выбору способа входа
+              </a>
             </div>
           ) : null}
           {error ? (
             <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
-              {supportMessage || 'Если свежая ссылка не открывается, запросите новое приглашение у рекрутера.'}
+              {recoveryEntryToken
+                ? 'Использую сохранённый вход на этом устройстве, чтобы вернуть вас к выбору Web, MAX или Telegram.'
+                : 'Если автоматическое восстановление не сработало, вернитесь на стартовую страницу и продолжите через удобный канал.'}
             </p>
           ) : null}
         </div>

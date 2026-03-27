@@ -51,6 +51,7 @@ PORTAL_TOKEN_SALT = "candidate-portal-link"
 HH_ENTRY_TOKEN_PREFIX = "hh1"
 MAX_PORTAL_LAUNCH_TOKEN_PREFIX = "mx1"
 PORTAL_DEFAULT_ENTRY_CHANNEL = "web"
+HH_ENTRY_TOKEN_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 PORTAL_STEP_LABELS = {
     "profile": "Профиль",
     "screening": "Анкета",
@@ -934,13 +935,18 @@ def parse_candidate_portal_hh_entry_token(value: str) -> CandidatePortalAccess:
         raise CandidatePortalAuthError("Ссылка для входа недействительна.") from exc
 
     candidate_uuid = str(payload.get("cid") or "").strip() or None
-    journey_session_id = int(payload.get("jid") or 0)
-    session_version = int(payload.get("sv") or 0)
+    journey_session_id_raw = payload.get("jid")
+    session_version_raw = payload.get("sv")
+    journey_session_id = int(journey_session_id_raw or 0) or None
+    session_version = int(session_version_raw or 0) or None
     issued_at = int(payload.get("iat") or 0)
-    if not candidate_uuid or journey_session_id <= 0 or session_version <= 0 or issued_at <= 0:
+    if not candidate_uuid or issued_at <= 0:
         raise CandidatePortalAuthError("Ссылка для входа недействительна.")
 
-    if int(_utcnow().timestamp()) - issued_at > int(settings.candidate_portal_token_ttl_seconds):
+    if int(_utcnow().timestamp()) - issued_at > max(
+        int(settings.candidate_portal_token_ttl_seconds),
+        HH_ENTRY_TOKEN_MAX_AGE_SECONDS,
+    ):
         raise CandidatePortalAuthError("Ссылка для входа устарела.")
 
     return CandidatePortalAccess(
@@ -2173,6 +2179,14 @@ async def build_candidate_portal_journey(
             "status": candidate.candidate_status.value if candidate.candidate_status else None,
             "status_label": STATUS_LABELS.get(candidate.candidate_status) if candidate.candidate_status else None,
             "source": candidate.source,
+            "entry_url": build_candidate_hh_entry_url(
+                candidate_uuid=str(candidate.candidate_id or ""),
+                journey_session_id=int(journey.id),
+                session_version=int(journey.session_version or 1),
+                source_channel="candidate_cabinet",
+            )
+            if candidate.candidate_id
+            else "",
             "portal_url": build_candidate_portal_url(
                 candidate_uuid=candidate.candidate_id,
                 entry_channel=entry_channel,

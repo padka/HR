@@ -129,7 +129,9 @@ sequenceDiagram
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
 - When `?entry=` is present, `/candidate/start` becomes an HH chooser, not a direct token exchange screen.
+- The HH entry token is durable and is no longer rejected just because the active portal `session_version` changed. Its job is to reopen the chooser and re-issue a fresh launcher for the same candidate journey.
 - Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
+- The browser now keeps a separate long-lived candidate entry token in persistent storage. If a direct cabinet token expires on the same device, the start screen recovers by reopening the chooser instead of asking the candidate to request a new recruiter link.
 - Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 
@@ -157,6 +159,7 @@ sequenceDiagram
 - Cabinet navigation is local UI state; the source of truth stays in the shared journey payload sections: `dashboard`, `journey`, `tests`, `feedback`, `resources`.
 - The web inbox is the primary candidate conversation surface. External channels such as MAX or Telegram are delivery adapters and launch surfaces, not the source of truth for the conversation history.
 - Screen state must remain recoverable after refresh and after fresh-link entry, even when an older token is still present in browser storage.
+- The journey payload includes a durable candidate entry URL so the browser can keep a recovery anchor and route the candidate back to `Web / MAX / Telegram` without recruiter involvement.
 
 ## Candidate Cabinet Surface Model
 

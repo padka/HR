@@ -65,6 +65,7 @@ export type CandidatePortalJourneyResponse = {
     status?: string | null
     status_label?: string | null
     source?: string | null
+    entry_url?: string | null
     portal_url?: string | null
   }
   company?: {

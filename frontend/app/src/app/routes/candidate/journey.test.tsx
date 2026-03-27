@@ -44,6 +44,8 @@ describe('CandidateJourneyPage', () => {
     useMutationMock.mockReset()
     useQueryClientMock.mockReset()
     readyMock.mockReset()
+    window.localStorage.clear()
+    window.sessionStorage.clear()
 
     useQueryClientMock.mockReturnValue({
       setQueryData: vi.fn(),
@@ -253,6 +255,7 @@ describe('CandidateJourneyPage', () => {
   })
 
   it('renders a recovery screen for stale candidate portal sessions', () => {
+    window.localStorage.setItem('candidate-portal:entry-token', 'hh-entry-token')
     useQueryMock.mockReturnValue({
       data: null,
       isLoading: false,
@@ -271,10 +274,9 @@ describe('CandidateJourneyPage', () => {
 
     render(<CandidateJourneyPage />)
 
-    expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
-    expect(screen.getByText(/Откройте свежую ссылку из сообщения или письма от рекрутера/i)).toBeInTheDocument()
+    expect(screen.getByText('Продолжим через выбор канала')).toBeInTheDocument()
+    expect(screen.getByText(/безопасно вернёмся к выбору Web, MAX или Telegram/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Повторить' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Открыть новую ссылку' })).toHaveAttribute('href', '/candidate/start')
-    expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Вернуться к выбору способа входа' })).toHaveAttribute('href', '/candidate/start?entry=hh-entry-token')
   })
 })

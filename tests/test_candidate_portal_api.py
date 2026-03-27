@@ -380,6 +380,60 @@ def test_candidate_entry_gateway_resolves_web_and_records_selection(monkeypatch)
     assert "web" in payload_meta["available_channels_snapshot"]
 
 
+def test_candidate_entry_gateway_remains_valid_after_portal_session_version_bump(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+
+        async def _build_legacy_entry_token() -> str:
+            async with async_session() as session:
+                candidate = await session.get(User, int(seeded["candidate_id"]))
+                assert candidate is not None
+                journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+                token = sign_candidate_portal_hh_entry_token(
+                    candidate_uuid=str(seeded["candidate_uuid"]),
+                    journey_session_id=int(journey.id),
+                    session_version=int(journey.session_version or 1),
+                )
+                await session.commit()
+                return token
+
+        entry_token = asyncio.run(_build_legacy_entry_token())
+
+        async def _bump_version() -> None:
+            async with async_session() as session:
+                await bump_candidate_portal_session_version(
+                    session,
+                    candidate_id=int(seeded["candidate_id"]),
+                )
+                await session.commit()
+
+        asyncio.run(_bump_version())
+
+        resolve = client.get(f"/api/candidate/entry/resolve?entry={entry_token}")
+        assert resolve.status_code == 200
+        resolve_payload = resolve.json()
+        assert resolve_payload["candidate"]["id"] == seeded["candidate_id"]
+        assert resolve_payload["options"]["web"]["enabled"] is True
+
+        select_response = client.post(
+            "/api/candidate/entry/select",
+            json={"entry_token": entry_token, "channel": "web"},
+        )
+
+    assert select_response.status_code == 200
+    select_payload = select_response.json()
+    assert select_payload["channel"] == "web"
+    assert "candidate/start" in str(select_payload["launch"]["url"])
+
+
 def test_candidate_portal_journey_can_be_restored_from_resume_cookie_after_browser_restart(monkeypatch):
     _configure_env(monkeypatch)
     settings_module.get_settings.cache_clear()

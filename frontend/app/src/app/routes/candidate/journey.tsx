@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
@@ -20,7 +19,11 @@ import {
   type CandidatePortalQuestion,
   type CandidatePortalSlot,
 } from '@/api/candidate'
-import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
+import {
+  clearCandidatePortalAccessToken,
+  persistCandidatePortalEntryTokenFromUrl,
+  readCandidatePortalEntryToken,
+} from '@/shared/candidate-portal-session'
 import { ensureCandidateWebAppBridge, markCandidateWebAppReady } from './webapp'
 import { navigateToCandidateLaunch } from './launch'
 import '../candidate-portal.css'
@@ -192,7 +195,6 @@ export function CandidateJourneyPage() {
   const [localError, setLocalError] = useState<string | null>(null)
   const [pendingSlotId, setPendingSlotId] = useState<number | null>(null)
   const [pendingChannel, setPendingChannel] = useState<CandidateEntryChannel | null>(null)
-  const [supportMessage, setSupportMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!payload) return
@@ -202,6 +204,7 @@ export function CandidateJourneyPage() {
       city_id: payload.journey.profile.city_id ? String(payload.journey.profile.city_id) : '',
     })
     setScreeningAnswers(payload.journey.screening.draft_answers || {})
+    persistCandidatePortalEntryTokenFromUrl(payload.candidate.entry_url)
   }, [payload])
 
   useEffect(() => {
@@ -216,20 +219,6 @@ export function CandidateJourneyPage() {
     if (activeTab !== 'home') return
     setActiveTab('home')
   }, [activeTab, payload?.dashboard?.primary_action?.target])
-
-  const handleCopySupportMessage = async () => {
-    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку для входа в кабинет кандидата.'
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(requestText)
-        setSupportMessage('Текст для рекрутера скопирован.')
-        return
-      }
-    } catch {
-      // Fall through to inline fallback.
-    }
-    setSupportMessage(requestText)
-  }
 
   const setMutationError = (error: unknown) => {
     setLocalError(error instanceof Error ? error.message : 'Не удалось выполнить действие.')
@@ -404,6 +393,10 @@ export function CandidateJourneyPage() {
     ? `Часовой пояс: ${payload.journey.next_step_timezone}`
     : 'Данные обновляются автоматически'
   const portalError = parseCandidatePortalError(journeyQuery.error)
+  const recoveryEntryToken = readCandidatePortalEntryToken()
+  const recoveryEntryUrl = recoveryEntryToken
+    ? `/candidate/start?entry=${encodeURIComponent(recoveryEntryToken)}`
+    : '/candidate/start'
 
   const openPrimaryActionTarget = () => {
     setActiveTab(resolveCabinetTab(primaryAction?.target))
@@ -413,7 +406,7 @@ export function CandidateJourneyPage() {
     const option = channelOptions[channel]
     const launchUrl = String(option?.launch_url || '').trim()
     if (!launchUrl) {
-      setLocalError(option?.reason_if_blocked || 'Новый канал пока недоступен. Попросите рекрутера переотправить доступ.')
+      setLocalError(option?.reason_if_blocked || 'Новый канал пока недоступен. Продолжайте в веб-кабинете.')
       return
     }
     setLocalError(null)
@@ -422,7 +415,7 @@ export function CandidateJourneyPage() {
       const result = await switchChannelMutation.mutateAsync(channel)
       const nextUrl = String(result?.launch?.url || launchUrl).trim()
       if (!nextUrl) {
-        setLocalError('Не удалось открыть новый канал. Попросите рекрутера переотправить доступ.')
+        setLocalError('Не удалось открыть новый канал. Попробуйте ещё раз или продолжайте в веб-кабинете.')
         return
       }
       navigateToCandidateLaunch(nextUrl)
@@ -1005,16 +998,16 @@ export function CandidateJourneyPage() {
       recoveryState === 'blocked'
         ? 'Доступ к кабинету недоступен'
         : recoveryState === 'needs_new_link'
-          ? 'Нужна новая ссылка'
+          ? 'Продолжим через выбор канала'
           : recoveryState === 'recoverable'
-            ? 'Сессия кабинета истекла'
+            ? 'Восстанавливаю доступ'
             : 'Не удалось восстановить кабинет'
     const errorSubtitle =
       recoveryState === 'blocked'
-        ? 'Сессия отозвана или кабинет не найден. Попросите рекрутера восстановить доступ.'
+        ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
         : recoveryState === 'needs_new_link'
-          ? 'Старая ссылка устарела. Откройте свежую ссылку из сообщения или письма от рекрутера.'
-          : 'Откройте кабинет заново по свежей ссылке. Если resume-cookie ещё жив, доступ поднимется автоматически.'
+          ? 'Текущий вход устарел, поэтому безопасно вернёмся к выбору Web, MAX или Telegram.'
+          : 'Пробую вернуть вас в кабинет на этом устройстве без потери прогресса.'
     return (
       <div className="candidate-portal">
         <div className="candidate-portal__loader">
@@ -1029,15 +1022,14 @@ export function CandidateJourneyPage() {
               <button className="ui-btn ui-btn--primary" onClick={() => journeyQuery.refetch()}>
                 Повторить
               </button>
-              <Link className="ui-btn ui-btn--ghost" to="/candidate/start">
-                Открыть новую ссылку
-              </Link>
-              <button className="ui-btn ui-btn--ghost" onClick={handleCopySupportMessage}>
-                Запросить новую ссылку у рекрутера
-              </button>
+              <a className="ui-btn ui-btn--ghost" href={recoveryEntryUrl}>
+                Вернуться к выбору способа входа
+              </a>
             </div>
             <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
-              {supportMessage || 'Если проблема повторяется, попросите рекрутера переотправить доступ или открыть кабинет заново.'}
+              {recoveryEntryToken
+                ? 'На этом устройстве сохранён безопасный вход, поэтому можно продолжить через выбор Web, MAX или Telegram без обращения к рекрутеру.'
+                : 'Если автоматическое восстановление не сработало, вернитесь на стартовую страницу и выберите удобный способ входа.'}
             </p>
           </div>
         </div>

@@ -413,14 +413,6 @@ async def _resolve_candidate_entry_gateway(
                 candidate,
                 entry_channel=access.entry_channel,
             )
-            if (
-                access.journey_session_id is not None
-                and access.journey_session_id != int(journey.id)
-            ) or (
-                access.session_version is not None
-                and access.session_version != int(journey.session_version or 1)
-            ):
-                raise CandidatePortalAuthError("Ссылка для входа устарела.")
             journey_payload = await build_candidate_portal_journey(
                 session,
                 candidate,
@@ -496,14 +488,6 @@ async def select_candidate_entry_channel(request: Request, payload: CandidateEnt
                     candidate,
                     entry_channel=access.entry_channel,
                 )
-                if (
-                    access.journey_session_id is not None
-                    and access.journey_session_id != int(journey.id)
-                ) or (
-                    access.session_version is not None
-                    and access.session_version != int(journey.session_version or 1)
-                ):
-                    raise CandidatePortalAuthError("Ссылка для входа устарела.")
                 options = await build_candidate_entry_options(
                     session,
                     candidate=candidate,
