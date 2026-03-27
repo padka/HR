@@ -52,8 +52,13 @@ export type CandidateChatThreadsPayload = {
 
 export type CandidateChatMessage = {
   id: number
+  conversation_id?: string | null
   direction: string
   kind?: 'candidate' | 'recruiter' | 'bot' | 'system'
+  origin_channel?: string | null
+  delivery_channels?: string[]
+  delivery_state?: string | null
+  author_role?: 'candidate' | 'recruiter' | 'bot' | 'system' | null
   text: string
   status?: string | null
   created_at: string

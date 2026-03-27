@@ -10,7 +10,7 @@ Frontend platform / UI engineering.
 Canonical.
 
 ## Last Reviewed
-2026-03-26.
+2026-03-27.
 
 ## Source Paths
 - `frontend/app/src/app/main.tsx`
@@ -146,9 +146,34 @@ sequenceDiagram
 ```
 
 ### What matters
-- Journey screen is a self-service state machine.
+- Journey screen is now a persistent candidate cabinet, not just a step-by-step portal.
 - Each mutation returns a fresh journey snapshot and replaces cache state.
-- Screen state must remain recoverable after refresh.
+- Cabinet navigation is local UI state; the source of truth stays in the shared journey payload sections: `dashboard`, `journey`, `tests`, `feedback`, `resources`.
+- The web inbox is the primary candidate conversation surface. External channels such as MAX or Telegram are delivery adapters and launch surfaces, not the source of truth for the conversation history.
+- Screen state must remain recoverable after refresh and after fresh-link entry, even when an older token is still present in browser storage.
+
+## Candidate Cabinet Surface Model
+
+```mermaid
+flowchart TD
+  JourneyPayload["CandidatePortalJourneyResponse"] --> Dashboard["dashboard"]
+  JourneyPayload --> Workflow["journey"]
+  JourneyPayload --> Tests["tests"]
+  JourneyPayload --> Inbox["messages + journey.inbox"]
+  JourneyPayload --> Company["company + resources"]
+  JourneyPayload --> Feedback["feedback"]
+  Dashboard --> HomeTab["Главная"]
+  Workflow --> PathTab["Мой путь"]
+  Tests --> TestsTab["Тесты и анкеты"]
+  Inbox --> InboxTab["Сообщения"]
+  Company --> CompanyTab["О компании"]
+  Feedback --> FeedbackTab["Обратная связь"]
+```
+
+### What matters
+- `/candidate/start` remains the bootstrap bridge; `/candidate/journey` is the actual cabinet.
+- Cabinet UX is channel-agnostic: candidate copy should refer to a fresh link from the recruiter, not require a specific messenger.
+- Messages written from recruiter CRM must appear in the candidate web inbox even when no external messenger binding exists.
 
 ## System Delivery Flow
 

@@ -312,6 +312,9 @@ def test_candidate_portal_journey_can_be_restored_from_header_token(monkeypatch)
     payload = response.json()
     assert payload["candidate"]["id"] == seeded["candidate_id"]
     assert payload["journey"]["current_step"] == "profile"
+    assert payload["dashboard"]["primary_action"]["key"] == "complete_profile"
+    assert payload["journey"]["inbox"]["conversation_id"] == f"candidate:{seeded['candidate_id']}"
+    assert payload["resources"]["faq"]
 
 
 def test_candidate_portal_journey_can_be_restored_from_resume_cookie_after_browser_restart(monkeypatch):
@@ -428,6 +431,9 @@ def test_candidate_portal_end_to_end_flow(monkeypatch):
         assert exchange_payload["journey"]["current_step"] == "profile"
         assert exchange_payload["journey"]["current_step_label"] == "Профиль"
         assert exchange_payload["candidate"]["vacancy_label"] == "Менеджер по работе с клиентами"
+        assert exchange_payload["dashboard"]["primary_action"]["key"] == "complete_profile"
+        assert exchange_payload["tests"]["items"][0]["key"] == "screening"
+        assert exchange_payload["resources"]["documents"]
 
         profile = client.post(
             "/api/candidate/profile",
@@ -466,7 +472,13 @@ def test_candidate_portal_end_to_end_flow(monkeypatch):
             json={"text": "Нужен пропуск на проходной."},
         )
         assert message.status_code == 200
-        assert any(item["text"] == "Нужен пропуск на проходной." for item in message.json()["journey"]["messages"])
+        message_payload = message.json()
+        assert any(item["text"] == "Нужен пропуск на проходной." for item in message_payload["journey"]["messages"])
+        latest_message = message_payload["journey"]["messages"][-1]
+        assert latest_message["conversation_id"] == f"candidate:{seeded['candidate_id']}"
+        assert latest_message["origin_channel"] == "web"
+        assert latest_message["author_role"] == "candidate"
+        assert message_payload["feedback"]["items"]
 
     candidate = asyncio.run(_load_candidate(int(seeded["candidate_id"])))
     assert candidate is not None

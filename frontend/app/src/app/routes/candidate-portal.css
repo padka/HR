@@ -1,10 +1,7 @@
 .candidate-portal {
   min-height: 100vh;
   padding: 24px 16px 48px;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 16%, transparent), transparent 34%),
-    radial-gradient(circle at top right, color-mix(in srgb, var(--info) 12%, transparent), transparent 32%),
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 74%, #fff), var(--surface));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 76%, #fff), var(--surface));
 }
 
 .candidate-portal__shell {
@@ -12,198 +9,213 @@
   margin: 0 auto;
 }
 
-.candidate-portal__hero {
+.candidate-portal__hero,
+.candidate-portal__summary-card,
+.candidate-portal__dashboard-primary,
+.candidate-portal__dashboard-card,
+.candidate-portal__alert-card,
+.candidate-portal__step,
+.candidate-portal__card,
+.candidate-portal__slot-card,
+.candidate-portal__message,
+.candidate-portal__status-card,
+.candidate-portal__resource-card,
+.candidate-portal__field,
+.candidate-portal__question {
   display: grid;
-  gap: 12px;
+}
+
+.candidate-portal__hero,
+.candidate-portal__card-head,
+.candidate-portal__resource-list,
+.candidate-portal__section-stack,
+.candidate-portal__slots,
+.candidate-portal__messages {
+  gap: 14px;
+}
+
+.candidate-portal__summary-card,
+.candidate-portal__dashboard-primary,
+.candidate-portal__dashboard-card,
+.candidate-portal__alert-card,
+.candidate-portal__step,
+.candidate-portal__card,
+.candidate-portal__slot-card,
+.candidate-portal__message,
+.candidate-portal__status-card,
+.candidate-portal__resource-card {
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+}
+
+.candidate-portal__hero {
   padding: 24px;
   margin-bottom: 20px;
 }
 
-.candidate-portal__eyebrow {
+.candidate-portal__eyebrow,
+.candidate-portal__summary-tag,
+.candidate-portal__message-channel,
+.candidate-portal__chip,
+.candidate-portal__tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: fit-content;
-  padding: 8px 12px;
   border-radius: 999px;
+}
+
+.candidate-portal__eyebrow {
+  gap: 8px;
+  padding: 7px 12px;
   background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
   color: var(--muted);
-  font-size: 0.85rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .candidate-portal__title {
   margin: 0;
-  font-size: clamp(2rem, 5vw, 3.4rem);
-  line-height: 0.96;
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  line-height: 0.98;
 }
 
-.candidate-portal__subtitle {
+.candidate-portal__subtitle,
+.candidate-portal__card-copy,
+.candidate-portal__helper,
+.candidate-portal__summary-meta,
+.candidate-portal__empty,
+.candidate-portal__message-meta,
+.candidate-portal__resource-card p,
+.candidate-portal__alert-card p {
   margin: 0;
-  max-width: 56ch;
   color: var(--muted);
 }
 
-.candidate-portal__grid {
-  display: grid;
-  gap: 20px;
-}
-
-.candidate-portal__summary-grid {
+.candidate-portal__grid,
+.candidate-portal__summary-grid,
+.candidate-portal__dashboard-grid,
+.candidate-portal__steps,
+.candidate-portal__alerts,
+.candidate-portal__split,
+.candidate-portal__form,
+.candidate-portal__question-options {
   display: grid;
   gap: 14px;
-  margin-bottom: 20px;
 }
 
-.candidate-portal__summary-card {
-  display: grid;
-  gap: 8px;
-  padding: 18px 20px;
-  border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
-  align-content: start;
+.candidate-portal__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 20px;
 }
 
-.candidate-portal__summary-card--company {
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 34%),
-    color-mix(in srgb, var(--surface-elevated) 80%, transparent);
+.candidate-portal__tab {
+  padding: 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.candidate-portal__tab.is-active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-elevated));
+  color: var(--text);
+}
+
+.candidate-portal__summary-card--company,
+.candidate-portal__dashboard-primary,
+.candidate-portal__step[data-state='in_progress'] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.candidate-portal__alert-card[data-level='warning'] {
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--border));
+}
+
+.candidate-portal__alert-card[data-level='success'],
+.candidate-portal__step[data-state='completed'] {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
 }
 
 .candidate-portal__summary-label {
   color: var(--muted);
-  font-size: 0.84rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .candidate-portal__summary-value {
-  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
-.candidate-portal__summary-meta {
-  color: var(--muted);
-  font-size: 0.94rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.candidate-portal__summary-tags {
+.candidate-portal__summary-tags,
+.candidate-portal__slot-meta,
+.candidate-portal__status-meta,
+.candidate-portal__actions,
+.candidate-portal__slot-actions,
+.candidate-portal__status-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
 }
 
-.candidate-portal__summary-tag {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
+.candidate-portal__summary-tag,
+.candidate-portal__chip {
   padding: 5px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--muted);
   font-size: 0.84rem;
-  line-height: 1.2;
 }
 
-.candidate-portal__steps {
+.candidate-portal__steps-list,
+.candidate-portal__form-grid {
   display: grid;
   gap: 12px;
 }
 
 .candidate-portal__steps-list {
-  display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
 }
 
-.candidate-portal__step {
-  padding: 16px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
-}
-
-.candidate-portal__step[data-state='completed'] {
-  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
-}
-
-.candidate-portal__step[data-state='in_progress'] {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+.candidate-portal__step-label,
+.candidate-portal__label,
+.candidate-portal__alert-card strong,
+.candidate-portal__resource-card strong,
+.candidate-portal__message-head strong {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .candidate-portal__step-label {
-  display: block;
-  margin-top: 6px;
-  font-weight: 600;
-}
-
-.candidate-portal__card {
-  display: grid;
-  gap: 16px;
-  padding: 22px;
-}
-
-.candidate-portal__card-head {
-  display: grid;
-  gap: 8px;
+  margin-top: 4px;
 }
 
 .candidate-portal__card-title {
   margin: 0;
-  font-size: 1.2rem;
-}
-
-.candidate-portal__card-copy {
-  margin: 0;
-  color: var(--muted);
-}
-
-.candidate-portal__form {
-  display: grid;
-  gap: 18px;
 }
 
 .candidate-portal__form-grid {
-  display: grid;
-  gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .candidate-portal__field,
-.candidate-portal__question {
-  display: grid;
+.candidate-portal__question,
+.candidate-portal__card-head {
   gap: 8px;
-}
-
-.candidate-portal__label {
-  font-weight: 600;
-}
-
-.candidate-portal__helper {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.92rem;
 }
 
 .candidate-portal__input,
 .candidate-portal__select,
-.candidate-portal__textarea {
+.candidate-portal__textarea,
+.candidate-portal__option {
   width: 100%;
   padding: 13px 14px;
-  border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  background: color-mix(in srgb, var(--surface) 86%, white);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, white);
   color: var(--text);
 }
 
@@ -212,79 +224,29 @@
   resize: vertical;
 }
 
-.candidate-portal__actions,
-.candidate-portal__slot-actions,
-.candidate-portal__status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.candidate-portal__question-options {
-  display: grid;
-  gap: 10px;
-}
-
 .candidate-portal__option {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated) 68%, transparent);
 }
 
-.candidate-portal__section-stack,
-.candidate-portal__slots,
-.candidate-portal__messages {
-  display: grid;
-  gap: 14px;
-}
-
-.candidate-portal__slot-card,
-.candidate-portal__message,
-.candidate-portal__status-card {
-  display: grid;
-  gap: 10px;
-  padding: 18px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
-}
-
-.candidate-portal__slot-meta,
-.candidate-portal__status-meta {
+.candidate-portal__message-head {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
-.candidate-portal__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+.candidate-portal__message-channel {
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
   color: var(--muted);
-  font-size: 0.88rem;
 }
 
 .candidate-portal__message[data-direction='outbound'] {
   justify-self: end;
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-elevated));
-}
-
-.candidate-portal__message-meta {
-  color: var(--muted);
-  font-size: 0.88rem;
-}
-
-.candidate-portal__empty {
-  margin: 0;
-  color: var(--muted);
 }
 
 .candidate-portal__error {
@@ -303,12 +265,11 @@
   text-align: center;
 }
 
-.candidate-portal__split {
-  display: grid;
-  gap: 20px;
-}
-
 @media (min-width: 960px) {
+  .candidate-portal__dashboard-grid {
+    grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr));
+  }
+
   .candidate-portal__summary-grid {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }

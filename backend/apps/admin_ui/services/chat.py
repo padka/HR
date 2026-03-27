@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -204,8 +205,16 @@ def _delivery_stage(status_value: Optional[str]) -> str:
 
 
 def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
+    payload = dict(message.payload_json or {}) if isinstance(message.payload_json, dict) else {}
+    delivery_channels_raw = payload.get("delivery_channels")
+    if isinstance(delivery_channels_raw, list):
+        delivery_channels = [str(item).strip() for item in delivery_channels_raw if str(item).strip()]
+    else:
+        delivery_channels = [str(message.channel).strip()] if str(message.channel or "").strip() else []
+
     return {
         "id": message.id,
+        "conversation_id": f"candidate:{int(message.candidate_id)}",
         "direction": message.direction,
         "kind": derive_chat_message_kind(
             message.direction,
@@ -213,6 +222,12 @@ def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
             payload_json=message.payload_json,
         ),
         "channel": message.channel,
+        "origin_channel": str(payload.get("origin_channel") or message.channel or "web"),
+        "delivery_channels": delivery_channels,
+        "delivery_state": message.status,
+        "author_role": str(payload.get("author_role") or "").strip().lower() or (
+            "candidate" if message.direction == ChatMessageDirection.INBOUND.value else "recruiter"
+        ),
         "text": message.text or "",
         "status": message.status,
         "delivery_stage": _delivery_stage(message.status),
@@ -321,27 +336,31 @@ def _resolve_delivery_channel(
     if channel == "max":
         if max_user_id:
             return "max", None
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Для кандидата не найден MAX ID"},
-        )
+        if requested == "max":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Для кандидата не найден MAX ID"},
+            )
+        channel = ""
 
     if channel == "telegram":
         if telegram_user_id:
             return "telegram", telegram_user_id
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Для кандидата не найден Telegram ID"},
-        )
+        if requested == "telegram":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Для кандидата не найден Telegram ID"},
+            )
+        channel = ""
+
+    if channel == "web":
+        return "web", None
 
     if telegram_user_id:
         return "telegram", telegram_user_id
     if max_user_id:
         return "max", None
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={"message": "Для кандидата не найден канал связи"},
-    )
+    return "web", None
 
 
 async def _dispatch_chat_message(
@@ -356,6 +375,15 @@ async def _dispatch_chat_message(
         candidate,
         preferred_channel=preferred_channel,
     )
+
+    if channel == "web":
+        return channel, SimpleNamespace(
+            ok=True,
+            success=True,
+            status="sent",
+            error=None,
+            message=None,
+        )
 
     if channel == "telegram":
         send_result = await bot_service.send_chat_message(
@@ -442,6 +470,11 @@ async def send_chat_message(
             direction=ChatMessageDirection.OUTBOUND.value,
             channel=channel,
             text=text,
+            payload_json={
+                "origin_channel": "crm",
+                "delivery_channels": ["web"] if channel == "web" else ["web", channel],
+                "author_role": "recruiter",
+            },
             status=ChatMessageStatus.QUEUED.value,
             author_label=author_label,
             client_request_id=client_request_id,

@@ -254,3 +254,35 @@ async def test_send_chat_message_routes_to_max_candidate():
             assert stored_message.telegram_user_id is None
     finally:
         registry_mod._registry = old_registry
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_falls_back_to_web_inbox_without_messenger_binding():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=None,
+        fio="Web Inbox Candidate",
+        city="Москва",
+    )
+
+    bot = _DummyBotService(ok=True)
+    result = await chat_service.send_chat_message(
+        candidate.id,
+        text="Сообщение только в веб-кабинет",
+        client_request_id="req-web-1",
+        author_label="admin",
+        bot_service=bot,
+    )
+
+    assert bot.calls == []
+    assert result["status"] == "sent"
+    assert result["message"]["channel"] == "web"
+    assert result["message"]["origin_channel"] == "crm"
+    assert result["message"]["delivery_channels"] == ["web"]
+    assert result["message"]["author_role"] == "recruiter"
+
+    async with async_session() as session:
+        stored_message = await session.get(ChatMessage, result["message"]["id"])
+        assert stored_message is not None
+        assert stored_message.channel == "web"
+        assert stored_message.status == "sent"
+        assert stored_message.telegram_user_id is None

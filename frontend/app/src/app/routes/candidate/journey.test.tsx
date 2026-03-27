@@ -57,6 +57,30 @@ describe('CandidateJourneyPage', () => {
 
     useQueryMock.mockReturnValue({
       data: {
+        dashboard: {
+          primary_action: {
+            key: 'complete_screening',
+            label: 'Завершить анкету',
+            description: 'Ответьте на короткую анкету. Прогресс сохранится автоматически.',
+            target: 'workflow',
+          },
+          alerts: [
+            {
+              level: 'info',
+              title: 'Есть обновление от рекрутера',
+              body: 'Откройте раздел «Сообщения», чтобы продолжить диалог.',
+            },
+          ],
+          upcoming_items: [
+            {
+              kind: 'interview',
+              title: 'Собеседование',
+              scheduled_at: '2026-03-19T10:00:00.000Z',
+              timezone: 'Europe/Moscow',
+              state: 'На подтверждении',
+            },
+          ],
+        },
         company: {
           name: 'SMART SERVICE',
           summary: 'Вы проходите отбор в SMART SERVICE по вакансии «Менеджер по работе с клиентами».',
@@ -64,6 +88,56 @@ describe('CandidateJourneyPage', () => {
             'Анкета и прогресс сохраняются автоматически',
             'Статус и следующий шаг видны в одном месте',
             'Запись на собеседование доступна из кабинета',
+          ],
+          faq: [
+            {
+              question: 'Как проходит отбор?',
+              answer: 'Профиль, анкета, слот и обратная связь доступны в одном кабинете.',
+            },
+          ],
+        },
+        resources: {
+          faq: [
+            {
+              question: 'Как проходит отбор?',
+              answer: 'Профиль, анкета, слот и обратная связь доступны в одном кабинете.',
+            },
+          ],
+          documents: [
+            {
+              key: 'process',
+              title: 'Как устроен отбор',
+              summary: 'Пошаговый путь кандидата',
+            },
+          ],
+          contacts: [
+            {
+              label: 'Поддержка',
+              value: 'Напишите в раздел «Сообщения».',
+            },
+          ],
+        },
+        tests: {
+          items: [
+            {
+              key: 'screening',
+              title: 'Короткая анкета',
+              status: 'in_progress',
+              status_label: 'В процессе',
+              summary: 'Можно продолжить с текущего места.',
+              question_count: 8,
+            },
+          ],
+        },
+        feedback: {
+          items: [
+            {
+              kind: 'message',
+              title: 'Сообщение от рекрутера',
+              body: 'Проверьте детали собеседования.',
+              author_role: 'recruiter',
+              created_at: '2026-03-18T12:00:00.000Z',
+            },
           ],
         },
         candidate: {
@@ -105,6 +179,14 @@ describe('CandidateJourneyPage', () => {
             active: null,
           },
           messages: [],
+          inbox: {
+            conversation_id: 'candidate:1',
+            unread_count: null,
+            read_tracking_supported: false,
+            latest_message: null,
+            delivery_state: 'sent',
+            available_channels: ['web', 'max'],
+          },
           cities: [],
         },
       },
@@ -116,15 +198,20 @@ describe('CandidateJourneyPage', () => {
     window.history.pushState({}, '', '/candidate/journey')
   })
 
-  it('renders company context in the cabinet summary', () => {
+  it('renders web-first cabinet summary and navigation', () => {
     render(<CandidateJourneyPage />)
 
     expect(readyMock).toHaveBeenCalled()
+    expect(screen.getByText('Candidate Cabinet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Главная' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Сообщения' })).toBeInTheDocument()
+    expect(screen.getByText('Что нужно сделать сейчас')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Завершить анкету' })).toBeInTheDocument()
     expect(screen.getByText('Компания')).toBeInTheDocument()
     expect(screen.getByText('SMART SERVICE')).toBeInTheDocument()
     expect(screen.getByText(/отбор в SMART SERVICE/i)).toBeInTheDocument()
-    expect(screen.getByText(/Анкета и прогресс сохраняются автоматически/i)).toBeInTheDocument()
-    expect(screen.getByText(/resume-cookie/i)).toBeInTheDocument()
+    expect(screen.getByText(/Magic link \+ resume-cookie/i)).toBeInTheDocument()
+    expect(screen.getByText(/web inbox/i)).toBeInTheDocument()
   })
 
   it('uses a bounded cache policy for the candidate portal journey', () => {
@@ -156,7 +243,7 @@ describe('CandidateJourneyPage', () => {
     render(<CandidateJourneyPage />)
 
     expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
-    expect(screen.getByText(/Откройте свежую ссылку из MAX или Telegram/i)).toBeInTheDocument()
+    expect(screen.getByText(/Откройте свежую ссылку из сообщения или письма от рекрутера/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Повторить' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Открыть новую ссылку' })).toHaveAttribute('href', '/candidate/start')
     expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()

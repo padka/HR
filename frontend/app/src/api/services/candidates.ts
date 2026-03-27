@@ -189,6 +189,7 @@ export type TestSection = {
 export type CandidateDetail = {
   id: number
   created_at?: string | null
+  last_activity_at?: string | null
   fio?: string | null
   city?: string | null
   telegram_id?: number | null
@@ -202,6 +203,7 @@ export type CandidateDetail = {
   messenger_platform?: string | null
   max_user_id?: string | null
   channel_health?: CandidateChannelHealth | null
+  candidate_portal_url?: string | null
   phone?: string | null
   is_active?: boolean
   stage?: string | null

@@ -82,7 +82,7 @@ export function CandidateStartPage() {
           } catch (fallbackError) {
             if (cancelled) return
             const info = shouldSkipStoredToken ? initialError : parseCandidatePortalError(fallbackError)
-            setError(info?.message || 'Ссылка для кабинета повреждена или неполная. Откройте новую ссылку из MAX.')
+            setError(info?.message || 'Ссылка для кабинета повреждена или неполная. Откройте новую ссылку из сообщения или письма от рекрутера.')
             setErrorState(info?.state || null)
             return
           }
@@ -100,7 +100,7 @@ export function CandidateStartPage() {
   }, [navigate, token])
 
   const handleCopySupportMessage = async () => {
-    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку в кабинет кандидата MAX.'
+    const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку для входа в кабинет кандидата.'
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(requestText)
@@ -127,16 +127,16 @@ export function CandidateStartPage() {
                 : errorState === 'needs_new_link'
                   ? 'Нужна новая ссылка'
                   : 'Не удалось восстановить кабинет'
-              : 'Открываю вашу анкету'}
+              : 'Открываю ваш кабинет'}
           </h1>
           <p className="candidate-portal__subtitle">
             {error
               ? errorState === 'blocked'
                 ? 'Сессия отозвана или кабинет не найден. Попросите рекрутера восстановить доступ.'
                 : errorState === 'recoverable'
-                  ? 'Откройте кабинет заново из MAX или Telegram. Если resume-cookie ещё жив, доступ поднимется автоматически.'
+                  ? 'Откройте кабинет заново по свежей ссылке от рекрутера. Если resume-cookie ещё жив, доступ поднимется автоматически.'
                   : errorState === 'needs_new_link'
-                  ? 'Старая ссылка устарела. Откройте свежую ссылку из MAX или Telegram.'
+                  ? 'Старая ссылка устарела. Откройте свежую ссылку из сообщения или письма от рекрутера.'
                   : 'Сейчас попробую открыть кабинет заново на этом устройстве.'
               : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
           </p>

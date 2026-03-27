@@ -36,6 +36,7 @@ type CandidateActionsProps = {
   onOpenInsights: () => void
   onCopyMaxLink: () => void
   onRestartPortal: () => void
+  onOpenCandidateCabinet: () => void
   onOpenMaxPortal: () => void
   onOpenBrowserPortal: () => void
   onScheduleSlot: () => void
@@ -57,6 +58,7 @@ export function CandidateActions({
   onOpenInsights,
   onCopyMaxLink,
   onRestartPortal,
+  onOpenCandidateCabinet,
   onOpenMaxPortal,
   onOpenBrowserPortal,
   onScheduleSlot,
@@ -73,7 +75,7 @@ export function CandidateActions({
   const hhLink = candidate.hh_profile_url || null
   const conferenceLink = normalizeConferenceUrl(candidate.telemost_url)
   const isMaxLinked = Boolean(candidate.max_user_id)
-  const canOpenChat = Boolean(candidate.telegram_id || candidate.max_user_id)
+  const canOpenChat = Boolean(candidate.candidate_portal_url || candidate.telegram_id || candidate.max_user_id)
   const preferredChannel = channelHealth?.preferred_channel || candidate.messenger_platform || null
   const lastOutboundStatus =
     channelHealth?.last_outbound_delivery?.delivery_stage
@@ -90,6 +92,7 @@ export function CandidateActions({
   const publicLink = channelHealth?.public_link || null
   const browserLink = channelHealth?.browser_link || null
   const miniAppLink = channelHealth?.mini_app_link || null
+  const candidateCabinetUrl = candidate.candidate_portal_url || browserLink || publicLink || null
   const configErrors = channelHealth?.config_errors || []
   const restartAllowed = channelHealth?.restart_allowed !== false
   const deliveryReady = channelHealth?.delivery_ready !== false
@@ -224,9 +227,10 @@ export function CandidateActions({
         >
           <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
             <div>
-              <div className="section-title" style={{ margin: 0, fontSize: '0.95rem' }}>Channel Health</div>
+              <div className="section-title" style={{ margin: 0, fontSize: '0.95rem' }}>Candidate Cabinet</div>
               <p className="subtitle" style={{ margin: '4px 0 0' }}>
-                Preferred channel: {preferredChannel === 'max' ? 'MAX' : preferredChannel === 'telegram' ? 'Telegram' : '—'}
+                Primary workspace: web cabinet
+                {preferredChannel ? ` · delivery channel: ${preferredChannel === 'max' ? 'MAX' : preferredChannel === 'telegram' ? 'Telegram' : preferredChannel}` : ''}
               </p>
             </div>
             {channelHealth.conflict_badge ? (
@@ -246,6 +250,11 @@ export function CandidateActions({
                 invite: {activeInvite.status}
               </span>
             ) : null}
+            {candidateCabinetUrl ? (
+              <span className="status-badge status-badge--success">cabinet: ready</span>
+            ) : (
+              <span className="status-badge status-badge--warning">cabinet: link missing</span>
+            )}
             {lastOutboundStatus ? (
               <span className="status-badge status-badge--warning">
                 send: {lastOutboundStatus}
@@ -259,6 +268,11 @@ export function CandidateActions({
           </div>
 
           <div style={{ marginTop: 10 }}>
+            <p className="subtitle" style={{ margin: 0 }}>
+              cabinet link: {candidateCabinetUrl ? 'ready' : 'missing'}
+              {' · '}
+              inbox: {canOpenChat ? 'available' : 'blocked'}
+            </p>
             <p className="subtitle" style={{ margin: 0 }}>
               portal: {channelHealth.portal_entry_ready ? 'public ready' : 'public blocked'}
               {' · '}
@@ -276,6 +290,11 @@ export function CandidateActions({
             {channelHealth.active_journey_id ? (
               <p className="subtitle" style={{ margin: '4px 0 0' }}>
                 journey: #{channelHealth.active_journey_id} · session v{channelHealth.session_version || 1}
+              </p>
+            ) : null}
+            {candidate.last_activity_at ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last candidate activity: {new Date(candidate.last_activity_at).toLocaleString('ru-RU')}
               </p>
             ) : null}
             {activeInvite?.used_by_external_id ? (
@@ -332,6 +351,14 @@ export function CandidateActions({
             <button
               type="button"
               className="ui-btn ui-btn--primary ui-btn--sm"
+              onClick={onOpenCandidateCabinet}
+              disabled={!candidateCabinetUrl}
+            >
+              Открыть кабинет
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
               onClick={onCopyMaxLink}
               disabled={maxLinkPending || !canReissuePortalAccess}
               title={!canReissuePortalAccess ? deliveryBlockReason || 'Публичный вход в кабинет не готов' : undefined}
@@ -344,7 +371,7 @@ export function CandidateActions({
               onClick={onOpenMaxPortal}
               disabled={!miniAppLink && !publicLink}
             >
-              Открыть MAX mini app
+              Открыть MAX launcher
             </button>
             <button
               type="button"
@@ -352,7 +379,7 @@ export function CandidateActions({
               onClick={onOpenBrowserPortal}
               disabled={!browserLink}
             >
-              Открыть browser link
+              Открыть browser fallback
             </button>
             <button
               type="button"

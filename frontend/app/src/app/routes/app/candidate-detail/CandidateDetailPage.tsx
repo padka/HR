@@ -292,13 +292,23 @@ export function CandidateDetailPage() {
   }
 
   const handleOpenBrowserPortal = () => {
-    const browserLink = String(channelHealth?.browser_link || '').trim()
+    const browserLink = String(channelHealth?.browser_link || detail?.candidate_portal_url || '').trim()
     if (!browserLink) {
-      setActionMessage('Browser link пока недоступен. Переотправьте ссылку после настройки публичного URL.')
+      setActionMessage('Ссылка на кабинет пока недоступна. Переотправьте доступ после настройки публичного URL.')
       return
     }
     window.open(browserLink, '_blank', 'noopener,noreferrer')
-    setActionMessage('Browser link открыт в новой вкладке')
+    setActionMessage('Кабинет кандидата открыт в новой вкладке')
+  }
+
+  const handleOpenCandidateCabinet = () => {
+    const cabinetLink = String(detail?.candidate_portal_url || channelHealth?.browser_link || '').trim()
+    if (!cabinetLink) {
+      setActionMessage('Кабинет кандидата пока недоступен. Сначала подготовьте публичный вход.')
+      return
+    }
+    window.open(cabinetLink, '_blank', 'noopener,noreferrer')
+    setActionMessage('Кабинет кандидата открыт в новой вкладке')
   }
 
   const handleRestartPortal = () => {
@@ -402,6 +412,7 @@ export function CandidateDetailPage() {
                     }}
                     onCopyMaxLink={handleCopyMaxLink}
                     onRestartPortal={handleRestartPortal}
+                    onOpenCandidateCabinet={handleOpenCandidateCabinet}
                     onOpenMaxPortal={handleOpenMaxPortal}
                     onOpenBrowserPortal={handleOpenBrowserPortal}
                     onScheduleSlot={() => setShowScheduleSlotModal(true)}

@@ -489,6 +489,73 @@ def _portal_company_highlights() -> list[str]:
     ]
 
 
+def _portal_company_faq() -> list[dict[str, str]]:
+    return [
+        {
+            "question": "Как проходит отбор?",
+            "answer": "Сначала вы заполняете профиль и короткую анкету, затем выбираете удобный слот собеседования и получаете обновления в кабинете.",
+        },
+        {
+            "question": "Нужно ли постоянно сидеть в мессенджере?",
+            "answer": "Нет. Личный кабинет остается основным местом, где видны этапы, сообщения, материалы и запись на собеседование.",
+        },
+        {
+            "question": "Что делать, если нет слотов?",
+            "answer": "Прогресс сохранится автоматически. Как только рекрутер откроет слот, кабинет покажет следующий шаг и актуальный статус.",
+        },
+    ]
+
+
+def _portal_company_documents(candidate: User) -> list[dict[str, str]]:
+    vacancy_label = _portal_vacancy_label(candidate)
+    return [
+        {
+            "key": "process",
+            "title": "Как устроен отбор",
+            "summary": f"Пошаговый путь по вакансии «{vacancy_label}»: профиль, анкета, собеседование и обратная связь.",
+        },
+        {
+            "key": "interview_prep",
+            "title": "Как подготовиться к собеседованию",
+            "summary": "Проверьте контакты, выберите удобный слот и держите кабинет под рукой: все изменения и сообщения появятся здесь.",
+        },
+        {
+            "key": "cabinet",
+            "title": "Как работает кабинет кандидата",
+            "summary": "Черновики, сообщения рекрутеру, статусы и слот сохраняются автоматически и доступны по той же ссылке.",
+        },
+    ]
+
+
+def _portal_company_contacts(
+    *,
+    candidate: User,
+    active_slot: Slot | None,
+) -> list[dict[str, str]]:
+    contacts: list[dict[str, str]] = [
+        {
+            "label": "Поддержка",
+            "value": "Напишите в раздел «Сообщения» в кабинете, и рекрутер увидит сообщение в CRM.",
+        }
+    ]
+    recruiter_name = getattr(getattr(active_slot, "recruiter", None), "name", None)
+    if recruiter_name:
+        contacts.append(
+            {
+                "label": "Рекрутер",
+                "value": str(recruiter_name),
+            }
+        )
+    if candidate.phone:
+        contacts.append(
+            {
+                "label": "Контакт кандидата",
+                "value": str(candidate.phone),
+            }
+        )
+    return contacts
+
+
 def _next_step_slot(
     *,
     current_step: str,
@@ -1165,10 +1232,39 @@ def serialize_portal_slot(slot: Slot) -> dict[str, Any]:
 
 
 def serialize_chat_message(message: ChatMessage) -> dict[str, Any]:
+    payload = dict(message.payload_json or {}) if isinstance(message.payload_json, dict) else {}
+    delivery_channels_raw = payload.get("delivery_channels")
+    if isinstance(delivery_channels_raw, list):
+        delivery_channels = [
+            str(item).strip()
+            for item in delivery_channels_raw
+            if str(item).strip()
+        ]
+    else:
+        delivery_channels = [str(message.channel).strip()] if str(message.channel or "").strip() else []
+
+    author_role = str(payload.get("author_role") or "").strip().lower()
+    if not author_role:
+        if message.direction == ChatMessageDirection.INBOUND.value:
+            author_role = "candidate"
+        else:
+            normalized_author = str(message.author_label or "").strip().lower()
+            if normalized_author in {"бот", "bot"}:
+                author_role = "bot"
+            elif normalized_author in {"система", "system"}:
+                author_role = "system"
+            else:
+                author_role = "recruiter"
+
     return {
         "id": message.id,
+        "conversation_id": f"candidate:{int(message.candidate_id)}",
         "direction": message.direction,
         "channel": message.channel,
+        "origin_channel": str(payload.get("origin_channel") or message.channel or "web"),
+        "delivery_channels": delivery_channels,
+        "delivery_state": message.status,
+        "author_role": author_role,
         "text": message.text,
         "status": message.status,
         "author_label": message.author_label,
@@ -1198,6 +1294,241 @@ def _next_action_text(
     if has_available_slots:
         return "Выберите слот, чтобы завершить запись на собеседование."
     return "Слотов пока нет. Мы сохранили ваш прогресс и покажем следующий шаг здесь."
+
+
+def _portal_slot_status_label(status: str | None) -> str | None:
+    normalized = str(status or "").lower()
+    if not normalized:
+        return None
+    if normalized == SlotStatus.PENDING.lower():
+        return "На подтверждении"
+    if normalized == SlotStatus.BOOKED.lower():
+        return "Подтвержден рекрутером"
+    if normalized in {SlotStatus.CONFIRMED.lower(), SlotStatus.CONFIRMED_BY_CANDIDATE.lower()}:
+        return "Подтверждено"
+    if normalized == SlotStatus.FREE.lower():
+        return "Свободно"
+    return normalized
+
+
+def _candidate_primary_action(
+    *,
+    current_step: str,
+    next_action: str,
+    active_slot: Slot | None,
+    has_available_slots: bool,
+) -> dict[str, str]:
+    if current_step == "profile":
+        return {
+            "key": "complete_profile",
+            "label": "Заполнить профиль",
+            "description": next_action,
+            "target": "workflow",
+        }
+    if current_step == "screening":
+        return {
+            "key": "complete_screening",
+            "label": "Завершить анкету",
+            "description": next_action,
+            "target": "workflow",
+        }
+    if current_step == "slot_selection":
+        return {
+            "key": "choose_slot",
+            "label": "Выбрать слот",
+            "description": next_action,
+            "target": "schedule",
+        }
+    if active_slot is not None and str(active_slot.status or "").lower() in {
+        SlotStatus.PENDING.lower(),
+        SlotStatus.BOOKED.lower(),
+    }:
+        return {
+            "key": "review_interview",
+            "label": "Проверить детали собеседования",
+            "description": next_action,
+            "target": "schedule",
+        }
+    return {
+        "key": "watch_updates",
+        "label": "Следить за обновлениями",
+        "description": next_action,
+        "target": "feedback",
+    }
+
+
+def _dashboard_alerts(
+    *,
+    current_step: str,
+    active_slot: Slot | None,
+    available_slots: list[Slot],
+    screening_complete: bool,
+    messages: list[ChatMessage],
+) -> list[dict[str, str]]:
+    alerts: list[dict[str, str]] = []
+    if current_step == "slot_selection" and not available_slots:
+        alerts.append(
+            {
+                "level": "info",
+                "title": "Свободных слотов пока нет",
+                "body": "Мы сохранили ваш прогресс. Как только слот появится, кабинет покажет новый следующий шаг.",
+            }
+        )
+    if active_slot is not None and str(active_slot.status or "").lower() == SlotStatus.PENDING.lower():
+        alerts.append(
+            {
+                "level": "warning",
+                "title": "Собеседование ожидает подтверждения",
+                "body": "Рекрутер уже видит выбранный слот. Ответ и дальнейшие инструкции появятся в кабинете.",
+            }
+        )
+    latest_outbound = next(
+        (message for message in reversed(messages) if message.direction == ChatMessageDirection.OUTBOUND.value),
+        None,
+    )
+    if latest_outbound is not None:
+        alerts.append(
+            {
+                "level": "success",
+                "title": "Есть обновление от рекрутера",
+                "body": "Откройте раздел «Сообщения», чтобы прочитать последнее сообщение и ответить в том же кабинете.",
+            }
+        )
+    elif screening_complete:
+        alerts.append(
+            {
+                "level": "info",
+                "title": "Анкета сохранена",
+                "body": "Следующий шаг уже определяется системой. Проверяйте статус и раздел расписания.",
+            }
+        )
+    return alerts[:3]
+
+
+def _screening_test_item(
+    *,
+    screening_complete: bool,
+    screening_questions_count: int,
+    completed_at: str | None,
+    current_step: str,
+) -> dict[str, Any]:
+    if screening_complete:
+        status = "completed"
+        status_label = "Завершено"
+        summary = "Короткая анкета сохранена. Результат уже учтён в воронке."
+    elif current_step == "screening":
+        status = "in_progress"
+        status_label = "В процессе"
+        summary = "Можно продолжить с текущего места. Черновик ответов сохраняется автоматически."
+    else:
+        status = "pending"
+        status_label = "Ожидает"
+        summary = "Анкета откроется после проверки профиля и станет доступна в кабинете."
+    return {
+        "key": "screening",
+        "title": "Короткая анкета",
+        "status": status,
+        "status_label": status_label,
+        "summary": summary,
+        "question_count": screening_questions_count,
+        "completed_at": completed_at,
+    }
+
+
+def _test2_item(
+    result: TestResult | None,
+    *,
+    candidate_status: CandidateStatus | None,
+) -> dict[str, Any]:
+    if result is not None:
+        return {
+            "key": "test2",
+            "title": "Тест 2",
+            "status": "completed",
+            "status_label": "Завершено",
+            "summary": "Результат второго теста сохранён в системе.",
+            "completed_at": result.created_at.isoformat() if result.created_at else None,
+            "final_score": float(result.final_score) if result.final_score is not None else None,
+            "raw_score": int(result.raw_score) if result.raw_score is not None else None,
+            "total_time": int(result.total_time) if result.total_time is not None else None,
+        }
+    if candidate_status in {CandidateStatus.TEST2_SENT, CandidateStatus.TEST2_COMPLETED, CandidateStatus.TEST2_FAILED}:
+        status = "in_progress" if candidate_status == CandidateStatus.TEST2_SENT else "completed"
+        return {
+            "key": "test2",
+            "title": "Тест 2",
+            "status": status,
+            "status_label": "Отправлен" if status == "in_progress" else "Завершено",
+            "summary": "Этот этап привязывается к решению рекрутера и может открыться после первого собеседования.",
+            "completed_at": None,
+        }
+    return {
+        "key": "test2",
+        "title": "Тест 2",
+        "status": "pending",
+        "status_label": "Пока не назначен",
+        "summary": "Если этот этап понадобится, кабинет покажет задачу и дальнейшие инструкции.",
+        "completed_at": None,
+    }
+
+
+def _feedback_items(
+    *,
+    candidate_status_label: str | None,
+    current_step_label: str,
+    next_action: str,
+    active_slot: Slot | None,
+    screening_complete: bool,
+    screening_completed_at: str | None,
+    messages: list[ChatMessage],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = [
+        {
+            "kind": "status",
+            "title": candidate_status_label or current_step_label,
+            "body": next_action,
+            "created_at": None,
+            "author_role": "system",
+        }
+    ]
+    if screening_complete:
+        items.append(
+            {
+                "kind": "milestone",
+                "title": "Анкета завершена",
+                "body": "Ответы сохранены. Следующий шаг и доступные действия обновляются автоматически в кабинете.",
+                "created_at": screening_completed_at,
+                "author_role": "system",
+            }
+        )
+    if active_slot is not None:
+        items.append(
+            {
+                "kind": "schedule",
+                "title": "Собеседование",
+                "body": (
+                    f"Статус: {str(active_slot.status or '').lower()} · "
+                    f"{active_slot.city.name_plain if getattr(active_slot, 'city', None) else 'город уточняется'}"
+                ),
+                "created_at": active_slot.start_utc.isoformat() if active_slot.start_utc else None,
+                "author_role": "system",
+            }
+        )
+    outbound_messages = [
+        message for message in reversed(messages)
+        if message.direction == ChatMessageDirection.OUTBOUND.value and (message.text or "").strip()
+    ]
+    for message in outbound_messages[:2]:
+        items.append(
+            {
+                "kind": "message",
+                "title": "Сообщение от рекрутера",
+                "body": str(message.text or "").strip(),
+                "created_at": message.created_at.isoformat() if message.created_at else None,
+                "author_role": "recruiter",
+            }
+        )
+    return items[:4]
 
 
 async def build_candidate_portal_journey(
@@ -1353,6 +1684,33 @@ async def build_candidate_portal_journey(
             .limit(20)
         )
     )
+    latest_test2_result = await session.scalar(
+        select(TestResult)
+        .where(
+            TestResult.user_id == candidate.id,
+            func.upper(func.coalesce(TestResult.rating, "")) == "TEST2",
+        )
+        .order_by(TestResult.created_at.desc(), TestResult.id.desc())
+        .limit(1)
+    )
+    next_action = _next_action_text(
+        current_step=current_step,
+        has_available_slots=has_available_slots,
+        active_slot=active_slot,
+    )
+    company_faq = _portal_company_faq()
+    company_documents = _portal_company_documents(candidate)
+    company_contacts = _portal_company_contacts(candidate=candidate, active_slot=active_slot)
+    latest_message = messages[0] if messages else None
+    latest_outbound_message = next(
+        (message for message in messages if message.direction == ChatMessageDirection.OUTBOUND.value),
+        None,
+    )
+    available_channels = ["web"]
+    if candidate.telegram_user_id or candidate.telegram_id:
+        available_channels.append("telegram")
+    if str(candidate.max_user_id or "").strip():
+        available_channels.append("max")
 
     return {
         "candidate": {
@@ -1380,6 +1738,80 @@ async def build_candidate_portal_journey(
             "name": company_name,
             "summary": _portal_company_summary(candidate),
             "highlights": _portal_company_highlights(),
+            "faq": company_faq,
+            "documents": company_documents,
+            "contacts": company_contacts,
+        },
+        "dashboard": {
+            "primary_action": _candidate_primary_action(
+                current_step=current_step,
+                next_action=next_action,
+                active_slot=active_slot,
+                has_available_slots=has_available_slots,
+            ),
+            "alerts": _dashboard_alerts(
+                current_step=current_step,
+                active_slot=active_slot,
+                available_slots=available_slots,
+                screening_complete=screening_complete,
+                messages=messages,
+            ),
+            "last_activity_at": candidate.last_activity.isoformat() if candidate.last_activity else None,
+            "upcoming_items": [
+                item
+                for item in [
+                    {
+                        "kind": "interview",
+                        "title": "Собеседование",
+                        "scheduled_at": next_step_at,
+                        "timezone": next_step_timezone,
+                        "state": _portal_slot_status_label(getattr(active_slot, "status", None)) if active_slot else None,
+                    }
+                    if next_step_at
+                    else None,
+                    {
+                        "kind": "message",
+                        "title": "Последнее сообщение",
+                        "scheduled_at": latest_message.created_at.isoformat() if latest_message and latest_message.created_at else None,
+                        "timezone": None,
+                        "state": latest_message.author_label if latest_message else None,
+                    }
+                    if latest_message is not None
+                    else None,
+                ]
+                if item is not None
+            ],
+        },
+        "tests": {
+            "items": [
+                _screening_test_item(
+                    screening_complete=screening_complete,
+                    screening_questions_count=len(get_candidate_portal_questions()),
+                    completed_at=test1_result.created_at.isoformat() if test1_result and test1_result.created_at else None,
+                    current_step=current_step,
+                ),
+                _test2_item(
+                    latest_test2_result,
+                    candidate_status=candidate.candidate_status,
+                ),
+            ],
+        },
+        "feedback": {
+            "items": _feedback_items(
+                candidate_status_label=STATUS_LABELS.get(candidate.candidate_status) if candidate.candidate_status else None,
+                current_step_label=PORTAL_STEP_LABELS.get(current_step, current_step.title() if current_step else "Статус"),
+                next_action=next_action,
+                active_slot=active_slot,
+                screening_complete=screening_complete,
+                screening_completed_at=test1_result.created_at.isoformat() if test1_result and test1_result.created_at else None,
+                messages=messages,
+            ),
+            "last_feedback_sent_at": latest_outbound_message.created_at.isoformat() if latest_outbound_message and latest_outbound_message.created_at else None,
+        },
+        "resources": {
+            "faq": company_faq,
+            "documents": company_documents,
+            "contacts": company_contacts,
         },
         "journey": {
             "session_id": journey.id,
@@ -1388,11 +1820,7 @@ async def build_candidate_portal_journey(
             "entry_channel": journey.entry_channel,
             "current_step": current_step,
             "current_step_label": PORTAL_STEP_LABELS.get(current_step, current_step.title() if current_step else "Статус"),
-            "next_action": _next_action_text(
-                current_step=current_step,
-                has_available_slots=has_available_slots,
-                active_slot=active_slot,
-            ),
+            "next_action": next_action,
             "next_step_at": next_step_at,
             "next_step_timezone": next_step_timezone,
             "steps": [
@@ -1420,6 +1848,14 @@ async def build_candidate_portal_journey(
                 "active": serialize_portal_slot(active_slot) if active_slot else None,
             },
             "messages": [serialize_chat_message(message) for message in reversed(messages)],
+            "inbox": {
+                "conversation_id": f"candidate:{int(candidate.id)}",
+                "unread_count": None,
+                "read_tracking_supported": False,
+                "latest_message": serialize_chat_message(latest_message) if latest_message is not None else None,
+                "delivery_state": latest_outbound_message.status if latest_outbound_message is not None else None,
+                "available_channels": available_channels,
+            },
             "cities": await list_candidate_portal_cities(session),
         },
     }
@@ -1682,6 +2118,11 @@ async def create_candidate_portal_message(
         direction=ChatMessageDirection.INBOUND.value,
         channel="candidate_portal",
         text=clean_text,
+        payload_json={
+            "origin_channel": "web",
+            "delivery_channels": ["web"],
+            "author_role": "candidate",
+        },
         status=ChatMessageStatus.RECEIVED.value,
         author_label=candidate.fio if not _is_placeholder_fio(candidate.fio) else "Кандидат",
     )

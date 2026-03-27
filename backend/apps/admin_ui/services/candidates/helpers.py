@@ -3740,6 +3740,7 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
     return {
         "id": user.id,
         "created_at": _iso(getattr(user, "created_at", None)),
+        "last_activity_at": _iso(getattr(user, "last_activity", None)),
         "fio": user.fio,
         "city": user.city,
         "telegram_id": user.telegram_id,

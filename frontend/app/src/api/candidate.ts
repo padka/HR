@@ -37,8 +37,13 @@ export type CandidatePortalSlot = {
 
 export type CandidatePortalMessage = {
   id: number
+  conversation_id?: string | null
   direction: 'inbound' | 'outbound'
   channel?: string | null
+  origin_channel?: string | null
+  delivery_channels?: string[]
+  delivery_state?: string | null
+  author_role?: 'candidate' | 'recruiter' | 'system' | 'bot' | null
   text?: string | null
   status?: string | null
   author_label?: string | null
@@ -65,6 +70,79 @@ export type CandidatePortalJourneyResponse = {
     name?: string | null
     summary?: string | null
     highlights?: string[]
+    faq?: Array<{
+      question: string
+      answer: string
+    }>
+    documents?: Array<{
+      key: string
+      title: string
+      summary: string
+    }>
+    contacts?: Array<{
+      label: string
+      value: string
+    }>
+  }
+  dashboard?: {
+    primary_action?: {
+      key?: string | null
+      label?: string | null
+      description?: string | null
+      target?: string | null
+    } | null
+    alerts?: Array<{
+      level?: 'info' | 'warning' | 'success' | 'danger' | string
+      title?: string | null
+      body?: string | null
+    }>
+    last_activity_at?: string | null
+    upcoming_items?: Array<{
+      kind?: string | null
+      title?: string | null
+      scheduled_at?: string | null
+      timezone?: string | null
+      state?: string | null
+    }>
+  }
+  tests?: {
+    items?: Array<{
+      key: string
+      title: string
+      status?: CandidatePortalStepStatus | 'completed' | 'in_progress' | 'pending'
+      status_label?: string | null
+      summary?: string | null
+      question_count?: number | null
+      completed_at?: string | null
+      final_score?: number | null
+      raw_score?: number | null
+      total_time?: number | null
+    }>
+  }
+  feedback?: {
+    items?: Array<{
+      kind?: string | null
+      title?: string | null
+      body?: string | null
+      created_at?: string | null
+      author_role?: 'candidate' | 'recruiter' | 'system' | 'bot' | null
+    }>
+    last_feedback_sent_at?: string | null
+  }
+  resources?: {
+    faq?: Array<{
+      question: string
+      answer: string
+    }>
+    documents?: Array<{
+      key: string
+      title: string
+      summary: string
+    }>
+    contacts?: Array<{
+      label: string
+      value: string
+    }>
   }
   journey: {
     session_id: number
@@ -98,6 +176,14 @@ export type CandidatePortalJourneyResponse = {
       active?: CandidatePortalSlot | null
     }
     messages: CandidatePortalMessage[]
+    inbox?: {
+      conversation_id?: string | null
+      unread_count?: number | null
+      read_tracking_supported?: boolean
+      latest_message?: CandidatePortalMessage | null
+      delivery_state?: string | null
+      available_channels?: string[]
+    }
     cities: Array<{
       id: number
       name: string
