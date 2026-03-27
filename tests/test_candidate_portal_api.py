@@ -689,3 +689,115 @@ def test_candidate_portal_end_to_end_flow(monkeypatch):
 
     messages = asyncio.run(_load_messages(int(seeded["candidate_id"])))
     assert any(row.text == "Нужен пропуск на проходной." for row in messages)
+
+
+def test_candidate_shared_access_challenge_and_verify_bootstraps_session(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+    from backend.apps.admin_ui.services import candidate_shared_access as shared_access_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    delivered: dict[str, str] = {}
+
+    async def _fake_deliver(session, *, candidate, code: str):
+        delivered["code"] = code
+        return "hh"
+
+    monkeypatch.setattr(shared_access_module, "deliver_candidate_shared_access_code", _fake_deliver)
+    app = app_module.create_app()
+
+    async def _seed_candidate() -> dict[str, int | str]:
+        async with async_session() as session:
+            city = City(name="Сочи", tz="Europe/Moscow", active=True)
+            session.add(city)
+            await session.flush()
+            candidate = User(
+                fio="Шеншин Михаил Алексеевич",
+                city="Сочи",
+                phone="+79990001122",
+                desired_position="Вакансия уточняется",
+                messenger_platform="telegram",
+                telegram_id=700707,
+                telegram_user_id=700707,
+                source="hh",
+            )
+            session.add(candidate)
+            await session.commit()
+            return {"candidate_id": int(candidate.id), "candidate_uuid": str(candidate.candidate_id)}
+
+    seeded = asyncio.run(_seed_candidate())
+
+    with TestClient(app) as client:
+        challenge = client.post(
+            "/api/candidate/access/challenge",
+            json={"phone": "+7 999 000 11 22"},
+        )
+        assert challenge.status_code == 200
+        challenge_payload = challenge.json()
+        assert challenge_payload["ok"] is True
+        assert challenge_payload["challenge_token"]
+        assert delivered["code"]
+
+        verify = client.post(
+            "/api/candidate/access/verify",
+            json={
+                "challenge_token": challenge_payload["challenge_token"],
+                "code": delivered["code"],
+            },
+        )
+
+        assert verify.status_code == 200
+        verify_payload = verify.json()
+        assert verify_payload["candidate"]["id"] == seeded["candidate_id"]
+        assert verify_payload["journey"]["entry_channel"] == "web"
+        assert verify_payload["journey"]["channel_options"]["web"]["enabled"] is True
+
+        journey = client.get("/api/candidate/journey")
+        assert journey.status_code == 200
+        assert journey.json()["candidate"]["id"] == seeded["candidate_id"]
+
+
+def test_candidate_shared_access_verify_rejects_invalid_code(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+    from backend.apps.admin_ui.services import candidate_shared_access as shared_access_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+
+    async def _fake_deliver(session, *, candidate, code: str):
+        return "hh"
+
+    monkeypatch.setattr(shared_access_module, "deliver_candidate_shared_access_code", _fake_deliver)
+    app = app_module.create_app()
+
+    async def _seed_candidate() -> None:
+        async with async_session() as session:
+            candidate = User(
+                fio="Portal Shared Candidate",
+                city="Москва",
+                phone="+79990002233",
+                desired_position="Вакансия уточняется",
+                source="hh",
+            )
+            session.add(candidate)
+            await session.commit()
+
+    asyncio.run(_seed_candidate())
+
+    with TestClient(app) as client:
+        challenge = client.post(
+            "/api/candidate/access/challenge",
+            json={"phone": "+7 999 000 22 33"},
+        )
+        assert challenge.status_code == 200
+        challenge_token = challenge.json()["challenge_token"]
+
+        verify = client.post(
+            "/api/candidate/access/verify",
+            json={"challenge_token": challenge_token, "code": "000000"},
+        )
+
+    assert verify.status_code == 401
+    assert verify.json()["detail"]["code"] == "candidate_shared_access_code_invalid"

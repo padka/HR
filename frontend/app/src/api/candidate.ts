@@ -10,6 +10,14 @@ export type CandidatePortalStepStatus = 'pending' | 'in_progress' | 'completed' 
 export type CandidatePortalRecoveryState = 'recoverable' | 'needs_new_link' | 'blocked'
 export type CandidateEntryChannel = 'web' | 'max' | 'telegram'
 
+export type CandidateSharedAccessChallengeResponse = {
+  ok: boolean
+  challenge_token: string
+  expires_in_seconds: number
+  retry_after_seconds: number
+  message: string
+}
+
 export type CandidatePortalQuestion = {
   index: number
   id: string
@@ -367,6 +375,20 @@ export const resolveCandidateEntryGateway = async (entryToken: string) => {
     skipStoredPortalToken: true,
   })
 }
+
+export const startCandidateSharedAccessChallenge = async (phone: string) =>
+  await candidateFetch<CandidateSharedAccessChallengeResponse>('/access/challenge', {
+    method: 'POST',
+    json: { phone },
+    skipStoredPortalToken: true,
+  })
+
+export const verifyCandidateSharedAccessCode = async (challengeToken: string, code: string) =>
+  await candidateFetch<CandidatePortalJourneyResponse>('/access/verify', {
+    method: 'POST',
+    json: { challenge_token: challengeToken, code },
+    skipStoredPortalToken: true,
+  })
 
 export const selectCandidateEntryChannel = async (entryToken: string, channel: CandidateEntryChannel) =>
   await candidateFetch<CandidateEntrySelectResponse>(`/entry/select?${new URLSearchParams({

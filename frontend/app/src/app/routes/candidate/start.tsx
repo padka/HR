@@ -7,8 +7,12 @@ import {
   parseCandidatePortalError,
   resolveCandidateEntryGateway,
   selectCandidateEntryChannel,
+  startCandidateSharedAccessChallenge,
+  switchCandidateEntryChannel,
+  type CandidatePortalJourneyResponse,
   type CandidateEntryChannel,
   type CandidateEntryGatewayResponse,
+  verifyCandidateSharedAccessCode,
 } from '@/api/candidate'
 import { queryClient } from '@/api/client'
 import {
@@ -408,16 +412,57 @@ const ENTRY_CHOOSER_STYLES = `
   }
 `
 
+function gatewayFromJourney(payload: CandidatePortalJourneyResponse): CandidateEntryGatewayResponse {
+  return {
+    candidate: {
+      id: payload.candidate.id,
+      candidate_id: payload.candidate.candidate_id,
+      fio: payload.candidate.fio,
+      city: payload.candidate.city,
+      vacancy_label: payload.candidate.vacancy_label,
+      company: payload.company?.name,
+    },
+    journey: {
+      session_id: payload.journey.session_id,
+      current_step: payload.journey.current_step,
+      current_step_label: payload.journey.current_step_label,
+      status: payload.candidate.status,
+      status_label: payload.candidate.status_label,
+      next_action: payload.journey.next_action,
+      last_entry_channel: payload.journey.last_entry_channel,
+      available_channels: payload.journey.available_channels,
+    },
+    options: {
+      web: payload.journey.channel_options?.web || { channel: 'web', enabled: true, type: 'cabinet' },
+      max: payload.journey.channel_options?.max || { channel: 'max', enabled: false, reason_if_blocked: 'MAX сейчас недоступен.' },
+      telegram: payload.journey.channel_options?.telegram || { channel: 'telegram', enabled: false, reason_if_blocked: 'Telegram сейчас недоступен.' },
+    },
+    company_preview: {
+      summary: payload.company?.summary,
+      highlights: payload.company?.highlights || [],
+    },
+    suggested_channel: 'web',
+    fallback_policy: 'web_always_available_when_portal_public_ready',
+  }
+}
+
 export function CandidateStartPage() {
   const { token } = useParams({ strict: false }) as { token?: string }
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<string | null>(null)
   const [entryGateway, setEntryGateway] = useState<CandidateEntryGatewayResponse | null>(null)
+  const [entryLaunchMode, setEntryLaunchMode] = useState<'entry' | 'session'>('entry')
   const [entryPendingChannel, setEntryPendingChannel] = useState<CandidateEntryChannel | null>(null)
   const [showGenericLanding, setShowGenericLanding] = useState(false)
   const [genericNotice, setGenericNotice] = useState<string | null>(null)
   const [resumeNonce, setResumeNonce] = useState(0)
+  const [sharedPhone, setSharedPhone] = useState('')
+  const [sharedCode, setSharedCode] = useState('')
+  const [sharedChallengeToken, setSharedChallengeToken] = useState('')
+  const [sharedChallengePending, setSharedChallengePending] = useState(false)
+  const [sharedVerifyPending, setSharedVerifyPending] = useState(false)
+  const [sharedAccessMessage, setSharedAccessMessage] = useState<string | null>(null)
 
   const entryToken = useMemo(() => {
     if (typeof window === 'undefined') return ''
@@ -509,6 +554,7 @@ export function CandidateStartPage() {
         if (cancelled) return
         clearCandidatePortalAccessToken()
         setEntryGateway(null)
+        setEntryLaunchMode('entry')
         setError(null)
         setErrorState(null)
         setShowGenericLanding(true)
@@ -523,6 +569,7 @@ export function CandidateStartPage() {
           if (cancelled) return true
           writeCandidatePortalEntryToken(fallbackEntryToken)
           setEntryGateway(payload)
+          setEntryLaunchMode('entry')
           setError(null)
           setErrorState(null)
           return true
@@ -537,6 +584,7 @@ export function CandidateStartPage() {
           if (cancelled) return
           writeCandidatePortalEntryToken(entryToken)
           setEntryGateway(payload)
+          setEntryLaunchMode('entry')
           return
         } catch (gatewayError) {
           if (cancelled) return
@@ -596,7 +644,7 @@ export function CandidateStartPage() {
             if (resolvedToken.source === 'storage') {
               showNeutralLanding(
                 resumeNonce > 0
-                  ? 'На этом устройстве не найден активный кабинет. Откройте персональную ссылку из HH и выберите удобный канал.'
+                  ? 'На этом устройстве не найден активный кабинет. Запросите новый код на стартовой странице и продолжите через удобный канал.'
                   : null,
               )
               return
@@ -620,11 +668,13 @@ export function CandidateStartPage() {
   }, [entryToken, locationHasPortalToken, navigate, resumeNonce, token])
 
   const handleSelectEntryChannel = async (channel: CandidateEntryChannel) => {
-    if (!entryToken) return
     setEntryPendingChannel(channel)
     setError(null)
     try {
-      const payload = await selectCandidateEntryChannel(entryToken, channel)
+      const payload =
+        entryLaunchMode === 'session'
+          ? await switchCandidateEntryChannel(channel)
+          : await selectCandidateEntryChannel(entryToken || readCandidatePortalEntryToken(), channel)
       const launchUrl = String(payload.launch?.url || payload.cabinet_url || '').trim()
       if (!launchUrl) {
         setError('Ссылка для запуска канала пока не подготовлена. Продолжайте через веб-кабинет.')
@@ -642,6 +692,52 @@ export function CandidateStartPage() {
 
   const handleResumeOnThisDevice = () => {
     setResumeNonce((current) => current + 1)
+  }
+
+  const handleRequestSharedAccessCode = async () => {
+    setSharedChallengePending(true)
+    setError(null)
+    setErrorState(null)
+    setSharedAccessMessage(null)
+    try {
+      const payload = await startCandidateSharedAccessChallenge(sharedPhone)
+      setSharedChallengeToken(payload.challenge_token)
+      setSharedCode('')
+      setSharedAccessMessage(
+        payload.message || 'Если номер найден, код отправлен в связанный канал кандидата.',
+      )
+    } catch (challengeError) {
+      const info = parseCandidatePortalError(challengeError)
+      setError(info?.message || 'Не удалось отправить код. Проверьте номер и попробуйте ещё раз.')
+      setErrorState(info?.state || null)
+    } finally {
+      setSharedChallengePending(false)
+    }
+  }
+
+  const handleVerifySharedAccessCode = async () => {
+    setSharedVerifyPending(true)
+    setError(null)
+    setErrorState(null)
+    try {
+      const payload = await verifyCandidateSharedAccessCode(sharedChallengeToken, sharedCode)
+      clearCandidatePortalAccessToken()
+      writeCandidatePortalEntryToken('')
+      queryClient.setQueryData(['candidate-portal-journey'], payload)
+      setEntryGateway(gatewayFromJourney(payload))
+      setEntryLaunchMode('session')
+      setShowGenericLanding(false)
+      setSharedChallengeToken('')
+      setSharedCode('')
+      setSharedAccessMessage(null)
+      setGenericNotice(null)
+    } catch (verifyError) {
+      const info = parseCandidatePortalError(verifyError)
+      setError(info?.message || 'Не удалось подтвердить код входа.')
+      setErrorState(info?.state || null)
+    } finally {
+      setSharedVerifyPending(false)
+    }
   }
 
   return (
@@ -669,8 +765,8 @@ export function CandidateStartPage() {
             {entryGateway
               ? entryGateway.journey.next_action || 'Можно продолжить в браузере, MAX или Telegram без потери прогресса.'
               : showGenericLanding
-                ? 'Персональная ссылка из HH или сообщения компании откроет ваш кабинет, где можно пройти тест, выбрать слот и продолжить общение.'
-              : error
+                ? 'Введите телефон из отклика, получите код в HH, Telegram или MAX и выберите удобный способ продолжения.'
+                : error
                 ? errorState === 'blocked'
                   ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
                   : errorState === 'recoverable'
@@ -686,32 +782,32 @@ export function CandidateStartPage() {
               <section className="glass candidate-portal__entry-hero">
                 <div className="candidate-portal__entry-copy">
                   <div className="candidate-portal__entry-badges">
-                    <span className="candidate-portal__summary-tag">HH как основной вход</span>
+                    <span className="candidate-portal__summary-tag">Одна ссылка для всех кандидатов</span>
+                    <span className="candidate-portal__summary-tag">Код придёт в связанный канал</span>
                     <span className="candidate-portal__summary-tag">Web, MAX и Telegram на выбор</span>
-                    <span className="candidate-portal__summary-tag">Прогресс сохранится в одном кабинете</span>
                   </div>
                   <div className="candidate-portal__summary-grid" aria-label="Как устроен путь кандидата">
                     <article className="glass candidate-portal__summary-card candidate-portal__summary-card--spotlight">
                       <div className="candidate-portal__summary-label">Шаг 1</div>
-                      <div className="candidate-portal__summary-value">Откройте персональную ссылку</div>
-                      <div className="candidate-portal__summary-meta">Ссылка приходит в HH или сообщении от компании.</div>
+                      <div className="candidate-portal__summary-value">Откройте единый портал</div>
+                      <div className="candidate-portal__summary-meta">Эту ссылку рекрутер отправляет всем кандидатам массово.</div>
                     </article>
                     <article className="glass candidate-portal__summary-card">
                       <div className="candidate-portal__summary-label">Шаг 2</div>
-                      <div className="candidate-portal__summary-value">Выберите удобный канал</div>
-                      <div className="candidate-portal__summary-meta">Web, MAX или Telegram запускают один и тот же процесс.</div>
+                      <div className="candidate-portal__summary-value">Подтвердите номер</div>
+                      <div className="candidate-portal__summary-meta">Код придёт в уже связанный HH, Telegram или MAX без ручной ссылки.</div>
                     </article>
                     <article className="glass candidate-portal__summary-card">
                       <div className="candidate-portal__summary-label">Шаг 3</div>
-                      <div className="candidate-portal__summary-value">Пройдите путь без потери прогресса</div>
+                      <div className="candidate-portal__summary-value">Выберите Web, MAX или Telegram</div>
                       <div className="candidate-portal__summary-meta">Анкета, Test 1, слот и чат с рекрутером живут в одном кабинете.</div>
                     </article>
                   </div>
 
                   <div className="candidate-portal__entry-timeline" aria-label="Основные действия">
                     {[
-                      'Персональная ссылка',
-                      'Анкета и Test 1',
+                      'Единый портал',
+                      'Код входа',
                       'Выбор слота',
                       'Диалог с рекрутером',
                     ].map((label, index) => (
@@ -762,42 +858,101 @@ export function CandidateStartPage() {
                     </ul>
                   </div>
                   <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
-                    <strong>Важно</strong>
+                    <strong>Подтверждение входа</strong>
                     <p>
-                      Эта страница сама по себе не открывает чужой кабинет. Вход в процесс начинается
-                      по персональной ссылке из HH или сообщения компании.
+                      Введите телефон, который вы использовали при отклике. Если кандидат найден,
+                      система отправит одноразовый код в HH, Telegram или MAX и откроет ваш кабинет без участия рекрутера.
                     </p>
+                    {sharedAccessMessage ? (
+                      <p className="candidate-portal__helper">{sharedAccessMessage}</p>
+                    ) : null}
                   </div>
                 </aside>
 
                 <div className="candidate-portal__entry-channels">
+                  <div className="candidate-portal__entry-option is-featured">
+                    <div className="candidate-portal__entry-option-head">
+                      <div>
+                        <div className="candidate-portal__entry-option-kicker">Шаг 1. Подтвердите себя</div>
+                        <strong>Телефон из вашего отклика</strong>
+                      </div>
+                      <span className="candidate-portal__entry-status is-ready">Shared portal</span>
+                    </div>
+                    <p>Никаких персональных ссылок. Один и тот же портал подходит для всех кандидатов.</p>
+                    <label className="candidate-portal__field">
+                      <span className="candidate-portal__field-label">Телефон</span>
+                      <input
+                        className="candidate-portal__input"
+                        placeholder="+7 900 000 00 00"
+                        value={sharedPhone}
+                        onChange={(event) => setSharedPhone(event.target.value)}
+                        autoComplete="tel"
+                        inputMode="tel"
+                      />
+                    </label>
+                    <div className="candidate-portal__actions">
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn--primary"
+                        disabled={sharedChallengePending || sharedPhone.trim().length < 10}
+                        onClick={handleRequestSharedAccessCode}
+                      >
+                        {sharedChallengePending ? 'Отправляю код…' : 'Получить код входа'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="candidate-portal__entry-option">
+                    <div className="candidate-portal__entry-option-head">
+                      <div>
+                        <div className="candidate-portal__entry-option-kicker">Шаг 2. Введите код</div>
+                        <strong>Код подтверждения</strong>
+                      </div>
+                      <span className={`candidate-portal__entry-status ${sharedChallengeToken ? 'is-ready' : 'is-blocked'}`}>
+                        {sharedChallengeToken ? 'Код отправлен' : 'Ожидает телефон'}
+                      </span>
+                    </div>
+                    <p>Если номер найден, код придёт в доступный канал, уже связанный с вашим откликом.</p>
+                    <label className="candidate-portal__field">
+                      <span className="candidate-portal__field-label">Код</span>
+                      <input
+                        className="candidate-portal__input"
+                        placeholder="123456"
+                        value={sharedCode}
+                        onChange={(event) => setSharedCode(event.target.value.replace(/[^\d]/g, '').slice(0, 6))}
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                      />
+                    </label>
+                    <div className="candidate-portal__actions">
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn--ghost"
+                        disabled={!sharedChallengeToken || sharedVerifyPending || sharedCode.trim().length < 4}
+                        onClick={handleVerifySharedAccessCode}
+                      >
+                        {sharedVerifyPending ? 'Проверяю…' : 'Подтвердить код'}
+                      </button>
+                    </div>
+                  </div>
                   {[
                     {
                       title: 'Веб-кабинет',
-                      kicker: 'Основной и самый устойчивый путь',
-                      note: 'Открывается по персональной ссылке и становится основной точкой работы кандидата.',
+                      kicker: 'После кода откроется основная рабочая зона',
+                      note: 'Здесь кандидат проходит тесты, выбирает слот, читает информацию о компании и пишет рекрутеру.',
                     },
                     {
-                      title: 'MAX Messenger',
-                      kicker: 'Мессенджер как launcher',
-                      note: 'Подходит для продолжения в чате, но прогресс всё равно хранится в веб-кабинете.',
+                      title: 'MAX и Telegram',
+                      kicker: 'После кода можно продолжить в мессенджере',
+                      note: 'Мессенджеры остаются launcher-слоем, а весь прогресс хранится в одном кабинете кандидата.',
                     },
-                    {
-                      title: 'Telegram',
-                      kicker: 'Альтернативный messenger launcher',
-                      note: 'Уведомления и диалог можно продолжать здесь, не теряя общий путь найма.',
-                    },
-                  ].map((item, index) => (
-                    <div
-                      key={item.title}
-                      className={`candidate-portal__entry-option ${index === 0 ? 'is-featured' : ''}`}
-                    >
+                  ].map((item) => (
+                    <div key={item.title} className="candidate-portal__entry-option">
                       <div className="candidate-portal__entry-option-head">
                         <div>
                           <div className="candidate-portal__entry-option-kicker">{item.kicker}</div>
                           <strong>{item.title}</strong>
                         </div>
-                        <span className="candidate-portal__entry-status is-ready">После персональной ссылки</span>
+                        <span className="candidate-portal__entry-status is-ready">После подтверждения</span>
                       </div>
                       <p>{item.note}</p>
                     </div>

@@ -9,6 +9,11 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.apps.admin_ui.security import get_client_ip, limiter
+from backend.apps.admin_ui.services.candidate_shared_access import (
+    CandidateSharedAccessError,
+    start_candidate_shared_access_challenge,
+    verify_candidate_shared_access_code,
+)
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
@@ -44,6 +49,8 @@ from backend.domain.candidates.portal_service import (
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate-portal"])
 PUBLIC_PORTAL_MUTATION_LIMIT = "5/minute"
+PUBLIC_PORTAL_SHARED_ACCESS_CHALLENGE_LIMIT = "20/minute"
+PUBLIC_PORTAL_SHARED_ACCESS_VERIFY_LIMIT = "30/minute"
 PORTAL_TOKEN_HEADERS = (
     "x-candidate-portal-token",
     "x-candidate-portal-access-token",
@@ -59,6 +66,19 @@ PORTAL_RECOVERY_STATE_BLOCKED = "blocked"
 
 class CandidatePortalExchangePayload(BaseModel):
     token: str = Field(min_length=8)
+
+
+class CandidateSharedAccessChallengePayload(BaseModel):
+    phone: str = Field(min_length=10, max_length=32)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class CandidateSharedAccessVerifyPayload(BaseModel):
+    challenge_token: str = Field(min_length=8)
+    code: str = Field(min_length=4, max_length=8)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 class CandidateEntrySelectPayload(BaseModel):
@@ -255,6 +275,19 @@ def _candidate_portal_not_found_error(
             "requires_fresh_link": False,
         },
         headers=_candidate_portal_resume_cookie_clear_headers() if clear_resume_cookie else None,
+    )
+
+
+def _candidate_shared_access_error(exc: CandidateSharedAccessError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "message": str(exc),
+            "code": exc.code,
+            "state": PORTAL_RECOVERY_STATE_RECOVERABLE,
+            "can_resume": True,
+            "requires_fresh_link": False,
+        },
     )
 
 
@@ -644,6 +677,64 @@ async def switch_candidate_entry_channel(
                 cabinet_url=str(cabinet_url) if cabinet_url else None,
                 source="cabinet",
             )
+
+
+@router.post("/access/challenge")
+@limiter.limit(PUBLIC_PORTAL_SHARED_ACCESS_CHALLENGE_LIMIT, key_func=get_client_ip)
+async def start_candidate_shared_access(
+    request: Request,
+    payload: CandidateSharedAccessChallengePayload,
+) -> dict[str, Any]:
+    del request
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                challenge = await start_candidate_shared_access_challenge(
+                    session,
+                    phone=payload.phone,
+                )
+    except CandidateSharedAccessError as exc:
+        raise _candidate_shared_access_error(exc) from exc
+    return {
+        "ok": True,
+        "challenge_token": challenge.token,
+        "expires_in_seconds": challenge.expires_in_seconds,
+        "retry_after_seconds": challenge.retry_after_seconds,
+        "message": "Если номер найден, мы отправили код в связанный канал кандидата.",
+    }
+
+
+@router.post("/access/verify")
+@limiter.limit(PUBLIC_PORTAL_SHARED_ACCESS_VERIFY_LIMIT, key_func=get_client_ip)
+async def verify_candidate_shared_access(
+    request: Request,
+    response: Response,
+    payload: CandidateSharedAccessVerifyPayload,
+):
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                candidate, journey, response_payload = await verify_candidate_shared_access_code(
+                    session,
+                    challenge_token=payload.challenge_token,
+                    code=payload.code,
+                )
+    except CandidateSharedAccessError as exc:
+        raise _candidate_shared_access_error(exc) from exc
+
+    request.session[PORTAL_SESSION_KEY] = build_candidate_portal_session_payload(
+        candidate_id=int(candidate.id),
+        entry_channel="web",
+        journey=journey,
+        last_seen_at=candidate.last_activity,
+    )
+    _issue_candidate_portal_resume_cookie(
+        response,
+        candidate=candidate,
+        journey=journey,
+        entry_channel="web",
+    )
+    return response_payload
 
 
 @router.post("/session/exchange")

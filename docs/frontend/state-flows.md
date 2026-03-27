@@ -129,11 +129,12 @@ sequenceDiagram
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
 - When `?entry=` is present, `/candidate/start` becomes an HH chooser, not a direct token exchange screen.
-- Bare `/candidate/start` now stays neutral for brand-new visitors: without an explicit personal token it shows the public candidate landing instead of auto-calling `/api/candidate/journey` and surfacing a false “session expired” state.
+- Bare `/candidate/start` is now the shared public candidate entry for mass outreach. A brand-new visitor sees the neutral shared-portal landing and can identify themselves by phone before any cabinet session is created.
 - The HH entry token is durable and is no longer rejected just because the active portal `session_version` changed. Its job is to reopen the chooser and re-issue a fresh launcher for the same candidate journey.
 - The public chooser selection endpoint accepts JSON, query-string, and form-encoded input so browser/webview quirks cannot strand the candidate on the launcher screen with a `422`.
 - Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
 - The browser keeps a separate long-lived candidate entry token in persistent storage, but the neutral public start page no longer auto-opens that stored chooser for unrelated visitors. Stored entry recovery is used only as part of an explicit candidate resume path on the same device.
+- Shared public access now adds an OTP pre-auth step on `/candidate/start`: the candidate enters the phone number from the original application, receives a one-time code through a linked HH/Telegram/MAX channel, and only then receives the usual candidate portal session + chooser/journey bootstrap.
 - Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 
@@ -162,6 +163,7 @@ sequenceDiagram
 - The web inbox is the primary candidate conversation surface. External channels such as MAX or Telegram are delivery adapters and launch surfaces, not the source of truth for the conversation history.
 - Screen state must remain recoverable after refresh and after fresh-link entry, even when an older token is still present in browser storage.
 - The journey payload includes a durable candidate entry URL so the browser can keep a recovery anchor and route the candidate back to `Web / MAX / Telegram` without recruiter involvement.
+- Launching MAX or Telegram from inside the cabinet uses a session-authenticated switch mutation first; a shared-link candidate never needs a recruiter to mint a new unique URL just to continue the same flow.
 
 ## Candidate Cabinet Surface Model
 

@@ -8,6 +8,9 @@ const fetchCandidatePortalJourneyMock = vi.fn()
 const parseCandidatePortalErrorMock = vi.fn()
 const resolveCandidateEntryGatewayMock = vi.fn()
 const selectCandidateEntryChannelMock = vi.fn()
+const startCandidateSharedAccessChallengeMock = vi.fn()
+const switchCandidateEntryChannelMock = vi.fn()
+const verifyCandidateSharedAccessCodeMock = vi.fn()
 const navigateMock = vi.fn()
 const setQueryDataMock = vi.fn()
 const useParamsMock = vi.fn()
@@ -18,6 +21,9 @@ vi.mock('@/api/candidate', () => ({
   parseCandidatePortalError: (...args: unknown[]) => parseCandidatePortalErrorMock(...args),
   resolveCandidateEntryGateway: (...args: unknown[]) => resolveCandidateEntryGatewayMock(...args),
   selectCandidateEntryChannel: (...args: unknown[]) => selectCandidateEntryChannelMock(...args),
+  startCandidateSharedAccessChallenge: (...args: unknown[]) => startCandidateSharedAccessChallengeMock(...args),
+  switchCandidateEntryChannel: (...args: unknown[]) => switchCandidateEntryChannelMock(...args),
+  verifyCandidateSharedAccessCode: (...args: unknown[]) => verifyCandidateSharedAccessCodeMock(...args),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -38,6 +44,9 @@ describe('CandidateStartPage', () => {
     parseCandidatePortalErrorMock.mockReset()
     resolveCandidateEntryGatewayMock.mockReset()
     selectCandidateEntryChannelMock.mockReset()
+    startCandidateSharedAccessChallengeMock.mockReset()
+    switchCandidateEntryChannelMock.mockReset()
+    verifyCandidateSharedAccessCodeMock.mockReset()
     navigateMock.mockReset()
     setQueryDataMock.mockReset()
     useParamsMock.mockReturnValue({ token: 'signed-token' })
@@ -114,9 +123,96 @@ describe('CandidateStartPage', () => {
     render(<CandidateStartPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+      expect(screen.getByText('Телефон из вашего отклика')).toBeInTheDocument()
       expect(fetchCandidatePortalJourneyMock).not.toHaveBeenCalled()
       expect(exchangeCandidatePortalTokenMock).not.toHaveBeenCalled()
+    })
+  })
+
+  it('starts shared access challenge and shows code verification', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    startCandidateSharedAccessChallengeMock.mockResolvedValue({
+      ok: true,
+      challenge_token: 'challenge-token',
+      expires_in_seconds: 600,
+      retry_after_seconds: 60,
+      message: 'Если номер найден, мы отправили код в связанный канал кандидата.',
+    })
+
+    render(<CandidateStartPage />)
+
+    const phoneInput = await screen.findByPlaceholderText('+7 900 000 00 00')
+    fireEvent.change(phoneInput, {
+      target: { value: '+7 999 000 00 00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Получить код входа' }))
+
+    await waitFor(() => {
+      expect(startCandidateSharedAccessChallengeMock).toHaveBeenCalledWith('+7 999 000 00 00')
+      expect(screen.getByText('Код отправлен')).toBeInTheDocument()
+    })
+  })
+
+  it('verifies shared access code and shows the chooser', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    startCandidateSharedAccessChallengeMock.mockResolvedValue({
+      ok: true,
+      challenge_token: 'challenge-token',
+      expires_in_seconds: 600,
+      retry_after_seconds: 60,
+      message: 'Если номер найден, мы отправили код в связанный канал кандидата.',
+    })
+    verifyCandidateSharedAccessCodeMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        status: 'waiting_slot',
+        status_label: 'Ожидает слот',
+      },
+      company: {
+        name: 'SMART SERVICE',
+        summary: 'Выберите, где продолжить общение.',
+        highlights: ['Test 1', 'Слот'],
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'screening',
+        current_step_label: 'Анкета',
+        next_action: 'Выберите удобный канал.',
+        last_entry_channel: 'web',
+        available_channels: ['web', 'max', 'telegram'],
+        channel_options: {
+          web: { channel: 'web', enabled: true, launch_url: '/candidate/journey', type: 'cabinet' },
+          max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+          telegram: { channel: 'telegram', enabled: true, launch_url: 'https://t.me/test_bot?start=token', type: 'external' },
+        },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    const phoneInput = await screen.findByPlaceholderText('+7 900 000 00 00')
+    fireEvent.change(phoneInput, {
+      target: { value: '+7 999 000 00 00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Получить код входа' }))
+
+    await waitFor(() => {
+      expect(startCandidateSharedAccessChallengeMock).toHaveBeenCalled()
+    })
+
+    fireEvent.change(screen.getByPlaceholderText('123456'), {
+      target: { value: '123456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Подтвердить код' }))
+
+    await waitFor(() => {
+      expect(verifyCandidateSharedAccessCodeMock).toHaveBeenCalledWith('challenge-token', '123456')
+      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
     })
   })
 
