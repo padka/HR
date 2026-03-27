@@ -829,6 +829,20 @@ def create_app() -> FastAPI:
     async def apple_touch_icon_precomposed() -> Response:
         return Response(status_code=204)
 
+    @app.get("/manifest.json", include_in_schema=False)
+    async def spa_manifest() -> Response:
+        target = (SPA_DIST_DIR / "manifest.json").resolve()
+        if target.exists() and target.is_file() and target.is_relative_to(SPA_DIST_DIR):
+            return FileResponse(target)
+        return PlainTextResponse("Manifest not found", status_code=404)
+
+    @app.get("/icons/{path:path}", include_in_schema=False)
+    async def spa_icons(path: str) -> Response:
+        target = (SPA_DIST_DIR / "icons" / path).resolve()
+        if target.exists() and target.is_file() and target.is_relative_to(SPA_DIST_DIR):
+            return FileResponse(target)
+        return PlainTextResponse("Icon not found", status_code=404)
+
     @app.get("/app/{path:path}", include_in_schema=False)
     async def spa_assets(path: str) -> Response:
         target = (SPA_DIST_DIR / path).resolve()

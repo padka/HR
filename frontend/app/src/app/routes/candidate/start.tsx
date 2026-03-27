@@ -26,6 +26,387 @@ import {
 } from './webapp'
 import '../candidate-portal.css'
 
+const ENTRY_CHOOSER_STYLES = `
+  .candidate-portal__entry-stack,
+  .candidate-portal__entry-copy,
+  .candidate-portal__entry-side,
+  .candidate-portal__entry-channels,
+  .candidate-portal__entry-option,
+  .candidate-portal__entry-option-head,
+  .candidate-portal__entry-feature-list,
+  .candidate-portal__entry-illustration,
+  .candidate-portal__entry-avatar,
+  .candidate-portal__entry-timeline {
+    display: grid;
+  }
+
+  .candidate-portal__entry-stack,
+  .candidate-portal__entry-copy,
+  .candidate-portal__entry-side,
+  .candidate-portal__entry-option,
+  .candidate-portal__entry-channels {
+    gap: 14px;
+  }
+
+  .candidate-portal__entry-grid,
+  .candidate-portal__entry-badges {
+    display: grid;
+    gap: 18px;
+  }
+
+  .candidate-portal__entry-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .candidate-portal__entry-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+    gap: 18px;
+    align-items: stretch;
+    padding: 22px;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 22%, transparent), transparent 42%),
+      linear-gradient(160deg, color-mix(in srgb, var(--surface-elevated) 84%, #121a27), color-mix(in srgb, var(--surface) 84%, #0d1420));
+  }
+
+  .candidate-portal__entry-hero::after {
+    content: '';
+    position: absolute;
+    inset: auto -10% -35% 40%;
+    height: 220px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 18%, transparent), transparent 68%);
+    pointer-events: none;
+  }
+
+  .candidate-portal__summary-card--spotlight {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, var(--surface-elevated)), color-mix(in srgb, var(--surface-elevated) 82%, transparent));
+    border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  }
+
+  .candidate-portal__entry-grid {
+    grid-template-columns: minmax(280px, 0.82fr) minmax(0, 1.18fr);
+  }
+
+  .candidate-portal__entry-timeline {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .candidate-portal__entry-timeline-step {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    padding: 12px 14px;
+    min-height: 86px;
+    border-radius: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .candidate-portal__entry-timeline-step::after {
+    content: '';
+    position: absolute;
+    top: 26px;
+    left: calc(100% - 4px);
+    width: 18px;
+    height: 2px;
+    background: color-mix(in srgb, var(--border) 78%, transparent);
+  }
+
+  .candidate-portal__entry-timeline-step:last-child::after {
+    display: none;
+  }
+
+  .candidate-portal__entry-timeline-step.is-completed {
+    border-color: color-mix(in srgb, var(--success) 44%, var(--border));
+    background: color-mix(in srgb, var(--success) 12%, var(--surface-elevated));
+    color: var(--text);
+  }
+
+  .candidate-portal__entry-timeline-step.is-current {
+    border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
+    color: var(--text);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 24px 50px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
+  .candidate-portal__entry-timeline-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface-elevated) 86%, white);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+  }
+
+  .candidate-portal__entry-timeline-step.is-completed .candidate-portal__entry-timeline-dot {
+    background: color-mix(in srgb, var(--success) 75%, white);
+  }
+
+  .candidate-portal__entry-timeline-step.is-current .candidate-portal__entry-timeline-dot {
+    background: color-mix(in srgb, var(--accent) 76%, white);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .candidate-portal__entry-illustration {
+    position: relative;
+    place-items: center;
+    min-height: 330px;
+    isolation: isolate;
+  }
+
+  .candidate-portal__entry-orbit,
+  .candidate-portal__entry-path,
+  .candidate-portal__entry-briefcase,
+  .candidate-portal__entry-avatar {
+    position: absolute;
+  }
+
+  .candidate-portal__entry-orbit {
+    width: 280px;
+    height: 280px;
+    border-radius: 999px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent);
+    opacity: 0.48;
+    animation: candidate-entry-orbit 14s linear infinite;
+  }
+
+  .candidate-portal__entry-orbit--inner {
+    width: 210px;
+    height: 210px;
+    opacity: 0.6;
+    animation-direction: reverse;
+    animation-duration: 10s;
+  }
+
+  .candidate-portal__entry-path {
+    inset: 50% auto auto 50%;
+    width: 220px;
+    display: flex;
+    justify-content: space-between;
+    transform: translate(-50%, -50%);
+  }
+
+  .candidate-portal__entry-path span {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 76%, white);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 10%, transparent);
+    animation: candidate-entry-pulse 2.8s ease-in-out infinite;
+  }
+
+  .candidate-portal__entry-path span:nth-child(2) { animation-delay: 0.35s; }
+  .candidate-portal__entry-path span:nth-child(3) { animation-delay: 0.7s; }
+
+  .candidate-portal__entry-avatar {
+    width: 104px;
+    gap: 8px;
+    justify-items: center;
+    animation: candidate-entry-float 4.4s ease-in-out infinite;
+  }
+
+  .candidate-portal__entry-avatar--candidate {
+    left: 10%;
+    bottom: 14%;
+  }
+
+  .candidate-portal__entry-avatar--recruiter {
+    right: 10%;
+    top: 16%;
+    animation-delay: 0.6s;
+  }
+
+  .candidate-portal__entry-avatar-head {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, color-mix(in srgb, #ffd8b2 84%, white), #f0b884);
+  }
+
+  .candidate-portal__entry-avatar-body {
+    width: 72px;
+    height: 72px;
+    border-radius: 26px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 20%, var(--accent)), color-mix(in srgb, var(--surface) 34%, #101722));
+    box-shadow: 0 18px 34px rgba(0, 0, 0, 0.16);
+  }
+
+  .candidate-portal__entry-avatar--recruiter .candidate-portal__entry-avatar-body {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--warning) 32%, var(--surface-elevated)), color-mix(in srgb, var(--surface) 24%, #1a2231));
+  }
+
+  .candidate-portal__entry-avatar em {
+    font-style: normal;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+
+  .candidate-portal__entry-briefcase {
+    inset: 50% auto auto 50%;
+    width: 76px;
+    height: 58px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 60%, white), color-mix(in srgb, var(--surface) 74%, #151b25));
+    box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+    transform: translate(-50%, -50%);
+    animation: candidate-entry-float 3.6s ease-in-out infinite;
+  }
+
+  .candidate-portal__entry-briefcase span {
+    position: absolute;
+    inset: 10px 16px auto;
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 62%, white);
+  }
+
+  .candidate-portal__entry-feature-list {
+    gap: 10px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .candidate-portal__entry-feature-list li {
+    position: relative;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+
+  .candidate-portal__entry-feature-list li::before {
+    content: '';
+    position: absolute;
+    top: 0.55rem;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 76%, white);
+  }
+
+  .candidate-portal__entry-option {
+    position: relative;
+    padding: 20px;
+    border-radius: 22px;
+    border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 82%, transparent), color-mix(in srgb, var(--surface) 86%, #0d1420));
+    overflow: hidden;
+    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  }
+
+  .candidate-portal__entry-option:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+    box-shadow: 0 18px 34px rgba(0, 0, 0, 0.14);
+  }
+
+  .candidate-portal__entry-option.is-featured {
+    border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+    box-shadow: 0 22px 42px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .candidate-portal__entry-option-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 14px;
+  }
+
+  .candidate-portal__entry-option-kicker {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 0.84rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .candidate-portal__entry-option-note {
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .candidate-portal__entry-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+
+  .candidate-portal__entry-status.is-ready {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    color: color-mix(in srgb, var(--success) 70%, var(--text));
+  }
+
+  .candidate-portal__entry-status.is-blocked {
+    background: color-mix(in srgb, var(--danger) 14%, transparent);
+    color: color-mix(in srgb, var(--danger) 72%, var(--text));
+  }
+
+  @keyframes candidate-entry-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+
+  @keyframes candidate-entry-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.72; }
+    50% { transform: scale(1.16); opacity: 1; }
+  }
+
+  @keyframes candidate-entry-orbit {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @media (max-width: 959px) {
+    .candidate-portal__entry-hero,
+    .candidate-portal__entry-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .candidate-portal__entry-illustration {
+      min-height: 260px;
+      order: -1;
+    }
+
+    .candidate-portal__entry-timeline {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 640px) {
+    .candidate-portal__entry-hero,
+    .candidate-portal__entry-option {
+      padding: 16px;
+    }
+
+    .candidate-portal__entry-illustration {
+      min-height: 210px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .candidate-portal__entry-avatar,
+    .candidate-portal__entry-briefcase,
+    .candidate-portal__entry-orbit,
+    .candidate-portal__entry-path span,
+    .candidate-portal__entry-option {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+`
+
 export function CandidateStartPage() {
   const { token } = useParams({ strict: false }) as { token?: string }
   const navigate = useNavigate()
@@ -46,6 +427,67 @@ export function CandidateStartPage() {
     () => (recoveryEntryToken ? `/candidate/start?entry=${encodeURIComponent(recoveryEntryToken)}` : '/candidate/start'),
     [recoveryEntryToken],
   )
+  const entryJourneyPreview = useMemo(() => {
+    if (!entryGateway) return []
+    const currentStep = String(entryGateway.journey.current_step || '').trim()
+    const order = ['profile', 'screening', 'slot_selection', 'status'] as const
+    const labels: Record<string, string> = {
+      profile: 'Анкета',
+      screening: 'Тест 1',
+      slot_selection: 'Слот',
+      status: 'Диалог',
+    }
+    const currentIndex = Math.max(order.indexOf(currentStep as (typeof order)[number]), 0)
+    return order.map((key, index) => ({
+      key,
+      label: labels[key] || key,
+      state:
+        index < currentIndex ? 'completed' : index === currentIndex ? 'current' : 'pending',
+    }))
+  }, [entryGateway])
+  const entryChannelCards = useMemo(() => {
+    if (!entryGateway) return []
+    return (['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
+      const option = entryGateway.options[channel]
+      return {
+        channel,
+        option,
+        title:
+          channel === 'web'
+            ? 'Веб-кабинет'
+            : channel === 'max'
+              ? 'MAX Messenger'
+              : 'Telegram',
+        kicker:
+          channel === 'web'
+            ? 'Рекомендуем для прохождения этапов'
+            : channel === 'max'
+              ? 'Продолжение через MAX'
+              : 'Продолжение через Telegram',
+        body:
+          channel === 'web'
+            ? 'Пройти Test 1, записаться на слот, читать информацию о компании и общаться с рекрутером в одном кабинете.'
+            : 'Запускает тот же путь через бот и возвращает вас в тот же кабинет без потери прогресса.',
+        note:
+          channel === 'web'
+            ? 'Самый устойчивый путь для анкеты, теста и записи на собеседование.'
+            : 'Подходит, если удобнее получать напоминания и продолжать диалог в мессенджере.',
+        accent:
+          channel === 'web'
+            ? 'web'
+            : channel === 'max'
+              ? 'max'
+              : 'telegram',
+        cta:
+          channel === 'web'
+            ? 'Открыть кабинет'
+            : channel === 'max'
+              ? 'Продолжить в MAX'
+              : 'Продолжить в Telegram',
+        statusLabel: option?.enabled ? 'Готово' : 'Недоступно',
+      }
+    })
+  }, [entryGateway])
 
   useEffect(() => {
     let cancelled = false
@@ -187,6 +629,7 @@ export function CandidateStartPage() {
 
   return (
     <div className="candidate-portal">
+      <style>{ENTRY_CHOOSER_STYLES}</style>
       <div className="candidate-portal__loader">
         <div className="glass glass--elevated candidate-portal__card">
           <div className="candidate-portal__eyebrow">Candidate Portal</div>
@@ -218,55 +661,107 @@ export function CandidateStartPage() {
           </p>
           {error ? <p className="candidate-portal__error">{error}</p> : null}
           {entryGateway ? (
-            <div className="candidate-portal__section-stack" style={{ marginTop: 18, textAlign: 'left' }}>
-              <div className="candidate-portal__summary-grid" aria-label="Входной контекст">
-                <article className="glass candidate-portal__summary-card">
-                  <div className="candidate-portal__summary-label">Кандидат</div>
-                  <div className="candidate-portal__summary-value">{entryGateway.candidate.fio || 'Кандидат'}</div>
-                  <div className="candidate-portal__summary-meta">{entryGateway.candidate.city || 'Город уточняется'}</div>
-                </article>
-                <article className="glass candidate-portal__summary-card">
-                  <div className="candidate-portal__summary-label">Вакансия</div>
-                  <div className="candidate-portal__summary-value">{entryGateway.candidate.vacancy_label || 'Вакансия уточняется'}</div>
-                  <div className="candidate-portal__summary-meta">{entryGateway.candidate.company || 'Компания'}</div>
-                </article>
-                <article className="glass candidate-portal__summary-card">
-                  <div className="candidate-portal__summary-label">Этап</div>
-                  <div className="candidate-portal__summary-value">{entryGateway.journey.current_step_label || 'В обработке'}</div>
-                  <div className="candidate-portal__summary-meta">{entryGateway.journey.status_label || 'Статус обновляется автоматически'}</div>
-                </article>
-              </div>
+            <div className="candidate-portal__section-stack candidate-portal__entry-stack" style={{ marginTop: 18, textAlign: 'left' }}>
+              <section className="glass candidate-portal__entry-hero">
+                <div className="candidate-portal__entry-copy">
+                  <div className="candidate-portal__entry-badges">
+                    <span className="candidate-portal__summary-tag">Новый шаг найма</span>
+                    <span className="candidate-portal__summary-tag">Прогресс сохранится автоматически</span>
+                    <span className="candidate-portal__summary-tag">Можно переключать канал позже</span>
+                  </div>
+                  <div className="candidate-portal__summary-grid" aria-label="Входной контекст">
+                    <article className="glass candidate-portal__summary-card candidate-portal__summary-card--spotlight">
+                      <div className="candidate-portal__summary-label">Кандидат</div>
+                      <div className="candidate-portal__summary-value">{entryGateway.candidate.fio || 'Кандидат'}</div>
+                      <div className="candidate-portal__summary-meta">{entryGateway.candidate.city || 'Город уточняется'}</div>
+                    </article>
+                    <article className="glass candidate-portal__summary-card">
+                      <div className="candidate-portal__summary-label">Вакансия</div>
+                      <div className="candidate-portal__summary-value">{entryGateway.candidate.vacancy_label || 'Вакансия уточняется'}</div>
+                      <div className="candidate-portal__summary-meta">{entryGateway.candidate.company || 'Компания'}</div>
+                    </article>
+                    <article className="glass candidate-portal__summary-card">
+                      <div className="candidate-portal__summary-label">Текущий этап</div>
+                      <div className="candidate-portal__summary-value">{entryGateway.journey.current_step_label || 'В обработке'}</div>
+                      <div className="candidate-portal__summary-meta">{entryGateway.journey.status_label || 'Статус обновляется автоматически'}</div>
+                    </article>
+                  </div>
 
-              {entryGateway.company_preview?.summary ? (
-                <div className="candidate-portal__resource-card">
-                  <strong>Что дальше</strong>
-                  <p>{entryGateway.company_preview.summary}</p>
-                  <div className="candidate-portal__summary-tags">
-                    {(entryGateway.company_preview.highlights || []).map((item) => (
-                      <span key={item} className="candidate-portal__summary-tag">{item}</span>
+                  <div className="candidate-portal__entry-timeline" aria-label="Путь кандидата">
+                    {entryJourneyPreview.map((item) => (
+                      <div key={item.key} className={`candidate-portal__entry-timeline-step is-${item.state}`}>
+                        <span className="candidate-portal__entry-timeline-dot" />
+                        <span>{item.label}</span>
+                      </div>
                     ))}
                   </div>
                 </div>
-              ) : null}
 
-              <div className="candidate-portal__resource-list">
-                {(['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
-                  const option = entryGateway.options[channel]
-                  const title =
-                    channel === 'web' ? 'Продолжить в Web' : channel === 'max' ? 'Продолжить в MAX' : 'Продолжить в Telegram'
-                  return (
-                    <div key={channel} className="candidate-portal__resource-card">
-                      <div className="candidate-portal__message-head">
-                        <strong>{title}</strong>
-                        <span className="candidate-portal__message-channel">
-                          {option?.enabled ? 'ready' : 'blocked'}
+                <div className="candidate-portal__entry-illustration" aria-hidden="true">
+                  <div className="candidate-portal__entry-orbit candidate-portal__entry-orbit--outer" />
+                  <div className="candidate-portal__entry-orbit candidate-portal__entry-orbit--inner" />
+                  <div className="candidate-portal__entry-path">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <div className="candidate-portal__entry-avatar candidate-portal__entry-avatar--candidate">
+                    <span className="candidate-portal__entry-avatar-head" />
+                    <span className="candidate-portal__entry-avatar-body" />
+                    <em>Вы</em>
+                  </div>
+                  <div className="candidate-portal__entry-briefcase">
+                    <span />
+                  </div>
+                  <div className="candidate-portal__entry-avatar candidate-portal__entry-avatar--recruiter">
+                    <span className="candidate-portal__entry-avatar-head" />
+                    <span className="candidate-portal__entry-avatar-body" />
+                    <em>Команда</em>
+                  </div>
+                </div>
+              </section>
+
+              <div className="candidate-portal__entry-grid">
+                <aside className="candidate-portal__entry-side">
+                  <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
+                    <strong>Что будет доступно в кабинете</strong>
+                    <ul className="candidate-portal__entry-feature-list">
+                      <li>Пройти анкету и Test 1 без потери прогресса</li>
+                      <li>Выбрать свободный слот и подтвердить собеседование</li>
+                      <li>Написать рекрутеру и увидеть ответ в одном месте</li>
+                      <li>Проверить этап найма и прочитать информацию о компании</li>
+                    </ul>
+                  </div>
+                  {entryGateway.company_preview?.summary ? (
+                    <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
+                      <strong>Что дальше</strong>
+                      <p>{entryGateway.company_preview.summary}</p>
+                      <div className="candidate-portal__summary-tags">
+                        {(entryGateway.company_preview.highlights || []).map((item) => (
+                          <span key={item} className="candidate-portal__summary-tag">{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </aside>
+
+                <div className="candidate-portal__entry-channels">
+                  {entryChannelCards.map(({ channel, option, title, kicker, body, note, accent, cta, statusLabel }) => (
+                    <div
+                      key={channel}
+                      className={`candidate-portal__entry-option candidate-portal__entry-option--${accent} ${channel === 'web' ? 'is-featured' : ''}`}
+                    >
+                      <div className="candidate-portal__entry-option-head">
+                        <div>
+                          <div className="candidate-portal__entry-option-kicker">{kicker}</div>
+                          <strong>{title}</strong>
+                        </div>
+                        <span className={`candidate-portal__entry-status ${option?.enabled ? 'is-ready' : 'is-blocked'}`}>
+                          {statusLabel}
                         </span>
                       </div>
-                      <p>
-                        {channel === 'web'
-                          ? 'Открывает основной кабинет кандидата в браузере.'
-                          : 'Запускает тот же процесс через бот и ведёт в тот же кабинет.'}
-                      </p>
+                      <p>{body}</p>
+                      <div className="candidate-portal__entry-option-note">{note}</div>
                       {option?.reason_if_blocked ? (
                         <p className="candidate-portal__helper">{option.reason_if_blocked}</p>
                       ) : null}
@@ -277,12 +772,12 @@ export function CandidateStartPage() {
                           disabled={!option?.enabled || entryPendingChannel !== null}
                           onClick={() => handleSelectEntryChannel(channel)}
                         >
-                          {entryPendingChannel === channel ? 'Открываю…' : title}
+                          {entryPendingChannel === channel ? 'Открываю…' : cta}
                         </button>
                       </div>
                     </div>
-                  )
-                })}
+                  ))}
+                </div>
               </div>
             </div>
           ) : null}

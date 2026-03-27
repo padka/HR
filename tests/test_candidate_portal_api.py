@@ -380,6 +380,44 @@ def test_candidate_entry_gateway_resolves_web_and_records_selection(monkeypatch)
     assert "web" in payload_meta["available_channels_snapshot"]
 
 
+def test_candidate_entry_select_accepts_query_and_form_fallback(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+
+        async def _build_entry_token() -> str:
+            async with async_session() as session:
+                candidate = await session.get(User, int(seeded["candidate_id"]))
+                assert candidate is not None
+                journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+                await session.commit()
+                return sign_candidate_portal_hh_entry_token(
+                    candidate_uuid=str(seeded["candidate_uuid"]),
+                    journey_session_id=int(journey.id),
+                    session_version=int(journey.session_version or 1),
+                )
+
+        entry_token = asyncio.run(_build_entry_token())
+
+        select_response = client.post(
+            f"/api/candidate/entry/select?entry={entry_token}&channel=web",
+            data={"entry_token": entry_token, "channel": "web"},
+        )
+
+    assert select_response.status_code == 200
+    select_payload = select_response.json()
+    assert select_payload["channel"] == "web"
+    assert select_payload["recorded"] is True
+    assert "candidate/start" in str(select_payload["launch"]["url"])
+
+
 def test_candidate_entry_gateway_remains_valid_after_portal_session_version_bump(monkeypatch):
     _configure_env(monkeypatch)
     settings_module.get_settings.cache_clear()

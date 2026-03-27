@@ -369,9 +369,15 @@ export const resolveCandidateEntryGateway = async (entryToken: string) => {
 }
 
 export const selectCandidateEntryChannel = async (entryToken: string, channel: CandidateEntryChannel) =>
-  await candidateFetch<CandidateEntrySelectResponse>('/entry/select', {
+  await candidateFetch<CandidateEntrySelectResponse>(`/entry/select?${new URLSearchParams({
+    entry: entryToken,
+    channel,
+  }).toString()}`, {
     method: 'POST',
-    json: { entry_token: entryToken, channel },
+    body: new URLSearchParams({
+      entry_token: entryToken,
+      channel,
+    }),
     skipStoredPortalToken: true,
   })
 

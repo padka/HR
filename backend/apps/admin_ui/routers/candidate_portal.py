@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.apps.admin_ui.security import get_client_ip, limiter
 from backend.core.audit import log_audit_action
@@ -93,6 +94,50 @@ class CandidatePortalMessagePayload(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+
+async def _candidate_entry_select_payload(request: Request) -> CandidateEntrySelectPayload:
+    query_data = {
+        "entry_token": (request.query_params.get("entry_token") or request.query_params.get("entry") or "").strip(),
+        "channel": (request.query_params.get("channel") or "").strip(),
+    }
+    body_data: dict[str, Any] = {}
+    raw_body = await request.body()
+    if raw_body:
+        content_type = (request.headers.get("content-type") or "").lower()
+        if "application/json" in content_type:
+            try:
+                parsed = json.loads(raw_body.decode("utf-8"))
+            except Exception:
+                parsed = {}
+            if isinstance(parsed, dict):
+                body_data = parsed
+        elif (
+            "application/x-www-form-urlencoded" in content_type
+            or "multipart/form-data" in content_type
+        ):
+            try:
+                form = await request.form()
+            except Exception:
+                form = None
+            if form is not None:
+                body_data = dict(form)
+    merged = {
+        "entry_token": str(
+            body_data.get("entry_token")
+            or body_data.get("entry")
+            or query_data["entry_token"]
+            or ""
+        ).strip(),
+        "channel": str(body_data.get("channel") or query_data["channel"] or "").strip(),
+    }
+    try:
+        return CandidateEntrySelectPayload.model_validate(merged)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
 
 
 def _request_portal_token(request: Request) -> str:
@@ -475,7 +520,8 @@ async def resolve_candidate_entry_gateway(entry: str) -> dict[str, Any]:
 
 @router.post("/entry/select")
 @limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
-async def select_candidate_entry_channel(request: Request, payload: CandidateEntrySelectPayload) -> dict[str, Any]:
+async def select_candidate_entry_channel(request: Request) -> dict[str, Any]:
+    payload = await _candidate_entry_select_payload(request)
     try:
         async with async_session() as session:
             async with session.begin():

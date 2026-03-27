@@ -288,7 +288,7 @@ describe('CandidateStartPage', () => {
     await waitFor(() => {
       expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
       expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Продолжить в Web' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Продолжить в MAX' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Продолжить в Telegram' })).toBeInTheDocument()
       expect(screen.getByText('telegram_entry_blocked')).toBeInTheDocument()
