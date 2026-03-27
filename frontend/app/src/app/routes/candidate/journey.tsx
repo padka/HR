@@ -14,6 +14,7 @@ import {
   saveCandidatePortalProfile,
   saveCandidatePortalScreeningDraft,
   sendCandidatePortalMessage,
+  switchCandidateEntryChannel,
   type CandidateEntryChannel,
   type CandidatePortalJourneyResponse,
   type CandidatePortalQuestion,
@@ -21,6 +22,7 @@ import {
 } from '@/api/candidate'
 import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
 import { ensureCandidateWebAppBridge, markCandidateWebAppReady } from './webapp'
+import { navigateToCandidateLaunch } from './launch'
 import '../candidate-portal.css'
 
 const JOURNEY_QUERY_KEY = ['candidate-portal-journey']
@@ -189,6 +191,7 @@ export function CandidateJourneyPage() {
   const [messageText, setMessageText] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [pendingSlotId, setPendingSlotId] = useState<number | null>(null)
+  const [pendingChannel, setPendingChannel] = useState<CandidateEntryChannel | null>(null)
   const [supportMessage, setSupportMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -321,6 +324,28 @@ export function CandidateJourneyPage() {
     onError: setMutationError,
   })
 
+  const switchChannelMutation = useMutation({
+    mutationFn: switchCandidateEntryChannel,
+    onSuccess: (_, channel) => {
+      setLocalError(null)
+      queryClient.setQueryData(
+        JOURNEY_QUERY_KEY,
+        (current: CandidatePortalJourneyResponse | undefined) =>
+          current
+            ? {
+                ...current,
+                journey: {
+                  ...current.journey,
+                  entry_channel: channel,
+                  last_entry_channel: channel,
+                },
+              }
+            : current,
+      )
+    },
+    onError: setMutationError,
+  })
+
   const logoutMutation = useMutation({
     mutationFn: logoutCandidatePortalSession,
     onSuccess: async () => {
@@ -384,14 +409,28 @@ export function CandidateJourneyPage() {
     setActiveTab(resolveCabinetTab(primaryAction?.target))
   }
 
-  const handleOpenChannel = (channel: CandidateEntryChannel) => {
+  const handleOpenChannel = async (channel: CandidateEntryChannel) => {
     const option = channelOptions[channel]
     const launchUrl = String(option?.launch_url || '').trim()
     if (!launchUrl) {
       setLocalError(option?.reason_if_blocked || 'Новый канал пока недоступен. Попросите рекрутера переотправить доступ.')
       return
     }
-    window.location.assign(launchUrl)
+    setLocalError(null)
+    setPendingChannel(channel)
+    try {
+      const result = await switchChannelMutation.mutateAsync(channel)
+      const nextUrl = String(result?.launch?.url || launchUrl).trim()
+      if (!nextUrl) {
+        setLocalError('Не удалось открыть новый канал. Попросите рекрутера переотправить доступ.')
+        return
+      }
+      navigateToCandidateLaunch(nextUrl)
+    } catch {
+      // Error is normalized in onError.
+    } finally {
+      setPendingChannel(null)
+    }
   }
 
   const renderProfileForm = () => (
@@ -1052,11 +1091,13 @@ export function CandidateJourneyPage() {
                   key={channel}
                   type="button"
                   className={`ui-btn ${channel === 'web' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
-                  disabled={!option?.enabled}
-                  onClick={() => handleOpenChannel(channel)}
+                  disabled={!option?.enabled || Boolean(pendingChannel && pendingChannel !== channel)}
+                  onClick={() => {
+                    void handleOpenChannel(channel)
+                  }}
                   title={option?.reason_if_blocked || undefined}
                 >
-                  {label}
+                  {pendingChannel === channel ? 'Открываю…' : label}
                 </button>
               )
             })}

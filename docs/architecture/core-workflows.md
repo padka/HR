@@ -71,6 +71,7 @@ sequenceDiagram
 - Browser entry uses the signed portal token directly. MAX mini-app entry uses a separate URL-safe launch token that resolves to the same candidate journey contract.
 - The portal token remains the source of truth for browser recovery; native app entry only changes the launch surface, not the journey/session invariants.
 - The selected HH entry channel is stored in `CandidateJourneySession.payload_json` as `entry_source`, `last_entry_channel`, `last_entry_channel_selected_at` and `entry_channel_history`. This does not create a second journey or change slot/status invariants.
+- The same persistence contract is used when the candidate switches launcher from inside `/candidate/journey`: the cabinet records the new `last_entry_channel` before redirecting to the selected Web/MAX/Telegram launcher.
 
 ### Product Contract
 - The web cabinet is the primary candidate UX and state surface. MAX, Telegram and future channels only deliver entry packages, reminders and mirrored notifications.

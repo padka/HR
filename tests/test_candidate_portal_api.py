@@ -412,6 +412,47 @@ def test_candidate_portal_journey_can_be_restored_from_resume_cookie_after_brows
     assert payload["journey"]["current_step"] == "profile"
 
 
+def test_candidate_portal_entry_switch_updates_last_entry_channel_inside_cabinet(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+        token = sign_candidate_portal_token(
+            candidate_uuid=str(seeded["candidate_uuid"]),
+            entry_channel="admin",
+            source_channel="admin",
+        )
+        exchange = client.post("/api/candidate/session/exchange", json={"token": token})
+        assert exchange.status_code == 200
+
+        switch = client.post("/api/candidate/entry/switch", json={"channel": "web"})
+
+    assert switch.status_code == 200
+    switch_payload = switch.json()
+    assert switch_payload["channel"] == "web"
+    assert switch_payload["recorded"] is True
+    assert switch_payload["delivery_status"]["source"] == "cabinet"
+
+    async def _load_payload() -> dict[str, object]:
+        async with async_session() as session:
+            candidate = await session.get(User, int(seeded["candidate_id"]))
+            assert candidate is not None
+            journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+            assert journey is not None
+            return dict(journey.payload_json or {})
+
+    payload_meta = asyncio.run(_load_payload())
+    assert payload_meta["entry_source"] == "cabinet"
+    assert payload_meta["last_entry_channel"] == "web"
+    assert "web" in payload_meta["available_channels_snapshot"]
+
+
 def test_candidate_portal_journey_returns_recoverable_state_without_bootstrap(monkeypatch):
     _configure_env(monkeypatch)
     settings_module.get_settings.cache_clear()

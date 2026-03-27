@@ -181,6 +181,7 @@ flowchart TD
 - Cabinet UX is channel-agnostic: candidate copy should refer to a fresh link from the recruiter, not require a specific messenger.
 - Messages written from recruiter CRM must appear in the candidate web inbox even when no external messenger binding exists.
 - The cabinet can now expose lightweight launchers for `web`, `MAX` and `Telegram` from the same journey payload. Switching launcher must not create a second candidate flow or split slot/message history.
+- Launcher switching from inside the cabinet goes through a session-authenticated mutation first, so `last_entry_channel` is persisted before the browser opens the next launcher.
 
 ## System Delivery Flow
 

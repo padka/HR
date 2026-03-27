@@ -374,6 +374,12 @@ export const selectCandidateEntryChannel = async (entryToken: string, channel: C
     skipStoredPortalToken: true,
   })
 
+export const switchCandidateEntryChannel = async (channel: CandidateEntryChannel) =>
+  await candidateFetch<CandidateEntrySelectResponse>('/entry/switch', {
+    method: 'POST',
+    json: { channel },
+  })
+
 export const saveCandidatePortalProfile = async (payload: {
   fio: string
   phone: string

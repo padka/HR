@@ -51,8 +51,9 @@ describe('CandidateJourneyPage', () => {
     })
 
     useMutationMock.mockImplementation(() => ({
-      mutate: vi.fn(),
-      isPending: false,
+        mutate: vi.fn(),
+        mutateAsync: vi.fn(),
+        isPending: false,
     }))
 
     useQueryMock.mockReturnValue({
@@ -156,6 +157,31 @@ describe('CandidateJourneyPage', () => {
           next_step_at: '2026-03-19T10:00:00.000Z',
           next_step_timezone: 'Europe/Moscow',
           entry_channel: 'max',
+          last_entry_channel: 'max',
+          available_channels: ['web', 'max', 'telegram'],
+          channel_options: {
+            web: {
+              channel: 'web',
+              enabled: true,
+              launch_url: 'https://crm.example.test/candidate/start?start=web-token',
+              type: 'cabinet',
+              requires_bot_start: false,
+            },
+            max: {
+              channel: 'max',
+              enabled: true,
+              launch_url: 'https://max.example.test/start',
+              type: 'external',
+              requires_bot_start: true,
+            },
+            telegram: {
+              channel: 'telegram',
+              enabled: true,
+              launch_url: 'https://t.me/example_bot?start=invite',
+              type: 'external',
+              requires_bot_start: true,
+            },
+          },
           steps: [
             { key: 'profile', label: 'Профиль', status: 'completed' },
             { key: 'screening', label: 'Анкета', status: 'in_progress' },
@@ -207,6 +233,9 @@ describe('CandidateJourneyPage', () => {
     expect(screen.getByRole('button', { name: 'Сообщения' })).toBeInTheDocument()
     expect(screen.getByText('Что нужно сделать сейчас')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Завершить анкету' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Web cabinet' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Открыть в MAX' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Открыть в Telegram' })).toBeInTheDocument()
     expect(screen.getByText('Компания')).toBeInTheDocument()
     expect(screen.getByText('SMART SERVICE')).toBeInTheDocument()
     expect(screen.getByText(/отбор в SMART SERVICE/i)).toBeInTheDocument()
