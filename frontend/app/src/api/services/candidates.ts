@@ -98,7 +98,17 @@ export type CandidateChannelHealth = {
     author?: string | null
     text?: string | null
   } | null
+  last_portal_access_delivery?: {
+    channel?: string | null
+    status?: string | null
+    delivery_stage?: string | null
+    error?: string | null
+    created_at?: string | null
+    author?: string | null
+    text?: string | null
+  } | null
   portal_public_url?: string | null
+  public_link?: string | null
   portal_entry_ready?: boolean
   max_entry_ready?: boolean
   token_valid?: boolean | null
@@ -647,6 +657,7 @@ export function fetchCandidateChannelHealth(candidateId: number) {
     telegram_linked: Boolean(payload.telegram?.linked),
     max_linked: Boolean(payload.max?.linked),
     last_outbound_delivery: payload.last_outbound ?? null,
+    last_portal_access_delivery: payload.last_portal_access_delivery ?? null,
     conflict_badge: Boolean(payload.active_invite?.conflict),
   }))
 }

@@ -258,12 +258,15 @@ export function CandidateDetailPage() {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(maxLink)
+            const deliveryError = String(payload?.delivery?.error || '').trim()
             setActionMessage(
               payload?.delivery?.sent
                 ? (payload?.invite?.rotated
                   ? 'MAX-ссылка обновлена, скопирована и отправлена кандидату'
                   : 'MAX-ссылка скопирована и отправлена кандидату')
-                : 'Ссылка подготовлена и скопирована. Отправка в MAX пропущена, используйте browser link.',
+                : deliveryError
+                  ? `Ссылка скопирована. MAX ответил ошибкой: ${deliveryError}`
+                  : 'Ссылка подготовлена и скопирована. Отправка в MAX пропущена, используйте browser link.',
             )
             return
           }
@@ -276,6 +279,16 @@ export function CandidateDetailPage() {
         setActionMessage((error as Error).message)
       },
     })
+  }
+
+  const handleOpenMaxPortal = () => {
+    const maxPortalLink = String(channelHealth?.mini_app_link || channelHealth?.public_link || '').trim()
+    if (!maxPortalLink) {
+      setActionMessage('MAX entry link пока недоступен. Сначала переотправьте ссылку.')
+      return
+    }
+    window.open(maxPortalLink, '_blank', 'noopener,noreferrer')
+    setActionMessage(channelHealth?.mini_app_link ? 'MAX mini app открыт в новой вкладке' : 'Открыт публичный MAX bot link')
   }
 
   const handleOpenBrowserPortal = () => {
@@ -389,6 +402,7 @@ export function CandidateDetailPage() {
                     }}
                     onCopyMaxLink={handleCopyMaxLink}
                     onRestartPortal={handleRestartPortal}
+                    onOpenMaxPortal={handleOpenMaxPortal}
                     onOpenBrowserPortal={handleOpenBrowserPortal}
                     onScheduleSlot={() => setShowScheduleSlotModal(true)}
                     onScheduleIntroDay={() => setShowScheduleIntroDayModal(true)}

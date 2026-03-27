@@ -339,6 +339,8 @@ async def test_generate_max_link(admin_app) -> None:
     assert channel_health.status_code == 200
     channel_payload = channel_health.json()
     assert "token" not in (channel_payload.get("active_invite") or {})
+    assert channel_payload["public_link"] == "https://max.ru/recruitsmartbot"
+    assert channel_payload["last_portal_access_delivery"] is None
 
     async with async_session() as session:
         audit_rows = (

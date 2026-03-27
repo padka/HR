@@ -177,14 +177,26 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
             .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(1)
         )
-        last_outbound = await session.scalar(
-            select(ChatMessage)
-            .where(
-                ChatMessage.candidate_id == candidate_id,
-                ChatMessage.direction == ChatMessageDirection.OUTBOUND.value,
+        recent_outbound = (
+            await session.scalars(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.candidate_id == candidate_id,
+                    ChatMessage.direction == ChatMessageDirection.OUTBOUND.value,
+                )
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(12)
             )
-            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-            .limit(1)
+        ).all()
+        last_outbound = recent_outbound[0] if recent_outbound else None
+        last_portal_access = next(
+            (
+                message
+                for message in recent_outbound
+                if isinstance(message.payload_json, dict)
+                and str(message.payload_json.get("kind") or "").strip() == "portal_access_package"
+            ),
+            None,
         )
         active_journey = await session.scalar(
             select(CandidateJourneySession)
@@ -251,7 +263,9 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "active_invite": _serialize_invite(latest_invite, candidate=candidate),
         "last_inbound_at": _iso(last_inbound_at),
         "last_outbound": _serialize_outbound_message(last_outbound),
+        "last_portal_access_delivery": _serialize_outbound_message(last_portal_access),
         "portal_public_url": portal_status.get("url"),
+        "public_link": str(max_status.get("url") or "").strip() or None,
         "portal_entry_ready": bool(portal_status.get("ready")),
         "max_entry_ready": bool(max_status.get("ready")),
         "token_valid": max_status.get("token_valid"),

@@ -36,6 +36,7 @@ type CandidateActionsProps = {
   onOpenInsights: () => void
   onCopyMaxLink: () => void
   onRestartPortal: () => void
+  onOpenMaxPortal: () => void
   onOpenBrowserPortal: () => void
   onScheduleSlot: () => void
   onScheduleIntroDay: () => void
@@ -56,6 +57,7 @@ export function CandidateActions({
   onOpenInsights,
   onCopyMaxLink,
   onRestartPortal,
+  onOpenMaxPortal,
   onOpenBrowserPortal,
   onScheduleSlot,
   onScheduleIntroDay,
@@ -78,8 +80,16 @@ export function CandidateActions({
     || channelHealth?.last_outbound_delivery?.status
     || null
   const lastOutboundError = channelHealth?.last_outbound_delivery?.error || null
+  const lastPortalAccessStatus =
+    channelHealth?.last_portal_access_delivery?.delivery_stage
+    || channelHealth?.last_portal_access_delivery?.status
+    || null
+  const lastPortalAccessError = channelHealth?.last_portal_access_delivery?.error || null
+  const lastPortalAccessAt = channelHealth?.last_portal_access_delivery?.created_at || null
   const activeInvite = channelHealth?.active_invite || null
+  const publicLink = channelHealth?.public_link || null
   const browserLink = channelHealth?.browser_link || null
+  const miniAppLink = channelHealth?.mini_app_link || null
   const configErrors = channelHealth?.config_errors || []
   const restartAllowed = channelHealth?.restart_allowed !== false
   const deliveryReady = channelHealth?.delivery_ready !== false
@@ -241,6 +251,11 @@ export function CandidateActions({
                 send: {lastOutboundStatus}
               </span>
             ) : null}
+            {lastPortalAccessStatus ? (
+              <span className={`status-badge ${lastPortalAccessStatus === 'sent' ? 'status-badge--success' : 'status-badge--warning'}`}>
+                portal package: {lastPortalAccessStatus}
+              </span>
+            ) : null}
           </div>
 
           <div style={{ marginTop: 10 }}>
@@ -281,6 +296,16 @@ export function CandidateActions({
                 {lastOutboundError}
               </p>
             ) : null}
+            {lastPortalAccessAt ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last portal package: {new Date(lastPortalAccessAt).toLocaleString('ru-RU')}
+              </p>
+            ) : null}
+            {lastPortalAccessError ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                portal package error: {lastPortalAccessError}
+              </p>
+            ) : null}
             {deliveryBlockReason ? (
               <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
                 MAX delivery: {deliveryBlockReason}
@@ -289,6 +314,11 @@ export function CandidateActions({
             {configErrors.length > 0 ? (
               <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
                 {configErrors.join(' · ')}
+              </p>
+            ) : null}
+            {(miniAppLink || publicLink) ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                live MAX entry готов для ручного smoke из админки.
               </p>
             ) : null}
             {!channelHealth.max_entry_ready && browserLink ? (
@@ -307,6 +337,14 @@ export function CandidateActions({
               title={!canReissuePortalAccess ? deliveryBlockReason || 'Публичный вход в кабинет не готов' : undefined}
             >
               {maxLinkPending ? 'Отправляем…' : reissueLabel}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={onOpenMaxPortal}
+              disabled={!miniAppLink && !publicLink}
+            >
+              Открыть MAX mini app
             </button>
             <button
               type="button"

@@ -463,8 +463,9 @@ const candidateChannelHealthData = {
   max_link_base_resolved: false,
   max_link_base_source: 'missing',
   portal_public_url: 'https://crm.example.test',
+  public_link: 'https://max.ru/id312260558067_bot',
   browser_link: 'https://crm.example.test/candidate/start?start=signed-token',
-  mini_app_link: null,
+  mini_app_link: 'https://max.ru/id312260558067_bot?startapp=launch-token',
   active_journey_id: 401,
   session_version: 3,
   last_link_issued_at: '2031-07-01T08:45:00Z',
@@ -496,6 +497,13 @@ const candidateChannelHealthData = {
     delivery_stage: 'dead_letter',
     error: 'max:invalid_token',
     created_at: '2031-07-01T08:40:00Z',
+  },
+  last_portal_access_delivery: {
+    channel: 'max',
+    status: 'failed',
+    delivery_stage: 'failed',
+    error: "HTTP 404: {'code': 'chat.not.found', 'message': 'Chat 207980776 not found'}",
+    created_at: '2031-07-01T08:45:00Z',
   },
 }
 
@@ -1047,10 +1055,13 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
       expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
+      expect(screen.getByText(/portal package: failed/)).toBeInTheDocument()
       expect(screen.getByText(/delivery: blocked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX delivery: MAX токен отклонён провайдером/)).toBeInTheDocument()
+      expect(screen.getByText(/portal package error: HTTP 404/)).toBeInTheDocument()
       expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Подготовить browser link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть MAX mini app' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть browser link' })).toBeInTheDocument()
     })
   })
