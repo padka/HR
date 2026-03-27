@@ -129,10 +129,11 @@ sequenceDiagram
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
 - When `?entry=` is present, `/candidate/start` becomes an HH chooser, not a direct token exchange screen.
+- Bare `/candidate/start` now stays neutral for brand-new visitors: without an explicit personal token it shows the public candidate landing instead of auto-calling `/api/candidate/journey` and surfacing a false “session expired” state.
 - The HH entry token is durable and is no longer rejected just because the active portal `session_version` changed. Its job is to reopen the chooser and re-issue a fresh launcher for the same candidate journey.
 - The public chooser selection endpoint accepts JSON, query-string, and form-encoded input so browser/webview quirks cannot strand the candidate on the launcher screen with a `422`.
 - Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
-- The browser now keeps a separate long-lived candidate entry token in persistent storage. If a direct cabinet token expires on the same device, the start screen recovers by reopening the chooser instead of asking the candidate to request a new recruiter link.
+- The browser keeps a separate long-lived candidate entry token in persistent storage, but the neutral public start page no longer auto-opens that stored chooser for unrelated visitors. Stored entry recovery is used only as part of an explicit candidate resume path on the same device.
 - Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 

@@ -13,6 +13,7 @@ import {
 import { queryClient } from '@/api/client'
 import {
   clearCandidatePortalAccessToken,
+  readCandidatePortalAccessToken,
   persistCandidatePortalEntryTokenFromUrl,
   readCandidatePortalEntryToken,
   writeCandidatePortalEntryToken,
@@ -414,15 +415,19 @@ export function CandidateStartPage() {
   const [errorState, setErrorState] = useState<string | null>(null)
   const [entryGateway, setEntryGateway] = useState<CandidateEntryGatewayResponse | null>(null)
   const [entryPendingChannel, setEntryPendingChannel] = useState<CandidateEntryChannel | null>(null)
+  const [showGenericLanding, setShowGenericLanding] = useState(false)
+  const [genericNotice, setGenericNotice] = useState<string | null>(null)
+  const [resumeNonce, setResumeNonce] = useState(0)
 
   const entryToken = useMemo(() => {
     if (typeof window === 'undefined') return ''
     return new URLSearchParams(window.location.search).get('entry')?.trim() || ''
   }, [])
-  const recoveryEntryToken = useMemo(
-    () => entryToken || readCandidatePortalEntryToken(),
-    [entryToken],
-  )
+  const locationHasPortalToken = useMemo(() => hasCandidatePortalLocationToken(token), [token])
+  const storedAccessToken = readCandidatePortalAccessToken()
+  const storedEntryToken = readCandidatePortalEntryToken()
+  const hasRecoverableLocalState = Boolean(storedAccessToken || storedEntryToken)
+  const recoveryEntryToken = entryToken || (locationHasPortalToken ? storedEntryToken : '')
   const recoveryEntryUrl = useMemo(
     () => (recoveryEntryToken ? `/candidate/start?entry=${encodeURIComponent(recoveryEntryToken)}` : '/candidate/start'),
     [recoveryEntryToken],
@@ -497,9 +502,21 @@ export function CandidateStartPage() {
       setErrorState(null)
       setEntryGateway(null)
       setEntryPendingChannel(null)
+      setShowGenericLanding(false)
+      setGenericNotice(null)
 
-      const recoverWithEntryToken = async () => {
-        const fallbackEntryToken = entryToken || readCandidatePortalEntryToken()
+      const showNeutralLanding = (notice?: string | null) => {
+        if (cancelled) return
+        clearCandidatePortalAccessToken()
+        setEntryGateway(null)
+        setError(null)
+        setErrorState(null)
+        setShowGenericLanding(true)
+        setGenericNotice(notice || null)
+      }
+
+      const recoverWithEntryToken = async (allowStoredEntryToken = false) => {
+        const fallbackEntryToken = entryToken || (allowStoredEntryToken ? readCandidatePortalEntryToken() : '')
         if (!fallbackEntryToken) return false
         try {
           const payload = await resolveCandidateEntryGateway(fallbackEntryToken)
@@ -529,29 +546,16 @@ export function CandidateStartPage() {
           return
         }
       }
-      if (!hasCandidatePortalLocationToken(token)) {
+      if (!locationHasPortalToken) {
         await ensureCandidateWebAppBridge()
       }
       markCandidateWebAppReady()
       const resolvedToken = resolveCandidatePortalToken(token)
       if (!resolvedToken.token) {
-        try {
-          const payload = await fetchCandidatePortalJourney()
-          if (cancelled) return
-          persistCandidatePortalEntryTokenFromUrl(payload.candidate?.entry_url)
-          queryClient.setQueryData(['candidate-portal-journey'], payload)
-          startTransition(() => {
-            void navigate({ to: '/candidate/journey' })
-          })
-        } catch (fallbackError) {
-          if (cancelled) return
-          if (await recoverWithEntryToken()) {
-            return
-          }
-          const info = parseCandidatePortalError(fallbackError)
-          setError(info?.message || 'Не удалось восстановить доступ автоматически.')
-          setErrorState(info?.state || null)
+        if (resumeNonce > 0 && (await recoverWithEntryToken(true))) {
+          return
         }
+        showNeutralLanding()
         return
       }
       try {
@@ -569,6 +573,7 @@ export function CandidateStartPage() {
         if (status === 401 || status === 422) {
           const initialError = parseCandidatePortalError(err)
           const shouldSkipStoredToken = resolvedToken.direct
+          const allowStoredEntryRecovery = shouldSkipStoredToken || resumeNonce > 0
           if (shouldSkipStoredToken) {
             clearCandidatePortalAccessToken()
           }
@@ -585,7 +590,15 @@ export function CandidateStartPage() {
             return
           } catch (fallbackError) {
             if (cancelled) return
-            if (await recoverWithEntryToken()) {
+            if (await recoverWithEntryToken(allowStoredEntryRecovery)) {
+              return
+            }
+            if (resolvedToken.source === 'storage') {
+              showNeutralLanding(
+                resumeNonce > 0
+                  ? 'На этом устройстве не найден активный кабинет. Откройте персональную ссылку из HH и выберите удобный канал.'
+                  : null,
+              )
               return
             }
             const info = shouldSkipStoredToken ? initialError : parseCandidatePortalError(fallbackError)
@@ -604,7 +617,7 @@ export function CandidateStartPage() {
     return () => {
       cancelled = true
     }
-  }, [entryToken, navigate, token])
+  }, [entryToken, locationHasPortalToken, navigate, resumeNonce, token])
 
   const handleSelectEntryChannel = async (channel: CandidateEntryChannel) => {
     if (!entryToken) return
@@ -627,6 +640,10 @@ export function CandidateStartPage() {
     }
   }
 
+  const handleResumeOnThisDevice = () => {
+    setResumeNonce((current) => current + 1)
+  }
+
   return (
     <div className="candidate-portal">
       <style>{ENTRY_CHOOSER_STYLES}</style>
@@ -636,6 +653,8 @@ export function CandidateStartPage() {
           <h1 className="candidate-portal__title">
             {entryGateway
               ? 'Выберите, где продолжить общение'
+              : showGenericLanding
+                ? 'Начните путь в компании'
               : error
                 ? errorState === 'blocked'
                   ? 'Доступ к кабинету недоступен'
@@ -649,6 +668,8 @@ export function CandidateStartPage() {
           <p className="candidate-portal__subtitle">
             {entryGateway
               ? entryGateway.journey.next_action || 'Можно продолжить в браузере, MAX или Telegram без потери прогресса.'
+              : showGenericLanding
+                ? 'Персональная ссылка из HH или сообщения компании откроет ваш кабинет, где можно пройти тест, выбрать слот и продолжить общение.'
               : error
                 ? errorState === 'blocked'
                   ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
@@ -660,6 +681,131 @@ export function CandidateStartPage() {
                 : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
           </p>
           {error ? <p className="candidate-portal__error">{error}</p> : null}
+          {showGenericLanding ? (
+            <div className="candidate-portal__section-stack candidate-portal__entry-stack" style={{ marginTop: 18, textAlign: 'left' }}>
+              <section className="glass candidate-portal__entry-hero">
+                <div className="candidate-portal__entry-copy">
+                  <div className="candidate-portal__entry-badges">
+                    <span className="candidate-portal__summary-tag">HH как основной вход</span>
+                    <span className="candidate-portal__summary-tag">Web, MAX и Telegram на выбор</span>
+                    <span className="candidate-portal__summary-tag">Прогресс сохранится в одном кабинете</span>
+                  </div>
+                  <div className="candidate-portal__summary-grid" aria-label="Как устроен путь кандидата">
+                    <article className="glass candidate-portal__summary-card candidate-portal__summary-card--spotlight">
+                      <div className="candidate-portal__summary-label">Шаг 1</div>
+                      <div className="candidate-portal__summary-value">Откройте персональную ссылку</div>
+                      <div className="candidate-portal__summary-meta">Ссылка приходит в HH или сообщении от компании.</div>
+                    </article>
+                    <article className="glass candidate-portal__summary-card">
+                      <div className="candidate-portal__summary-label">Шаг 2</div>
+                      <div className="candidate-portal__summary-value">Выберите удобный канал</div>
+                      <div className="candidate-portal__summary-meta">Web, MAX или Telegram запускают один и тот же процесс.</div>
+                    </article>
+                    <article className="glass candidate-portal__summary-card">
+                      <div className="candidate-portal__summary-label">Шаг 3</div>
+                      <div className="candidate-portal__summary-value">Пройдите путь без потери прогресса</div>
+                      <div className="candidate-portal__summary-meta">Анкета, Test 1, слот и чат с рекрутером живут в одном кабинете.</div>
+                    </article>
+                  </div>
+
+                  <div className="candidate-portal__entry-timeline" aria-label="Основные действия">
+                    {[
+                      'Персональная ссылка',
+                      'Анкета и Test 1',
+                      'Выбор слота',
+                      'Диалог с рекрутером',
+                    ].map((label, index) => (
+                      <div
+                        key={label}
+                        className={`candidate-portal__entry-timeline-step ${index === 0 ? 'is-current' : ''}`}
+                      >
+                        <span className="candidate-portal__entry-timeline-dot" />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="candidate-portal__entry-illustration" aria-hidden="true">
+                  <div className="candidate-portal__entry-orbit candidate-portal__entry-orbit--outer" />
+                  <div className="candidate-portal__entry-orbit candidate-portal__entry-orbit--inner" />
+                  <div className="candidate-portal__entry-path">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <div className="candidate-portal__entry-avatar candidate-portal__entry-avatar--candidate">
+                    <span className="candidate-portal__entry-avatar-head" />
+                    <span className="candidate-portal__entry-avatar-body" />
+                    <em>Кандидат</em>
+                  </div>
+                  <div className="candidate-portal__entry-briefcase">
+                    <span />
+                  </div>
+                  <div className="candidate-portal__entry-avatar candidate-portal__entry-avatar--recruiter">
+                    <span className="candidate-portal__entry-avatar-head" />
+                    <span className="candidate-portal__entry-avatar-body" />
+                    <em>Рекрутер</em>
+                  </div>
+                </div>
+              </section>
+
+              <div className="candidate-portal__entry-grid">
+                <aside className="candidate-portal__entry-side">
+                  <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
+                    <strong>Что будет доступно после входа</strong>
+                    <ul className="candidate-portal__entry-feature-list">
+                      <li>Пройти анкету и Test 1 в одном потоке</li>
+                      <li>Записаться на свободный слот собеседования</li>
+                      <li>Получать ответы рекрутера и писать в ответ</li>
+                      <li>Проверять этап найма и информацию о компании</li>
+                    </ul>
+                  </div>
+                  <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
+                    <strong>Важно</strong>
+                    <p>
+                      Эта страница сама по себе не открывает чужой кабинет. Вход в процесс начинается
+                      по персональной ссылке из HH или сообщения компании.
+                    </p>
+                  </div>
+                </aside>
+
+                <div className="candidate-portal__entry-channels">
+                  {[
+                    {
+                      title: 'Веб-кабинет',
+                      kicker: 'Основной и самый устойчивый путь',
+                      note: 'Открывается по персональной ссылке и становится основной точкой работы кандидата.',
+                    },
+                    {
+                      title: 'MAX Messenger',
+                      kicker: 'Мессенджер как launcher',
+                      note: 'Подходит для продолжения в чате, но прогресс всё равно хранится в веб-кабинете.',
+                    },
+                    {
+                      title: 'Telegram',
+                      kicker: 'Альтернативный messenger launcher',
+                      note: 'Уведомления и диалог можно продолжать здесь, не теряя общий путь найма.',
+                    },
+                  ].map((item, index) => (
+                    <div
+                      key={item.title}
+                      className={`candidate-portal__entry-option ${index === 0 ? 'is-featured' : ''}`}
+                    >
+                      <div className="candidate-portal__entry-option-head">
+                        <div>
+                          <div className="candidate-portal__entry-option-kicker">{item.kicker}</div>
+                          <strong>{item.title}</strong>
+                        </div>
+                        <span className="candidate-portal__entry-status is-ready">После персональной ссылки</span>
+                      </div>
+                      <p>{item.note}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {entryGateway ? (
             <div className="candidate-portal__section-stack candidate-portal__entry-stack" style={{ marginTop: 18, textAlign: 'left' }}>
               <section className="glass candidate-portal__entry-hero">
@@ -780,6 +926,23 @@ export function CandidateStartPage() {
                 </div>
               </div>
             </div>
+          ) : null}
+          {showGenericLanding ? (
+            <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>
+              {hasRecoverableLocalState ? (
+                <button className="ui-btn ui-btn--primary" onClick={handleResumeOnThisDevice}>
+                  Продолжить на этом устройстве
+                </button>
+              ) : null}
+              <a className="ui-btn ui-btn--ghost" href="/app/login">
+                Войти для рекрутера
+              </a>
+            </div>
+          ) : null}
+          {showGenericLanding && genericNotice ? (
+            <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
+              {genericNotice}
+            </p>
           ) : null}
           {error ? (
             <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>

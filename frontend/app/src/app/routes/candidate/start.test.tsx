@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CandidateStartPage } from './start'
@@ -107,10 +107,23 @@ describe('CandidateStartPage', () => {
     })
   })
 
-  it('opens existing portal session when token is missing but cookie session exists', async () => {
+  it('shows a neutral candidate entry landing on bare start without tokens', async () => {
     useParamsMock.mockReturnValue({ token: '' })
     window.sessionStorage.clear()
-    fetchCandidatePortalJourneyMock.mockResolvedValue({
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+      expect(fetchCandidatePortalJourneyMock).not.toHaveBeenCalled()
+      expect(exchangeCandidatePortalTokenMock).not.toHaveBeenCalled()
+    })
+  })
+
+  it('continues existing portal session when a stored access token exists', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.setItem('candidate-portal:access-token', 'stored-access-token')
+    exchangeCandidatePortalTokenMock.mockResolvedValue({
       candidate: { id: 1, candidate_id: 'cid' },
       journey: { current_step: 'profile' },
     })
@@ -118,7 +131,7 @@ describe('CandidateStartPage', () => {
     render(<CandidateStartPage />)
 
     await waitFor(() => {
-      expect(fetchCandidatePortalJourneyMock).toHaveBeenCalled()
+      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('stored-access-token')
       expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
     })
   })
@@ -245,6 +258,68 @@ describe('CandidateStartPage', () => {
     })
 
     render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
+      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
+    })
+  })
+
+  it('falls back to the neutral landing when local resume is stale', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.sessionStorage.setItem('candidate-portal:access-token', 'stale-token')
+    exchangeCandidatePortalTokenMock.mockRejectedValue(
+      Object.assign(new Error('Сессия устарела'), { status: 401 }),
+    )
+    fetchCandidatePortalJourneyMock.mockRejectedValue(
+      Object.assign(new Error('Сессия устарела'), { status: 401 }),
+    )
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+      expect(screen.queryByText('Продолжить на этом устройстве')).not.toBeInTheDocument()
+    })
+  })
+
+  it('can reopen the stored HH chooser from the neutral landing on the same device', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.localStorage.setItem('candidate-portal:entry-token', 'hh-entry-token')
+    resolveCandidateEntryGatewayMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        company: 'SMART SERVICE',
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'screening',
+        current_step_label: 'Анкета',
+        status_label: 'Тест 1',
+        next_action: 'Выберите удобный канал, чтобы продолжить.',
+      },
+      company_preview: {
+        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
+      },
+      suggested_channel: 'web',
+      options: {
+        web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
+        max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+        telegram: { channel: 'telegram', enabled: true, launch_url: 'https://t.me/test_bot?start=token', type: 'external' },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить на этом устройстве' }))
 
     await waitFor(() => {
       expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
