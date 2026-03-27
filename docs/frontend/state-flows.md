@@ -109,11 +109,16 @@ sequenceDiagram
   participant Journey as CandidateJourneyPage
 
   Browser->>Start: Open /candidate/start[/token]
-  Start->>Token: resolve token route -> query -> MAX Bridge start_param -> stored token
-  alt token found
+  alt hh entry chooser
+    Start->>API: GET /api/candidate/entry/resolve?entry=signed_hh_entry_token
+    API-->>Start: candidate summary + channel options
+    Start->>API: POST /api/candidate/entry/select
+    API-->>Start: launcher url for web / MAX / Telegram
+  else direct cabinet bootstrap
+    Start->>Token: resolve token route -> query -> MAX Bridge start_param -> stored token
     Start->>API: exchangeCandidatePortalToken(token)
     API-->>Start: journey payload
-  else token missing
+  else resume existing cabinet
     Start->>API: fetchCandidatePortalJourney()
     API-->>Start: journey payload or error
   end
@@ -123,6 +128,7 @@ sequenceDiagram
 
 ### What matters
 - `/candidate/start` is a bridge, not the main experience.
+- When `?entry=` is present, `/candidate/start` becomes an HH chooser, not a direct token exchange screen.
 - Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
 - Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
@@ -174,6 +180,7 @@ flowchart TD
 - `/candidate/start` remains the bootstrap bridge; `/candidate/journey` is the actual cabinet.
 - Cabinet UX is channel-agnostic: candidate copy should refer to a fresh link from the recruiter, not require a specific messenger.
 - Messages written from recruiter CRM must appear in the candidate web inbox even when no external messenger binding exists.
+- The cabinet can now expose lightweight launchers for `web`, `MAX` and `Telegram` from the same journey payload. Switching launcher must not create a second candidate flow or split slot/message history.
 
 ## System Delivery Flow
 

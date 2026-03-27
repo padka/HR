@@ -1,5 +1,11 @@
 import type { Ref } from 'react'
-import type { CandidateAction, CandidateChannelHealth, CandidateDetail, TestSection } from '@/api/services/candidates'
+import type {
+  CandidateAction,
+  CandidateChannelHealth,
+  CandidateDetail,
+  CandidateHHSummary,
+  TestSection,
+} from '@/api/services/candidates'
 import { normalizeConferenceUrl, normalizeTelegramUsername } from '@/shared/utils/normalizers'
 
 const DELIVERY_REASON_LABELS: Record<string, string> = {
@@ -14,6 +20,18 @@ const DELIVERY_REASON_LABELS: Record<string, string> = {
   max_bot_link_base_not_https: 'публичная ссылка MAX бота должна быть HTTPS',
   max_not_linked: 'кандидат ещё не привязан к MAX',
   max_channel_degraded: 'канал MAX сейчас деградирован',
+  telegram_bot_disabled: 'Telegram bot выключен в конфиге',
+  telegram_token_missing: 'не настроен BOT_TOKEN',
+  telegram_profile_unavailable: 'профиль Telegram бота недоступен',
+  telegram_link_base_unresolved: 'не удалось определить публичную ссылку Telegram бота',
+  telegram_entry_blocked: 'Telegram launcher сейчас недоступен',
+  portal_entry_not_ready: 'публичный вход в кабинет не готов',
+  hh_connection_missing: 'не настроено HH-подключение',
+  hh_identity_not_linked: 'кандидат не привязан к HH',
+  hh_negotiation_missing: 'HH negotiation ещё не импортирован',
+  hh_actions_missing: 'HH actions snapshot ещё не загружен',
+  hh_message_action_missing: 'HH не даёт action на отправку сообщения кандидату',
+  candidate_uuid_missing: 'у кандидата отсутствует публичный cabinet id',
 }
 
 function describeDeliveryReason(reason?: string | null) {
@@ -25,17 +43,20 @@ function describeDeliveryReason(reason?: string | null) {
 type CandidateActionsProps = {
   candidate: CandidateDetail
   channelHealth?: CandidateChannelHealth | null
+  hhSummary?: CandidateHHSummary | null
   statusSlug: string | null
   test2Section?: TestSection
   actionPending: boolean
   maxLinkPending: boolean
   restartPending: boolean
+  hhSendPending: boolean
   showInsightsAction?: boolean
   actionsRef?: Ref<HTMLDivElement>
   onOpenChat: () => void
   onOpenInsights: () => void
   onCopyMaxLink: () => void
   onRestartPortal: () => void
+  onSendHhEntryLink: () => void
   onOpenCandidateCabinet: () => void
   onOpenMaxPortal: () => void
   onOpenBrowserPortal: () => void
@@ -47,17 +68,20 @@ type CandidateActionsProps = {
 export function CandidateActions({
   candidate,
   channelHealth,
+  hhSummary,
   statusSlug,
   test2Section,
   actionPending,
   maxLinkPending,
   restartPending,
+  hhSendPending,
   showInsightsAction = false,
   actionsRef,
   onOpenChat,
   onOpenInsights,
   onCopyMaxLink,
   onRestartPortal,
+  onSendHhEntryLink,
   onOpenCandidateCabinet,
   onOpenMaxPortal,
   onOpenBrowserPortal,
@@ -92,6 +116,7 @@ export function CandidateActions({
   const publicLink = channelHealth?.public_link || null
   const browserLink = channelHealth?.browser_link || null
   const miniAppLink = channelHealth?.mini_app_link || null
+  const telegramEntryLink = channelHealth?.telegram_link || null
   const candidateCabinetUrl = candidate.candidate_portal_url || browserLink || publicLink || null
   const configErrors = channelHealth?.config_errors || []
   const restartAllowed = channelHealth?.restart_allowed !== false
@@ -100,6 +125,10 @@ export function CandidateActions({
   const maxLinkBaseSource = channelHealth?.max_link_base_source || null
   const canReissuePortalAccess = Boolean(channelHealth?.portal_entry_ready)
   const reissueLabel = channelHealth?.max_entry_ready ? 'Переотправить ссылку' : 'Подготовить browser link'
+  const hhEntryDelivery = hhSummary?.entry_delivery || null
+  const hhReady = hhEntryDelivery?.ready !== false
+  const hhBlockedReason = describeDeliveryReason(hhEntryDelivery?.blocked_reason || hhEntryDelivery?.last_block_reason)
+  const hhLastSentAt = hhEntryDelivery?.last_sent_at || null
 
   const hasUpcomingSlot = slots.some((slot) => {
     const status = String(slot.status || '').toUpperCase()
@@ -277,6 +306,8 @@ export function CandidateActions({
               portal: {channelHealth.portal_entry_ready ? 'public ready' : 'public blocked'}
               {' · '}
               MAX entry: {channelHealth.max_entry_ready ? 'ready' : 'blocked'}
+              {' · '}
+              TG entry: {channelHealth.telegram_entry_ready ? 'ready' : 'blocked'}
             </p>
             <p className="subtitle" style={{ margin: '4px 0 0' }}>
               delivery: {deliveryReady ? 'ready' : 'blocked'}
@@ -345,6 +376,11 @@ export function CandidateActions({
                 MAX недоступен для live-доставки. Browser link остаётся резервным входом.
               </p>
             ) : null}
+            {telegramEntryLink ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                Telegram launcher готов как альтернативный вход.
+              </p>
+            ) : null}
           </div>
 
           <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
@@ -389,6 +425,81 @@ export function CandidateActions({
               title={!canReissuePortalAccess ? deliveryBlockReason || 'Публичный вход в кабинет не готов' : undefined}
             >
               {restartPending ? 'Перезапускаем…' : 'Начать заново'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {hhSummary && (
+        <section
+          className="glass panel--tight"
+          data-testid="candidate-hh-entry-health"
+          style={{ padding: 14, marginTop: 12 }}
+        >
+          <div className="toolbar" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <div>
+              <div className="section-title" style={{ margin: 0, fontSize: '0.95rem' }}>Entry / Delivery</div>
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                HH остаётся основным входом. Web cabinet работает независимо от состояния мессенджеров.
+              </p>
+            </div>
+            <span className={`status-badge ${hhReady ? 'status-badge--success' : 'status-badge--warning'}`}>
+              HH delivery {hhReady ? 'ready' : 'blocked'}
+            </span>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <p className="subtitle" style={{ margin: 0 }}>
+              selected channel: {hhEntryDelivery?.selected_channel || channelHealth?.last_entry_channel || 'web'}
+            </p>
+            <p className="subtitle" style={{ margin: '4px 0 0' }}>
+              web: {channelHealth?.portal_entry_ready ? 'ready' : 'blocked'}
+              {' · '}
+              MAX: {channelHealth?.max_entry_ready ? 'ready' : 'blocked'}
+              {' · '}
+              Telegram: {channelHealth?.telegram_entry_ready ? 'ready' : 'blocked'}
+            </p>
+            {hhLastSentAt ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last HH entry sent: {new Date(hhLastSentAt).toLocaleString('ru-RU')}
+              </p>
+            ) : null}
+            {hhEntryDelivery?.last_action_name ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last HH action: {hhEntryDelivery.last_action_name}
+              </p>
+            ) : null}
+            {hhBlockedReason ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                HH block: {hhBlockedReason}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            <button
+              type="button"
+              className="ui-btn ui-btn--primary ui-btn--sm"
+              onClick={onSendHhEntryLink}
+              disabled={hhSendPending}
+            >
+              {hhSendPending ? 'Отправляем в HH…' : 'Отправить ссылку в HH'}
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={onOpenCandidateCabinet}
+              disabled={!candidateCabinetUrl}
+            >
+              Открыть cabinet
+            </button>
+            <button
+              type="button"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
+              onClick={onCopyMaxLink}
+              disabled={maxLinkPending || !canReissuePortalAccess}
+            >
+              {maxLinkPending ? 'Готовим доступ…' : 'Переотправить доступ'}
             </button>
           </div>
         </section>

@@ -9,7 +9,7 @@ import InterviewScript from '@/app/components/InterviewScript/InterviewScript'
 import { RecruitmentScript, ScriptFab } from '@/app/components/RecruitmentScript/RecruitmentScript'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
-import { useCandidateAi, useCandidateActions, useCandidateChannelHealth, useCandidateDetail } from './candidate-detail.api'
+import { useCandidateAi, useCandidateActions, useCandidateChannelHealth, useCandidateDetail, useCandidateHh } from './candidate-detail.api'
 import { CandidateActions } from './CandidateActions'
 import { CandidateChatDrawer } from './CandidateChatDrawer'
 import { CandidateDrawer } from './CandidateDrawer'
@@ -49,8 +49,9 @@ export function CandidateDetailPage() {
   const testsSectionRef = useRef<HTMLDivElement | null>(null)
 
   const detailQuery = useCandidateDetail(candidateId)
-  const { actionMutation, createMaxLinkMutation, restartPortalMutation } = useCandidateActions(candidateId)
+  const { actionMutation, createMaxLinkMutation, restartPortalMutation, sendHhEntryLinkMutation } = useCandidateActions(candidateId)
   const channelHealthQuery = useCandidateChannelHealth(candidateId, detailQuery.isSuccess)
+  const hhSummaryQuery = useCandidateHh(candidateId, detailQuery.isSuccess)
   const ai = useCandidateAi(candidateId)
 
   const detail = detailQuery.data
@@ -60,6 +61,7 @@ export function CandidateDetailPage() {
 
   const candidateJourney = detail?.journey || null
   const channelHealth = channelHealthQuery.data || null
+  const hhSummary = hhSummaryQuery.data || null
   const archiveInfo = detail?.archive || candidateJourney?.archive || null
   const statusSlug = detail?.candidate_status_slug || null
   const statusDisplay = detail ? getStatusDisplay(statusSlug) : null
@@ -154,7 +156,9 @@ export function CandidateDetailPage() {
     await Promise.all([
       detailQuery.refetch(),
       channelHealthQuery.refetch(),
+      hhSummaryQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: ['candidate-channel-health', candidateId] }),
+      queryClient.invalidateQueries({ queryKey: ['candidate-hh-summary', candidateId] }),
       queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] }),
       queryClient.invalidateQueries({ queryKey: ['candidates'] }),
     ])
@@ -330,6 +334,26 @@ export function CandidateDetailPage() {
     })
   }
 
+  const handleSendHhEntryLink = () => {
+    sendHhEntryLinkMutation.mutate(undefined, {
+      onSuccess: async (payload) => {
+        await refreshCandidateSurfaces()
+        if (payload?.sent) {
+          setActionMessage('HH entry link отправлен кандидату. Он сможет выбрать Web, MAX или Telegram.')
+          return
+        }
+        if (payload?.blocked_reason) {
+          setActionMessage(`HH доставка заблокирована: ${payload.blocked_reason}`)
+          return
+        }
+        setActionMessage('HH entry link подготовлен. Проверьте fallback каналы в карточке кандидата.')
+      },
+      onError: (error) => {
+        setActionMessage((error as Error).message)
+      },
+    })
+  }
+
   const showProfileSection = !isMobile || mobileTab === 'profile'
   const showTestsSection = !isMobile || mobileTab === 'tests'
 
@@ -398,11 +422,13 @@ export function CandidateDetailPage() {
                 <CandidateActions
                   candidate={detail}
                   channelHealth={channelHealth}
+                  hhSummary={hhSummary}
                   statusSlug={statusSlug}
                     test2Section={test2Section}
                     actionPending={actionMutation.isPending}
                     maxLinkPending={createMaxLinkMutation.isPending}
                     restartPending={restartPortalMutation.isPending}
+                    hhSendPending={sendHhEntryLinkMutation.isPending}
                     showInsightsAction={!isMobile}
                     actionsRef={pipelineActionsRef}
                     onOpenChat={handleOpenChat}
@@ -412,6 +438,7 @@ export function CandidateDetailPage() {
                     }}
                     onCopyMaxLink={handleCopyMaxLink}
                     onRestartPortal={handleRestartPortal}
+                    onSendHhEntryLink={handleSendHhEntryLink}
                     onOpenCandidateCabinet={handleOpenCandidateCabinet}
                     onOpenMaxPortal={handleOpenMaxPortal}
                     onOpenBrowserPortal={handleOpenBrowserPortal}

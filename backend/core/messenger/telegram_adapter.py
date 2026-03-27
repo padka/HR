@@ -48,6 +48,19 @@ class TelegramAdapter(MessengerProtocol):
 
         return get_bot()
 
+    async def get_me(self) -> dict[str, Any]:
+        bot = self._get_bot()
+        me = await bot.get_me()
+        return {
+            "id": getattr(me, "id", None),
+            "username": getattr(me, "username", None),
+            "first_name": getattr(me, "first_name", None),
+            "full_name": getattr(me, "full_name", None),
+        }
+
+    async def get_bot_profile(self) -> dict[str, Any]:
+        return await self.get_me()
+
     async def send_message(
         self,
         chat_id: int | str,

@@ -67,13 +67,16 @@ sequenceDiagram
 
 ### Entry Surfaces
 - Candidate portal can be opened from signed browser links, MAX `startapp` payloads and Telegram `web_app` buttons.
+- HH can now act as the public entry source: `/candidate/start?entry=<signed_hh_entry_token>` resolves the active candidate journey and shows a chooser for `Web`, `MAX` and `Telegram`.
 - Browser entry uses the signed portal token directly. MAX mini-app entry uses a separate URL-safe launch token that resolves to the same candidate journey contract.
 - The portal token remains the source of truth for browser recovery; native app entry only changes the launch surface, not the journey/session invariants.
+- The selected HH entry channel is stored in `CandidateJourneySession.payload_json` as `entry_source`, `last_entry_channel`, `last_entry_channel_selected_at` and `entry_channel_history`. This does not create a second journey or change slot/status invariants.
 
 ### Product Contract
 - The web cabinet is the primary candidate UX and state surface. MAX, Telegram and future channels only deliver entry packages, reminders and mirrored notifications.
 - `/candidate/journey` is a persistent cabinet with dashboard, workflow, tests, schedule, inbox, company materials and candidate-visible feedback. It is no longer framed as a messenger-first stepper.
 - Recruiter CRM and candidate cabinet share the same conversation history. Messages written from CRM must appear in the candidate web inbox even if the candidate has no active messenger binding.
+- Recruiters can send a unified HH entry package from CRM. If HH does not expose a message-capable negotiation action, the system must return an explicit blocked reason and still expose fallback web/MAX/Telegram launch options.
 
 ### State
 ```mermaid

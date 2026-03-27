@@ -6,6 +6,8 @@ import { CandidateStartPage } from './start'
 const exchangeCandidatePortalTokenMock = vi.fn()
 const fetchCandidatePortalJourneyMock = vi.fn()
 const parseCandidatePortalErrorMock = vi.fn()
+const resolveCandidateEntryGatewayMock = vi.fn()
+const selectCandidateEntryChannelMock = vi.fn()
 const navigateMock = vi.fn()
 const setQueryDataMock = vi.fn()
 const useParamsMock = vi.fn()
@@ -14,6 +16,8 @@ vi.mock('@/api/candidate', () => ({
   exchangeCandidatePortalToken: (...args: unknown[]) => exchangeCandidatePortalTokenMock(...args),
   fetchCandidatePortalJourney: (...args: unknown[]) => fetchCandidatePortalJourneyMock(...args),
   parseCandidatePortalError: (...args: unknown[]) => parseCandidatePortalErrorMock(...args),
+  resolveCandidateEntryGateway: (...args: unknown[]) => resolveCandidateEntryGatewayMock(...args),
+  selectCandidateEntryChannel: (...args: unknown[]) => selectCandidateEntryChannelMock(...args),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -32,6 +36,8 @@ describe('CandidateStartPage', () => {
     exchangeCandidatePortalTokenMock.mockReset()
     fetchCandidatePortalJourneyMock.mockReset()
     parseCandidatePortalErrorMock.mockReset()
+    resolveCandidateEntryGatewayMock.mockReset()
+    selectCandidateEntryChannelMock.mockReset()
     navigateMock.mockReset()
     setQueryDataMock.mockReset()
     useParamsMock.mockReturnValue({ token: 'signed-token' })
@@ -195,6 +201,49 @@ describe('CandidateStartPage', () => {
       expect(fetchCandidatePortalJourneyMock).toHaveBeenCalledWith({ skipStoredPortalToken: true })
       expect(screen.getByText('Нужна новая ссылка')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Запросить новую ссылку у рекрутера' })).toBeInTheDocument()
+    })
+  })
+
+  it('renders HH entry chooser from entry token', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.history.pushState({}, '', '/candidate/start?entry=hh-entry-token')
+    resolveCandidateEntryGatewayMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        company: 'SMART SERVICE',
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'screening',
+        current_step_label: 'Анкета',
+        status_label: 'Тест 1',
+        next_action: 'Выберите удобный канал, чтобы пройти анкету.',
+      },
+      company_preview: {
+        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
+      },
+      suggested_channel: 'web',
+      options: {
+        web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
+        max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+        telegram: { channel: 'telegram', enabled: false, reason_if_blocked: 'telegram_entry_blocked', type: 'external' },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
+      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Продолжить в Web' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Продолжить в MAX' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Продолжить в Telegram' })).toBeInTheDocument()
+      expect(screen.getByText('telegram_entry_blocked')).toBeInTheDocument()
     })
   })
 })

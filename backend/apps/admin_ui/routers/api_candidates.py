@@ -6,6 +6,7 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 router.add_api_route('/candidates/{candidate_id}', api_misc.api_candidate, methods=['GET'])
 router.add_api_route('/candidates/{candidate_id}/hh', api_misc.api_candidate_hh_summary, methods=['GET'])
+router.add_api_route('/candidates/{candidate_id}/hh/send-entry-link', api_misc.api_candidate_hh_send_entry_link, methods=['POST'])
 router.add_api_route('/candidates/{candidate_id}/cohort-comparison', api_misc.api_candidate_cohort_comparison, methods=['GET'])
 router.add_api_route('/candidates/{candidate_id}', api_misc.api_candidate_delete, methods=['DELETE'])
 router.add_api_route('/candidates', api_misc.api_candidates_list, methods=['GET'])

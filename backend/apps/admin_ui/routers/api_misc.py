@@ -146,6 +146,8 @@ from backend.domain.candidates.models import (
 from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
+    build_candidate_entry_options,
+    build_candidate_hh_entry_url,
     build_candidate_portal_journey,
     build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
@@ -155,6 +157,8 @@ from backend.domain.candidates.portal_service import (
     get_candidate_portal_public_status,
     restart_candidate_portal_journey,
 )
+from backend.domain.hh_integration import HHApiClient, HHApiError, decrypt_access_token, get_connection_for_principal
+from backend.domain.hh_integration.models import CandidateExternalIdentity, HHNegotiation
 from backend.domain.hh_integration.summary import build_candidate_hh_summary
 from backend.domain.models import ActionToken, City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
 from backend.domain.slot_service import (
@@ -2202,6 +2206,153 @@ async def _get_accessible_candidate(candidate_id: int, principal: Principal) -> 
         return user
 
 
+def _iter_hh_actions_snapshot(actions_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    actions = actions_snapshot.get("actions")
+    if not isinstance(actions, list):
+        return []
+    return [item for item in actions if isinstance(item, dict)]
+
+
+def _flatten_hh_actions(actions_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for action in _iter_hh_actions_snapshot(actions_snapshot):
+        flattened.append(action)
+        for sub_action in action.get("sub_actions") or []:
+            if isinstance(sub_action, dict):
+                merged = dict(sub_action)
+                merged.setdefault("arguments", action.get("arguments") or [])
+                merged.setdefault("resulting_employer_state", action.get("resulting_employer_state") or {})
+                flattened.append(merged)
+    return flattened
+
+
+def _hh_message_argument_name(action: dict[str, Any]) -> str | None:
+    arguments = action.get("arguments")
+    if not isinstance(arguments, list):
+        return None
+    allowed = ("message", "text", "body", "comment")
+    for item in arguments:
+        if not isinstance(item, dict):
+            continue
+        arg_id = str(item.get("id") or "").strip().lower()
+        if arg_id in allowed:
+            return arg_id
+    return None
+
+
+def _select_hh_entry_action(actions_snapshot: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    ranked: list[tuple[int, dict[str, Any], str]] = []
+    for action in _flatten_hh_actions(actions_snapshot):
+        if action.get("enabled") is False or action.get("hidden") is True:
+            continue
+        method = str(action.get("method") or "").strip().upper()
+        action_url = str(action.get("url") or "").strip()
+        if not method or not action_url:
+            continue
+        message_arg = _hh_message_argument_name(action)
+        if not message_arg:
+            continue
+        name = str(action.get("name") or "").strip().lower()
+        score = 0
+        if "сообщ" in name or "message" in name or "напис" in name:
+            score += 4
+        if "приглаш" in name or "invite" in name:
+            score += 3
+        if "interview" in name or "собесед" in name:
+            score += 2
+        ranked.append((score, action, message_arg))
+    if not ranked:
+        return None, None
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    _, action, arg_name = ranked[0]
+    return action, arg_name
+
+
+async def _build_hh_entry_delivery_summary(
+    session,
+    *,
+    candidate: User,
+    principal: Principal,
+) -> dict[str, Any]:
+    if not candidate.candidate_id:
+        return {
+            "ready": False,
+            "blocked_reason": "candidate_uuid_missing",
+            "hh_entry_url": None,
+            "cabinet_url": None,
+            "last_sent_at": None,
+            "last_status": None,
+            "last_block_reason": None,
+            "fallback_channel_options": [],
+        }
+
+    journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+    options = await build_candidate_entry_options(
+        session,
+        candidate=candidate,
+        journey=journey,
+        source_channel="hh",
+    )
+    cabinet_url = str(options.get("web", {}).get("launch_url") or "").strip() or None
+    hh_entry_url = build_candidate_hh_entry_url(
+        candidate_uuid=str(candidate.candidate_id),
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+        source_channel="hh",
+    ) or None
+    journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
+    connection = await get_connection_for_principal(session, principal)
+    blocked_reason = None
+    if connection is None:
+        blocked_reason = "hh_connection_missing"
+    elif not hh_entry_url:
+        blocked_reason = "portal_entry_not_ready"
+
+    action = None
+    if blocked_reason is None:
+        identity = (
+            await session.execute(
+                select(CandidateExternalIdentity).where(
+                    CandidateExternalIdentity.candidate_id == int(candidate.id),
+                    CandidateExternalIdentity.source == "hh",
+                )
+            )
+        ).scalar_one_or_none()
+        if identity is None:
+            blocked_reason = "hh_identity_not_linked"
+        else:
+            negotiation = (
+                await session.execute(
+                    select(HHNegotiation)
+                    .where(HHNegotiation.candidate_identity_id == identity.id)
+                    .order_by(HHNegotiation.updated_at.desc(), HHNegotiation.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if negotiation is None:
+                blocked_reason = "hh_negotiation_missing"
+            elif not isinstance(negotiation.actions_snapshot, dict):
+                blocked_reason = "hh_actions_missing"
+            else:
+                action, _ = _select_hh_entry_action(negotiation.actions_snapshot)
+                if action is None:
+                    blocked_reason = "hh_message_action_missing"
+
+    return {
+        "ready": blocked_reason is None and action is not None,
+        "blocked_reason": blocked_reason,
+        "hh_entry_url": hh_entry_url,
+        "cabinet_url": cabinet_url,
+        "last_sent_at": journey_meta.get("hh_entry_last_sent_at"),
+        "last_status": journey_meta.get("hh_delivery_status"),
+        "last_block_reason": journey_meta.get("hh_delivery_block_reason"),
+        "last_action_name": journey_meta.get("hh_delivery_action_name"),
+        "selected_channel": journey_meta.get("last_entry_channel") or journey.entry_channel,
+        "fallback_channel_options": [key for key, item in options.items() if bool(item.get("enabled"))],
+        "channels": options,
+    }
+
+
 @router.get("/candidates/{candidate_id}/chat")
 async def api_chat_history(
     candidate_id: int,
@@ -2871,8 +3022,165 @@ async def api_candidate_hh_summary(
 ):
     await _get_accessible_candidate(candidate_id, principal)
     async with async_session() as session:
+        candidate = await session.get(User, candidate_id)
         summary = await build_candidate_hh_summary(session, candidate_id=candidate_id)
+        if candidate is not None:
+            summary["entry_delivery"] = await _build_hh_entry_delivery_summary(
+                session,
+                candidate=candidate,
+                principal=principal,
+            )
     return JSONResponse(jsonable_encoder(summary))
+
+
+@router.post("/candidates/{candidate_id}/hh/send-entry-link")
+async def api_candidate_hh_send_entry_link(
+    candidate_id: int,
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+):
+    await _get_accessible_candidate(candidate_id, principal)
+    async with async_session() as session:
+        async with session.begin():
+            candidate = await session.get(User, candidate_id)
+            if candidate is None:
+                raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
+            delivery_summary = await _build_hh_entry_delivery_summary(
+                session,
+                candidate=candidate,
+                principal=principal,
+            )
+            journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+            journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
+            cabinet_url = str(delivery_summary.get("cabinet_url") or "").strip() or None
+            hh_entry_url = str(delivery_summary.get("hh_entry_url") or "").strip() or None
+            if not delivery_summary.get("ready"):
+                journey_meta["hh_delivery_status"] = "blocked"
+                journey_meta["hh_delivery_block_reason"] = delivery_summary.get("blocked_reason")
+                journey.payload_json = journey_meta
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "sent": False,
+                        "blocked_reason": delivery_summary.get("blocked_reason"),
+                        "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
+                        "cabinet_url": cabinet_url,
+                        "hh_entry_url": hh_entry_url,
+                        "channels": delivery_summary.get("channels") or {},
+                    },
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+
+            connection = await get_connection_for_principal(session, principal)
+            if connection is None:
+                raise HTTPException(status_code=404, detail={"message": "HH connection is not configured"})
+            identity = (
+                await session.execute(
+                    select(CandidateExternalIdentity).where(
+                        CandidateExternalIdentity.candidate_id == candidate_id,
+                        CandidateExternalIdentity.source == "hh",
+                    )
+                )
+            ).scalar_one_or_none()
+            if identity is None:
+                raise HTTPException(status_code=404, detail={"message": "HH identity is not linked"})
+            negotiation = (
+                await session.execute(
+                    select(HHNegotiation)
+                    .where(HHNegotiation.candidate_identity_id == identity.id)
+                    .order_by(HHNegotiation.updated_at.desc(), HHNegotiation.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if negotiation is None:
+                raise HTTPException(status_code=404, detail={"message": "HH negotiation is not imported"})
+
+            action, message_arg_name = _select_hh_entry_action(negotiation.actions_snapshot or {})
+            if action is None or not message_arg_name:
+                journey_meta["hh_delivery_status"] = "blocked"
+                journey_meta["hh_delivery_block_reason"] = "hh_message_action_missing"
+                journey.payload_json = journey_meta
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "sent": False,
+                        "blocked_reason": "hh_message_action_missing",
+                        "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
+                        "cabinet_url": cabinet_url,
+                        "hh_entry_url": hh_entry_url,
+                        "channels": delivery_summary.get("channels") or {},
+                    },
+                    status_code=status.HTTP_409_CONFLICT,
+                )
+
+            action_url = str(action.get("url") or "").strip()
+            method = str(action.get("method") or "").strip().upper()
+            if not action_url or not method:
+                raise HTTPException(status_code=409, detail={"message": "HH action payload is incomplete"})
+
+            next_action = "Откройте кабинет, чтобы продолжить путь в компании."
+            journey_payload = await build_candidate_portal_journey(
+                session,
+                candidate,
+                entry_channel=str(journey.entry_channel or "web"),
+                journey=journey,
+            )
+            next_action = str(journey_payload["journey"].get("next_action") or next_action)
+            message_text = "\n".join(
+                [
+                    f"{candidate.fio or 'Здравствуйте'}!",
+                    next_action,
+                    "Выберите удобный канал продолжения общения с компанией: Web, MAX или Telegram.",
+                    f"Открыть выбор канала: {hh_entry_url}",
+                ]
+            )
+
+            client = HHApiClient()
+            try:
+                provider_payload = await client.execute_negotiation_action(
+                    decrypt_access_token(connection),
+                    action_url=action_url,
+                    method=method,
+                    manager_account_id=connection.manager_account_id,
+                    arguments={message_arg_name: message_text},
+                )
+            except HHApiError as exc:
+                journey_meta["hh_delivery_status"] = "failed"
+                journey_meta["hh_delivery_block_reason"] = str(exc)
+                journey.payload_json = journey_meta
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={"message": str(exc), "status_code": exc.status_code, "payload": exc.payload},
+                ) from exc
+
+            now = datetime.now(timezone.utc).isoformat()
+            journey_meta["hh_delivery_status"] = "sent"
+            journey_meta["hh_delivery_block_reason"] = None
+            journey_meta["hh_entry_last_sent_at"] = now
+            journey_meta["hh_delivery_action_id"] = action.get("id")
+            journey_meta["hh_delivery_action_name"] = action.get("name")
+            journey.payload_json = journey_meta
+
+    await log_audit_action(
+        "candidate_hh_entry_link_sent",
+        "candidate",
+        candidate_id,
+        changes={"action_id": action.get("id"), "action_name": action.get("name")},
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "sent": True,
+            "action_id": action.get("id"),
+            "action_name": action.get("name"),
+            "resulting_employer_state": action.get("resulting_employer_state") or {},
+            "provider_payload": provider_payload,
+            "cabinet_url": cabinet_url,
+            "hh_entry_url": hh_entry_url,
+            "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
+            "channels": delivery_summary.get("channels") or {},
+        }
+    )
 
 
 @router.get("/candidates/{candidate_id}/cohort-comparison")

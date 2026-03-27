@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from backend.apps.admin_ui.security import Principal, require_admin, require_principal
+from backend.apps.admin_ui.security import Principal, require_admin, require_csrf_token, require_principal
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
 from backend.domain.hh_integration.crypto import HHSecretCipher
@@ -17,6 +17,7 @@ from backend.domain.hh_integration.models import (
     HHSyncJob,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 @pytest.fixture
@@ -27,6 +28,8 @@ def hh_env(monkeypatch):
     monkeypatch.setenv("HH_REDIRECT_URI", "https://crm.example.com/api/integrations/hh/oauth/callback")
     monkeypatch.setenv("HH_WEBHOOK_BASE_URL", "https://api.example.com")
     monkeypatch.setenv("HH_USER_AGENT", "RecruitSmartTest/1.0 (qa@example.com)")
+    monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
+    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
@@ -60,11 +63,13 @@ def admin_app(monkeypatch, hh_env):
     app = create_app()
     app.dependency_overrides[require_admin] = lambda: Principal(type="admin", id=1)
     app.dependency_overrides[require_principal] = lambda: Principal(type="admin", id=1)
+    app.dependency_overrides[require_csrf_token] = lambda: None
     try:
         yield app
     finally:
         app.dependency_overrides.pop(require_admin, None)
         app.dependency_overrides.pop(require_principal, None)
+        app.dependency_overrides.pop(require_csrf_token, None)
         settings_module.get_settings.cache_clear()
 
 
@@ -225,3 +230,64 @@ class TestHHActionsRoutes:
         assert kwargs["arguments"] == {"message": "Приглашаем"}
         list_kwargs = mock_client.list_negotiation_collections.await_args.kwargs
         assert list_kwargs["vacancy_id"] == "131018950"
+
+    @pytest.mark.asyncio
+    async def test_send_hh_entry_link_uses_message_action(self, admin_app):
+        candidate_id = await _seed_candidate_with_hh_action()
+
+        def _call():
+            with patch("backend.apps.admin_ui.routers.api_misc.HHApiClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.execute_negotiation_action.return_value = {"ok": True}
+                mock_client_cls.return_value = mock_client
+                with TestClient(admin_app) as client:
+                    response = client.post(f"/api/candidates/{candidate_id}/hh/send-entry-link")
+                return response, mock_client
+
+        resp, mock_client = await asyncio.to_thread(_call)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["sent"] is True
+        assert "candidate/start?entry=" in body["hh_entry_url"]
+        mock_client.execute_negotiation_action.assert_awaited_once()
+        kwargs = mock_client.execute_negotiation_action.await_args.kwargs
+        assert "Выберите удобный канал" in kwargs["arguments"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_send_hh_entry_link_returns_blocked_when_message_action_missing(self, admin_app):
+        candidate_id = await _seed_candidate_with_hh_action()
+
+        async def _strip_actions() -> None:
+            async with async_session() as session:
+                negotiation = (
+                    await session.execute(
+                        select(HHNegotiation)
+                        .order_by(HHNegotiation.id.desc())
+                        .limit(1)
+                    )
+                ).scalar_one()
+                negotiation.actions_snapshot = {
+                    "actions": [
+                        {
+                            "id": "view",
+                            "name": "Посмотреть",
+                            "method": "GET",
+                            "url": "https://api.hh.ru/negotiations/view/neg-1",
+                            "arguments": [],
+                        }
+                    ]
+                }
+                await session.commit()
+
+        await _strip_actions()
+
+        def _call():
+            with TestClient(admin_app) as client:
+                return client.post(f"/api/candidates/{candidate_id}/hh/send-entry-link")
+
+        resp = await asyncio.to_thread(_call)
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["blocked_reason"] == "hh_message_action_missing"

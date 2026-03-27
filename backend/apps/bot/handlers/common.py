@@ -11,12 +11,63 @@ from aiogram.types import CallbackQuery, Message
 from .. import services
 from .. import slot_assignment_flow
 from ..services import show_recruiter_dashboard
+from backend.core.db import async_session
 from backend.domain import analytics
 from backend.domain.candidates import bind_telegram_to_candidate, get_user_by_telegram_id
+from backend.domain.candidates.portal_service import (
+    build_candidate_portal_journey,
+    build_candidate_public_portal_url,
+    ensure_candidate_portal_session,
+)
 
 router = Router()
 
 logger = logging.getLogger(__name__)
+
+
+async def _send_candidate_cabinet_entry(message: Message, *, candidate) -> None:
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    async with async_session() as session:
+        async with session.begin():
+            stored_candidate = await session.get(type(candidate), int(candidate.id))
+            if stored_candidate is None:
+                await message.answer("Telegram привязан. Попросите рекрутера переотправить доступ в кабинет.")
+                return
+            journey = await ensure_candidate_portal_session(session, stored_candidate, entry_channel="telegram")
+            payload = await build_candidate_portal_journey(
+                session,
+                stored_candidate,
+                entry_channel="telegram",
+                journey=journey,
+            )
+            portal_url = build_candidate_public_portal_url(
+                candidate_uuid=str(stored_candidate.candidate_id or ""),
+                entry_channel="telegram",
+                source_channel="telegram_bot_start",
+                journey_session_id=int(journey.id),
+                session_version=int(journey.session_version or 1),
+            )
+
+    buttons = None
+    if portal_url:
+        buttons = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Открыть кабинет", web_app=WebAppInfo(url=portal_url))],
+                [InlineKeyboardButton(text="Открыть в браузере", url=portal_url)],
+            ]
+        )
+
+    lines = [
+        "Telegram привязан к вашему кабинету кандидата.",
+        f"Статус: {payload['candidate'].get('status_label') or 'В обработке'}",
+        str(payload["journey"].get("next_action") or "Откройте кабинет, чтобы продолжить процесс."),
+    ]
+    if portal_url:
+        lines.append("Кабинет остаётся основным местом, где видны тесты, слот, сообщения и этап найма.")
+    else:
+        lines.append("Публичная ссылка кабинета сейчас недоступна. Попросите рекрутера переотправить доступ.")
+    await message.answer("\n".join(lines), reply_markup=buttons)
 
 
 @router.message(Command("start"))
@@ -32,6 +83,25 @@ async def cmd_start(message: Message) -> None:
         return
 
     username = getattr(user, "username", None)
+    parts = (message.text or "").split(maxsplit=1)
+    start_payload = parts[1].strip() if len(parts) > 1 else ""
+
+    if start_payload:
+        bound = await bind_telegram_to_candidate(
+            token=start_payload,
+            telegram_id=user_id,
+            username=username,
+        )
+        if bound is None:
+            await message.answer("Ссылка недействительна или устарела. Попросите рекрутера отправить новый доступ.")
+            return
+        try:
+            await _send_candidate_cabinet_entry(message, candidate=bound)
+        except Exception:
+            logger.exception("telegram start payload failed", extra={"user_id": user_id})
+            await message.answer("Telegram привязан, но кабинет пока не открылся. Попросите рекрутера переотправить доступ.")
+        return
+
     logger.info(
         "User started interview",
         extra={

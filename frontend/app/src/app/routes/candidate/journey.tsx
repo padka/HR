@@ -14,6 +14,7 @@ import {
   saveCandidatePortalProfile,
   saveCandidatePortalScreeningDraft,
   sendCandidatePortalMessage,
+  type CandidateEntryChannel,
   type CandidatePortalJourneyResponse,
   type CandidatePortalQuestion,
   type CandidatePortalSlot,
@@ -354,6 +355,7 @@ export function CandidateJourneyPage() {
   const cabinetAlerts = payload?.dashboard?.alerts || []
   const primaryAction = payload?.dashboard?.primary_action || null
   const dashboardUpcoming = payload?.dashboard?.upcoming_items || []
+  const channelOptions = payload?.journey.channel_options || {}
 
   const canReschedule = Boolean(activeSlot) && availableSlots.length > 0
   const canConfirm = isSlotConfirmable(activeSlot)
@@ -380,6 +382,16 @@ export function CandidateJourneyPage() {
 
   const openPrimaryActionTarget = () => {
     setActiveTab(resolveCabinetTab(primaryAction?.target))
+  }
+
+  const handleOpenChannel = (channel: CandidateEntryChannel) => {
+    const option = channelOptions[channel]
+    const launchUrl = String(option?.launch_url || '').trim()
+    if (!launchUrl) {
+      setLocalError(option?.reason_if_blocked || 'Новый канал пока недоступен. Попросите рекрутера переотправить доступ.')
+      return
+    }
+    window.location.assign(launchUrl)
   }
 
   const renderProfileForm = () => (
@@ -1020,6 +1032,44 @@ export function CandidateJourneyPage() {
             <span className="candidate-portal__summary-tag">Magic link + resume-cookie</span>
             <span className="candidate-portal__summary-tag">Web inbox вместо привязки к одному мессенджеру</span>
             <span className="candidate-portal__summary-tag">Следующий шаг и статус в одном месте</span>
+          </div>
+        </section>
+
+        <section className="candidate-portal__summary-card" style={{ marginBottom: 20 }}>
+          <div className="candidate-portal__card-head">
+            <h2 className="candidate-portal__card-title">Продолжить в другом канале</h2>
+            <p className="candidate-portal__card-copy">
+              Можно открыть тот же процесс в Web, MAX или Telegram. Прогресс, сообщения и запись на слот останутся общими.
+            </p>
+          </div>
+          <div className="candidate-portal__actions">
+            {(['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
+              const option = channelOptions[channel]
+              const label =
+                channel === 'web' ? 'Web cabinet' : channel === 'max' ? 'Открыть в MAX' : 'Открыть в Telegram'
+              return (
+                <button
+                  key={channel}
+                  type="button"
+                  className={`ui-btn ${channel === 'web' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                  disabled={!option?.enabled}
+                  onClick={() => handleOpenChannel(channel)}
+                  title={option?.reason_if_blocked || undefined}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <div className="candidate-portal__summary-tags">
+            <span className="candidate-portal__summary-tag">
+              Текущий вход: {payload.journey.last_entry_channel || payload.journey.entry_channel || 'web'}
+            </span>
+            {(payload.journey.available_channels || []).map((channel) => (
+              <span key={channel} className="candidate-portal__summary-tag">
+                {channel === 'web' ? 'web ready' : `${channel} ready`}
+              </span>
+            ))}
           </div>
         </section>
 

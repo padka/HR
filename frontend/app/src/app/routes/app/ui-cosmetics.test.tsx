@@ -457,6 +457,7 @@ const candidateChannelHealthData = {
   preferred_channel: 'max',
   portal_entry_ready: true,
   max_entry_ready: false,
+  telegram_entry_ready: true,
   token_valid: false,
   bot_profile_resolved: false,
   bot_profile_name: null,
@@ -466,8 +467,10 @@ const candidateChannelHealthData = {
   public_link: 'https://max.ru/id312260558067_bot',
   browser_link: 'https://crm.example.test/candidate/start?start=signed-token',
   mini_app_link: 'https://max.ru/id312260558067_bot?startapp=launch-token',
+  telegram_link: 'https://t.me/attila_test_bot?start=telegram-invite',
   active_journey_id: 401,
   session_version: 3,
+  last_entry_channel: 'web',
   last_link_issued_at: '2031-07-01T08:45:00Z',
   restart_allowed: true,
   delivery_ready: false,
@@ -614,6 +617,14 @@ describe('UI cosmetics smoke', () => {
           data: {
             linked: true,
             source: 'hh',
+            entry_delivery: {
+              ready: false,
+              blocked_reason: 'hh_message_action_missing',
+              cabinet_url: 'https://crm.example.test/candidate/start?start=signed-token',
+              hh_entry_url: 'https://crm.example.test/candidate/start?entry=hh-entry',
+              last_status: 'blocked',
+              selected_channel: 'web',
+            },
             vacancy: {
               title: 'Оператор склада',
               url: 'https://hh.ru/vacancy/1',
@@ -1051,6 +1062,7 @@ describe('UI cosmetics smoke', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('candidate-channel-health')).toBeInTheDocument()
+      expect(screen.getByTestId('candidate-hh-entry-health')).toBeInTheDocument()
       expect(screen.getByText(/Primary workspace: web cabinet/)).toBeInTheDocument()
       expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
@@ -1060,8 +1072,10 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByText(/portal package: failed/)).toBeInTheDocument()
       expect(screen.getByText(/delivery: blocked/)).toBeInTheDocument()
       expect(screen.getByText(/MAX delivery: MAX токен отклонён провайдером/)).toBeInTheDocument()
+      expect(screen.getByText(/HH block: HH не даёт action на отправку сообщения кандидату/)).toBeInTheDocument()
       expect(screen.getByText(/portal package error: HTTP 404/)).toBeInTheDocument()
       expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Отправить ссылку в HH' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Подготовить browser link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть MAX launcher' })).toBeInTheDocument()

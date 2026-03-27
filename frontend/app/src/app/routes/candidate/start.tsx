@@ -1,10 +1,14 @@
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { startTransition, useEffect, useState } from 'react'
+import { startTransition, useEffect, useMemo, useState } from 'react'
 
 import {
   exchangeCandidatePortalToken,
   fetchCandidatePortalJourney,
   parseCandidatePortalError,
+  resolveCandidateEntryGateway,
+  selectCandidateEntryChannel,
+  type CandidateEntryChannel,
+  type CandidateEntryGatewayResponse,
 } from '@/api/candidate'
 import { queryClient } from '@/api/client'
 import { clearCandidatePortalAccessToken } from '@/shared/candidate-portal-session'
@@ -23,6 +27,13 @@ export function CandidateStartPage() {
   const [error, setError] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<string | null>(null)
   const [supportMessage, setSupportMessage] = useState<string | null>(null)
+  const [entryGateway, setEntryGateway] = useState<CandidateEntryGatewayResponse | null>(null)
+  const [entryPendingChannel, setEntryPendingChannel] = useState<CandidateEntryChannel | null>(null)
+
+  const entryToken = useMemo(() => {
+    if (typeof window === 'undefined') return ''
+    return new URLSearchParams(window.location.search).get('entry')?.trim() || ''
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -31,6 +42,22 @@ export function CandidateStartPage() {
       setError(null)
       setErrorState(null)
       setSupportMessage(null)
+      setEntryGateway(null)
+      setEntryPendingChannel(null)
+      if (entryToken) {
+        try {
+          const payload = await resolveCandidateEntryGateway(entryToken)
+          if (cancelled) return
+          setEntryGateway(payload)
+          return
+        } catch (gatewayError) {
+          if (cancelled) return
+          const info = parseCandidatePortalError(gatewayError)
+          setError(info?.message || 'Не удалось подготовить варианты входа. Откройте свежую ссылку от рекрутера.')
+          setErrorState(info?.state || null)
+          return
+        }
+      }
       if (!hasCandidatePortalLocationToken(token)) {
         await ensureCandidateWebAppBridge()
       }
@@ -97,7 +124,28 @@ export function CandidateStartPage() {
     return () => {
       cancelled = true
     }
-  }, [navigate, token])
+  }, [entryToken, navigate, token])
+
+  const handleSelectEntryChannel = async (channel: CandidateEntryChannel) => {
+    if (!entryToken) return
+    setEntryPendingChannel(channel)
+    setError(null)
+    try {
+      const payload = await selectCandidateEntryChannel(entryToken, channel)
+      const launchUrl = String(payload.launch?.url || payload.cabinet_url || '').trim()
+      if (!launchUrl) {
+        setError('Ссылка для запуска канала не подготовлена. Попросите рекрутера переотправить доступ.')
+        setEntryPendingChannel(null)
+        return
+      }
+      window.location.assign(launchUrl)
+    } catch (selectError) {
+      const info = parseCandidatePortalError(selectError)
+      setError(info?.message || 'Не удалось запустить выбранный канал. Откройте новый доступ от рекрутера.')
+      setErrorState(info?.state || null)
+      setEntryPendingChannel(null)
+    }
+  }
 
   const handleCopySupportMessage = async () => {
     const requestText = 'Здравствуйте! Пришлите, пожалуйста, новую ссылку для входа в кабинет кандидата.'
@@ -119,28 +167,101 @@ export function CandidateStartPage() {
         <div className="glass glass--elevated candidate-portal__card">
           <div className="candidate-portal__eyebrow">Candidate Portal</div>
           <h1 className="candidate-portal__title">
-            {error
-              ? errorState === 'blocked'
-                ? 'Доступ к кабинету недоступен'
-                : errorState === 'recoverable'
-                  ? 'Сессия кабинета истекла'
-                : errorState === 'needs_new_link'
-                  ? 'Нужна новая ссылка'
-                  : 'Не удалось восстановить кабинет'
-              : 'Открываю ваш кабинет'}
+            {entryGateway
+              ? 'Выберите, где продолжить общение'
+              : error
+                ? errorState === 'blocked'
+                  ? 'Доступ к кабинету недоступен'
+                  : errorState === 'recoverable'
+                    ? 'Сессия кабинета истекла'
+                    : errorState === 'needs_new_link'
+                      ? 'Нужна новая ссылка'
+                      : 'Не удалось восстановить кабинет'
+                : 'Открываю ваш кабинет'}
           </h1>
           <p className="candidate-portal__subtitle">
-            {error
-              ? errorState === 'blocked'
-                ? 'Сессия отозвана или кабинет не найден. Попросите рекрутера восстановить доступ.'
-                : errorState === 'recoverable'
-                  ? 'Откройте кабинет заново по свежей ссылке от рекрутера. Если resume-cookie ещё жив, доступ поднимется автоматически.'
-                  : errorState === 'needs_new_link'
-                  ? 'Старая ссылка устарела. Откройте свежую ссылку из сообщения или письма от рекрутера.'
-                  : 'Сейчас попробую открыть кабинет заново на этом устройстве.'
-              : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
+            {entryGateway
+              ? entryGateway.journey.next_action || 'Можно продолжить в браузере, MAX или Telegram без потери прогресса.'
+              : error
+                ? errorState === 'blocked'
+                  ? 'Сессия отозвана или кабинет не найден. Попросите рекрутера восстановить доступ.'
+                  : errorState === 'recoverable'
+                    ? 'Откройте кабинет заново по свежей ссылке от рекрутера. Если resume-cookie ещё жив, доступ поднимется автоматически.'
+                    : errorState === 'needs_new_link'
+                      ? 'Старая ссылка устарела. Откройте свежую ссылку из сообщения или письма от рекрутера.'
+                      : 'Сейчас попробую открыть кабинет заново на этом устройстве.'
+                : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
           </p>
           {error ? <p className="candidate-portal__error">{error}</p> : null}
+          {entryGateway ? (
+            <div className="candidate-portal__section-stack" style={{ marginTop: 18, textAlign: 'left' }}>
+              <div className="candidate-portal__summary-grid" aria-label="Входной контекст">
+                <article className="glass candidate-portal__summary-card">
+                  <div className="candidate-portal__summary-label">Кандидат</div>
+                  <div className="candidate-portal__summary-value">{entryGateway.candidate.fio || 'Кандидат'}</div>
+                  <div className="candidate-portal__summary-meta">{entryGateway.candidate.city || 'Город уточняется'}</div>
+                </article>
+                <article className="glass candidate-portal__summary-card">
+                  <div className="candidate-portal__summary-label">Вакансия</div>
+                  <div className="candidate-portal__summary-value">{entryGateway.candidate.vacancy_label || 'Вакансия уточняется'}</div>
+                  <div className="candidate-portal__summary-meta">{entryGateway.candidate.company || 'Компания'}</div>
+                </article>
+                <article className="glass candidate-portal__summary-card">
+                  <div className="candidate-portal__summary-label">Этап</div>
+                  <div className="candidate-portal__summary-value">{entryGateway.journey.current_step_label || 'В обработке'}</div>
+                  <div className="candidate-portal__summary-meta">{entryGateway.journey.status_label || 'Статус обновляется автоматически'}</div>
+                </article>
+              </div>
+
+              {entryGateway.company_preview?.summary ? (
+                <div className="candidate-portal__resource-card">
+                  <strong>Что дальше</strong>
+                  <p>{entryGateway.company_preview.summary}</p>
+                  <div className="candidate-portal__summary-tags">
+                    {(entryGateway.company_preview.highlights || []).map((item) => (
+                      <span key={item} className="candidate-portal__summary-tag">{item}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="candidate-portal__resource-list">
+                {(['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
+                  const option = entryGateway.options[channel]
+                  const title =
+                    channel === 'web' ? 'Продолжить в Web' : channel === 'max' ? 'Продолжить в MAX' : 'Продолжить в Telegram'
+                  return (
+                    <div key={channel} className="candidate-portal__resource-card">
+                      <div className="candidate-portal__message-head">
+                        <strong>{title}</strong>
+                        <span className="candidate-portal__message-channel">
+                          {option?.enabled ? 'ready' : 'blocked'}
+                        </span>
+                      </div>
+                      <p>
+                        {channel === 'web'
+                          ? 'Открывает основной кабинет кандидата в браузере.'
+                          : 'Запускает тот же процесс через бот и ведёт в тот же кабинет.'}
+                      </p>
+                      {option?.reason_if_blocked ? (
+                        <p className="candidate-portal__helper">{option.reason_if_blocked}</p>
+                      ) : null}
+                      <div className="candidate-portal__actions">
+                        <button
+                          type="button"
+                          className={`ui-btn ${channel === 'web' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                          disabled={!option?.enabled || entryPendingChannel !== null}
+                          onClick={() => handleSelectEntryChannel(channel)}
+                        >
+                          {entryPendingChannel === channel ? 'Открываю…' : title}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
           {error ? (
             <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>
               <button className="ui-btn ui-btn--primary" onClick={() => window.location.reload()}>

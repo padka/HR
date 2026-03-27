@@ -42,11 +42,13 @@ from backend.domain.candidates.status import CandidateStatus, STATUS_LABELS
 from backend.domain.models import City, Slot, SlotStatus
 from backend.domain.repositories import find_city_by_plain_name
 from backend.domain.slot_service import confirm_slot_by_candidate, reject_slot, reserve_slot
+from backend.domain.candidates.services import ensure_candidate_invite_token
 
 PORTAL_JOURNEY_KEY = "candidate_portal"
 PORTAL_JOURNEY_VERSION = "v1"
 PORTAL_SESSION_KEY = "candidate_portal"
 PORTAL_TOKEN_SALT = "candidate-portal-link"
+HH_ENTRY_TOKEN_PREFIX = "hh1"
 MAX_PORTAL_LAUNCH_TOKEN_PREFIX = "mx1"
 PORTAL_DEFAULT_ENTRY_CHANNEL = "web"
 PORTAL_STEP_LABELS = {
@@ -62,7 +64,13 @@ PORTAL_ACTIVE_SLOT_STATUSES = {
     SlotStatus.CONFIRMED_BY_CANDIDATE,
 }
 MAX_BOT_PROFILE_CACHE_TTL_SECONDS = 60
+TELEGRAM_BOT_PROFILE_CACHE_TTL_SECONDS = 60
 _max_bot_profile_cache: dict[str, Any] = {
+    "key": None,
+    "fetched_at": 0.0,
+    "payload": None,
+}
+_telegram_bot_profile_cache: dict[str, Any] = {
     "key": None,
     "fetched_at": 0.0,
     "payload": None,
@@ -445,6 +453,207 @@ async def get_candidate_portal_max_entry_status_async() -> dict[str, Any]:
     }
 
 
+def _telegram_bot_profile_cache_key() -> str:
+    settings = get_settings()
+    source = "\n".join(
+        [
+            str(settings.bot_enabled),
+            str(settings.bot_token or ""),
+        ]
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _get_cached_telegram_profile_probe() -> dict[str, Any] | None:
+    cache_key = _telegram_bot_profile_cache_key()
+    if _telegram_bot_profile_cache.get("key") != cache_key:
+        return None
+    fetched_at = float(_telegram_bot_profile_cache.get("fetched_at") or 0.0)
+    if fetched_at <= 0 or (time.monotonic() - fetched_at) > TELEGRAM_BOT_PROFILE_CACHE_TTL_SECONDS:
+        return None
+    payload = _telegram_bot_profile_cache.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _store_telegram_profile_probe(payload: dict[str, Any]) -> dict[str, Any]:
+    cached = dict(payload)
+    _telegram_bot_profile_cache["key"] = _telegram_bot_profile_cache_key()
+    _telegram_bot_profile_cache["fetched_at"] = time.monotonic()
+    _telegram_bot_profile_cache["payload"] = cached
+    return dict(cached)
+
+
+def _extract_telegram_profile_name(payload: dict[str, Any]) -> str | None:
+    for key in ("full_name", "first_name", "name", "username"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _extract_telegram_profile_link_base(payload: dict[str, Any]) -> str | None:
+    username = str(payload.get("username") or "").strip().lstrip("@")
+    if re.fullmatch(r"[A-Za-z0-9_]{4,64}", username):
+        return f"https://t.me/{username}"
+    return None
+
+
+async def _ensure_telegram_bot_profile_adapter():
+    adapter = get_registry().get(MessengerPlatform.TELEGRAM)
+    if adapter is not None:
+        return adapter
+
+    settings = get_settings()
+    if not settings.bot_token:
+        return None
+
+    try:
+        from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
+
+        await bootstrap_messenger_adapters(
+            bot=None,
+            max_bot_enabled=settings.max_bot_enabled,
+            max_bot_token=settings.max_bot_token,
+        )
+    except Exception:
+        return None
+    return get_registry().get(MessengerPlatform.TELEGRAM)
+
+
+async def inspect_telegram_bot_profile_probe() -> dict[str, Any]:
+    cached = _get_cached_telegram_profile_probe()
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    payload: dict[str, Any] = {
+        "token_valid": None,
+        "bot_profile_resolved": False,
+        "bot_profile_name": None,
+        "telegram_link_base_resolved": False,
+        "telegram_link_base_source": "provider",
+        "telegram_link_base": None,
+        "error": None,
+        "message": None,
+    }
+
+    if not settings.bot_enabled:
+        payload.update(
+            {
+                "token_valid": False,
+                "telegram_link_base_source": "missing",
+                "error": "telegram_bot_disabled",
+                "message": "BOT_ENABLED должен быть включен для Telegram entry.",
+            }
+        )
+        return _store_telegram_profile_probe(payload)
+    if not settings.bot_token:
+        payload.update(
+            {
+                "token_valid": False,
+                "telegram_link_base_source": "missing",
+                "error": "telegram_token_missing",
+                "message": "BOT_TOKEN не настроен.",
+            }
+        )
+        return _store_telegram_profile_probe(payload)
+
+    adapter = await _ensure_telegram_bot_profile_adapter()
+    if adapter is None or not (hasattr(adapter, "get_bot_profile") or hasattr(adapter, "get_me")):
+        payload.update(
+            {
+                "error": "telegram_profile_unavailable",
+                "message": "Telegram adapter не инициализирован.",
+            }
+        )
+        return _store_telegram_profile_probe(payload)
+
+    try:
+        profile_loader = getattr(adapter, "get_bot_profile", None) or getattr(adapter, "get_me")
+        profile_payload = await profile_loader()
+    except Exception as exc:
+        message = str(exc)
+        payload.update(
+            {
+                "token_valid": False if "token" in message.lower() or "unauthorized" in message.lower() else None,
+                "error": "telegram_profile_unavailable",
+                "message": message or "Профиль Telegram бота недоступен.",
+            }
+        )
+        return _store_telegram_profile_probe(payload)
+
+    resolved_link_base = _extract_telegram_profile_link_base(profile_payload)
+    payload.update(
+        {
+            "token_valid": True,
+            "bot_profile_resolved": True,
+            "bot_profile_name": _extract_telegram_profile_name(profile_payload),
+            "telegram_link_base_resolved": bool(resolved_link_base),
+            "telegram_link_base_source": "provider" if resolved_link_base else "missing",
+            "telegram_link_base": resolved_link_base or None,
+        }
+    )
+    if not resolved_link_base:
+        payload.update(
+            {
+                "error": "telegram_link_base_unresolved",
+                "message": "Не удалось определить публичную ссылку Telegram бота.",
+            }
+        )
+    return _store_telegram_profile_probe(payload)
+
+
+async def get_candidate_portal_telegram_entry_status_async() -> dict[str, Any]:
+    portal_status = get_candidate_portal_public_status()
+    profile_probe = await inspect_telegram_bot_profile_probe()
+    link_base = str(profile_probe.get("telegram_link_base") or "").strip().rstrip("/")
+    token_valid = profile_probe.get("token_valid")
+    if token_valid is False:
+        return {
+            "ready": False,
+            "url": link_base or None,
+            "error": str(profile_probe.get("error") or "telegram_token_invalid"),
+            "message": str(profile_probe.get("message") or "Telegram токен недействителен."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not profile_probe.get("bot_profile_resolved"):
+        return {
+            "ready": False,
+            "url": link_base or None,
+            "error": str(profile_probe.get("error") or "telegram_profile_unavailable"),
+            "message": str(profile_probe.get("message") or "Профиль Telegram бота недоступен."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not link_base:
+        return {
+            "ready": False,
+            "url": None,
+            "error": str(profile_probe.get("error") or "telegram_link_base_unresolved"),
+            "message": str(profile_probe.get("message") or "Не удалось определить публичную ссылку Telegram бота."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    if not portal_status["ready"]:
+        return {
+            "ready": False,
+            "url": link_base,
+            "error": str(portal_status["error"] or "candidate_portal_public_url_invalid"),
+            "message": str(portal_status["message"] or "Публичный URL кабинета кандидата не готов."),
+            "portal": portal_status,
+            **profile_probe,
+        }
+    return {
+        "ready": True,
+        "url": link_base,
+        "error": None,
+        "message": None,
+        "portal": portal_status,
+        **profile_probe,
+    }
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -453,6 +662,12 @@ def invalidate_max_bot_profile_probe_cache() -> None:
     _max_bot_profile_cache["key"] = None
     _max_bot_profile_cache["fetched_at"] = 0.0
     _max_bot_profile_cache["payload"] = None
+
+
+def invalidate_telegram_bot_profile_probe_cache() -> None:
+    _telegram_bot_profile_cache["key"] = None
+    _telegram_bot_profile_cache["fetched_at"] = 0.0
+    _telegram_bot_profile_cache["payload"] = None
 
 
 def _portal_vacancy_label(candidate: User) -> str:
@@ -592,6 +807,40 @@ def sign_candidate_portal_token(
     )
 
 
+def sign_candidate_portal_hh_entry_token(
+    *,
+    candidate_uuid: str,
+    journey_session_id: int,
+    session_version: int,
+    source_channel: str = "hh",
+) -> str:
+    candidate_uuid_value = str(candidate_uuid or "").strip()
+    if not candidate_uuid_value:
+        raise CandidatePortalError("HH entry token requires candidate_uuid")
+    if int(journey_session_id or 0) <= 0 or int(session_version or 0) <= 0:
+        raise CandidatePortalError("HH entry token requires journey_session_id and session_version")
+
+    payload = {
+        "cid": candidate_uuid_value,
+        "jid": int(journey_session_id),
+        "sv": int(session_version),
+        "src": str(source_channel or "hh").strip() or "hh",
+        "iat": int(_utcnow().timestamp()),
+    }
+    body = _urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    )
+    settings = get_settings()
+    signature = _urlsafe_b64encode(
+        hmac.new(
+            settings.session_secret.encode("utf-8"),
+            body.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+    )
+    return f"{HH_ENTRY_TOKEN_PREFIX}{signature}{body}"
+
+
 def sign_candidate_portal_max_launch_token(
     *,
     candidate_uuid: str,
@@ -651,6 +900,56 @@ def parse_candidate_portal_token(value: str) -> CandidatePortalAccess:
         source_channel=str(payload.get("source_channel") or "portal"),
         journey_session_id=int(payload["journey_session_id"]) if payload.get("journey_session_id") not in (None, "") else None,
         session_version=int(payload["session_version"]) if payload.get("session_version") not in (None, "") else None,
+    )
+
+
+def parse_candidate_portal_hh_entry_token(value: str) -> CandidatePortalAccess:
+    raw = (value or "").strip()
+    if not raw.startswith(HH_ENTRY_TOKEN_PREFIX):
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    signature_length = 43
+    offset = len(HH_ENTRY_TOKEN_PREFIX)
+    if len(raw) <= offset + signature_length:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+    provided_signature = raw[offset : offset + signature_length]
+    body = raw[offset + signature_length :]
+
+    settings = get_settings()
+    expected_signature = _urlsafe_b64encode(
+        hmac.new(
+            settings.session_secret.encode("utf-8"),
+            body.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+    )
+    if not hmac.compare_digest(provided_signature, expected_signature):
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    try:
+        payload = json.loads(_urlsafe_b64decode(body).decode("utf-8"))
+    except CandidatePortalAuthError:
+        raise
+    except Exception as exc:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.") from exc
+
+    candidate_uuid = str(payload.get("cid") or "").strip() or None
+    journey_session_id = int(payload.get("jid") or 0)
+    session_version = int(payload.get("sv") or 0)
+    issued_at = int(payload.get("iat") or 0)
+    if not candidate_uuid or journey_session_id <= 0 or session_version <= 0 or issued_at <= 0:
+        raise CandidatePortalAuthError("Ссылка для входа недействительна.")
+
+    if int(_utcnow().timestamp()) - issued_at > int(settings.candidate_portal_token_ttl_seconds):
+        raise CandidatePortalAuthError("Ссылка для входа устарела.")
+
+    return CandidatePortalAccess(
+        candidate_uuid=candidate_uuid,
+        telegram_id=None,
+        entry_channel=PORTAL_DEFAULT_ENTRY_CHANNEL,
+        source_channel=str(payload.get("src") or "hh"),
+        journey_session_id=journey_session_id,
+        session_version=session_version,
     )
 
 
@@ -748,6 +1047,29 @@ def build_candidate_max_mini_app_url(
     return f"{base}{separator}startapp={quote(token, safe='')}"
 
 
+def build_candidate_hh_entry_url(
+    *,
+    candidate_uuid: str,
+    journey_session_id: int,
+    session_version: int,
+    source_channel: str = "hh",
+) -> str:
+    status = get_candidate_portal_public_status()
+    if not status["ready"]:
+        return ""
+    token = sign_candidate_portal_hh_entry_token(
+        candidate_uuid=candidate_uuid,
+        journey_session_id=journey_session_id,
+        session_version=session_version,
+        source_channel=source_channel,
+    )
+    encoded_token = quote(str(token).strip(), safe="")
+    base = str(status["url"] or "").rstrip("/")
+    if base.endswith("/candidate"):
+        return f"{base}/start?entry={encoded_token}"
+    return f"{base}/candidate/start?entry={encoded_token}"
+
+
 def build_candidate_public_portal_url(
     *,
     candidate_uuid: str | None = None,
@@ -814,6 +1136,22 @@ async def build_candidate_public_max_mini_app_url_async(
         start_param=token,
         link_base=str(status["url"] or ""),
     )
+
+
+async def build_candidate_public_telegram_entry_url_async(
+    session: AsyncSession,
+    *,
+    candidate_uuid: str,
+) -> str:
+    status = await get_candidate_portal_telegram_entry_status_async()
+    if not status["ready"]:
+        return ""
+    invite = await ensure_candidate_invite_token(session, candidate_uuid, channel="telegram")
+    link_base = str(status.get("url") or "").strip().rstrip("/")
+    if not link_base or not invite.token:
+        return ""
+    separator = "&" if "?" in link_base else "?"
+    return f"{link_base}{separator}start={quote(str(invite.token), safe='')}"
 
 
 def is_candidate_portal_session_valid(payload: object) -> bool:
@@ -1016,6 +1354,107 @@ async def validate_candidate_portal_session_payload(
     if journey.status != CandidateJourneySessionStatus.ACTIVE.value:
         return False
     return int(journey.session_version or 1) == session_version
+
+
+async def build_candidate_entry_options(
+    session: AsyncSession,
+    *,
+    candidate: User,
+    journey: CandidateJourneySession,
+    source_channel: str = "hh",
+) -> dict[str, dict[str, Any]]:
+    portal_status = get_candidate_portal_public_status()
+    web_launch_url = ""
+    if candidate.candidate_id:
+        web_launch_url = build_candidate_public_portal_url(
+            candidate_uuid=str(candidate.candidate_id),
+            entry_channel="web",
+            source_channel=f"{source_channel}_web",
+            journey_session_id=int(journey.id),
+            session_version=int(journey.session_version or 1),
+        )
+
+    max_status = await get_candidate_portal_max_entry_status_async()
+    max_launch_url = ""
+    if candidate.candidate_id and str(max_status.get("url") or "").strip():
+        invite = await ensure_candidate_invite_token(session, str(candidate.candidate_id), channel="max")
+        if invite.token:
+            public_link = str(max_status.get("url") or "").strip().rstrip("/")
+            separator = "&" if "?" in public_link else "?"
+            max_launch_url = f"{public_link}{separator}start={quote(str(invite.token), safe='')}"
+
+    telegram_status = await get_candidate_portal_telegram_entry_status_async()
+    telegram_launch_url = ""
+    if candidate.candidate_id:
+        telegram_launch_url = await build_candidate_public_telegram_entry_url_async(
+            session,
+            candidate_uuid=str(candidate.candidate_id),
+        )
+
+    return {
+        "web": {
+            "channel": "web",
+            "enabled": bool(portal_status.get("ready") and web_launch_url),
+            "launch_url": web_launch_url or None,
+            "reason_if_blocked": None
+            if portal_status.get("ready") and web_launch_url
+            else str(portal_status.get("error") or "candidate_portal_public_url_invalid"),
+            "requires_bot_start": False,
+            "type": "cabinet",
+        },
+        "max": {
+            "channel": "max",
+            "enabled": bool(max_status.get("ready") and max_launch_url),
+            "launch_url": max_launch_url or None,
+            "reason_if_blocked": None
+            if max_status.get("ready") and max_launch_url
+            else str(max_status.get("error") or "max_entry_blocked"),
+            "requires_bot_start": True,
+            "type": "external",
+        },
+        "telegram": {
+            "channel": "telegram",
+            "enabled": bool(telegram_status.get("ready") and telegram_launch_url),
+            "launch_url": telegram_launch_url or None,
+            "reason_if_blocked": None
+            if telegram_status.get("ready") and telegram_launch_url
+            else str(telegram_status.get("error") or "telegram_entry_blocked"),
+            "requires_bot_start": True,
+            "type": "external",
+        },
+    }
+
+
+async def record_candidate_entry_selection(
+    session: AsyncSession,
+    *,
+    journey: CandidateJourneySession,
+    channel: str,
+    source: str,
+    options_snapshot: list[str],
+) -> None:
+    now = _utcnow()
+    normalized_channel = str(channel or PORTAL_DEFAULT_ENTRY_CHANNEL).strip().lower() or PORTAL_DEFAULT_ENTRY_CHANNEL
+    normalized_source = str(source or "portal").strip().lower() or "portal"
+    meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
+    history_raw = meta.get("entry_channel_history")
+    history = list(history_raw) if isinstance(history_raw, list) else []
+    history.append(
+        {
+            "channel": normalized_channel,
+            "source": normalized_source,
+            "selected_at": now.isoformat(),
+        }
+    )
+    meta["entry_source"] = normalized_source
+    meta["last_entry_channel"] = normalized_channel
+    meta["last_entry_channel_selected_at"] = now.isoformat()
+    meta["available_channels_snapshot"] = list(options_snapshot)
+    meta["entry_channel_history"] = history[-10:]
+    journey.payload_json = meta
+    journey.entry_channel = normalized_channel
+    journey.last_activity_at = now
+    await session.flush()
 
 
 async def upsert_step_state(
@@ -1711,6 +2150,14 @@ async def build_candidate_portal_journey(
         available_channels.append("telegram")
     if str(candidate.max_user_id or "").strip():
         available_channels.append("max")
+    available_channels_snapshot = journey_meta.get("available_channels_snapshot")
+    if isinstance(available_channels_snapshot, list):
+        available_channels = [
+            str(item).strip()
+            for item in available_channels_snapshot
+            if str(item).strip()
+        ] or available_channels
+    last_entry_channel = str(journey_meta.get("last_entry_channel") or journey.entry_channel or entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL).strip() or PORTAL_DEFAULT_ENTRY_CHANNEL
 
     return {
         "candidate": {
@@ -1818,6 +2265,14 @@ async def build_candidate_portal_journey(
             "journey_key": journey.journey_key,
             "journey_version": journey.journey_version,
             "entry_channel": journey.entry_channel,
+            "last_entry_channel": last_entry_channel,
+            "available_channels": available_channels,
+            "channel_options": await build_candidate_entry_options(
+                session,
+                candidate=candidate,
+                journey=journey,
+                source_channel="cabinet",
+            ),
             "current_step": current_step,
             "current_step_label": PORTAL_STEP_LABELS.get(current_step, current_step.title() if current_step else "Статус"),
             "next_action": next_action,

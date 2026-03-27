@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,6 +15,8 @@ from backend.domain import analytics
 from backend.domain.candidates.portal_service import (
     PORTAL_SESSION_KEY,
     build_candidate_portal_journey,
+    build_candidate_entry_options,
+    build_candidate_hh_entry_url,
     build_candidate_portal_session_payload,
     cancel_candidate_portal_slot,
     complete_screening,
@@ -24,8 +26,10 @@ from backend.domain.candidates.portal_service import (
     get_latest_test1_result_for_journey,
     get_candidate_portal_user,
     is_candidate_portal_session_valid,
+    parse_candidate_portal_hh_entry_token,
     resolve_candidate_portal_access_token,
     reserve_candidate_portal_slot,
+    record_candidate_entry_selection,
     reschedule_candidate_portal_slot,
     resolve_candidate_portal_user,
     save_candidate_profile,
@@ -54,6 +58,11 @@ PORTAL_RECOVERY_STATE_BLOCKED = "blocked"
 
 class CandidatePortalExchangePayload(BaseModel):
     token: str = Field(min_length=8)
+
+
+class CandidateEntrySelectPayload(BaseModel):
+    entry_token: str = Field(min_length=8)
+    channel: Literal["web", "max", "telegram"]
 
 
 class CandidatePortalProfilePayload(BaseModel):
@@ -334,6 +343,167 @@ def _portal_error(exc: CandidatePortalError) -> HTTPException:
         status_code=status.HTTP_409_CONFLICT,
         detail={"message": str(exc)},
     )
+
+
+async def _resolve_candidate_entry_gateway(
+    *,
+    entry_token: str,
+) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
+    async with async_session() as session:
+        async with session.begin():
+            access = parse_candidate_portal_hh_entry_token(entry_token)
+            candidate = await resolve_candidate_portal_user(session, access)
+            if candidate is None:
+                raise CandidatePortalAuthError("Кандидатская сессия не найдена.")
+            journey = await ensure_candidate_portal_session(
+                session,
+                candidate,
+                entry_channel=access.entry_channel,
+            )
+            if (
+                access.journey_session_id is not None
+                and access.journey_session_id != int(journey.id)
+            ) or (
+                access.session_version is not None
+                and access.session_version != int(journey.session_version or 1)
+            ):
+                raise CandidatePortalAuthError("Ссылка для входа устарела.")
+            journey_payload = await build_candidate_portal_journey(
+                session,
+                candidate,
+                entry_channel=str(journey.entry_channel or access.entry_channel or "web"),
+                journey=journey,
+            )
+            options = await build_candidate_entry_options(
+                session,
+                candidate=candidate,
+                journey=journey,
+                source_channel="hh",
+            )
+            return candidate, journey, journey_payload, options
+
+
+@router.get("/entry/resolve")
+async def resolve_candidate_entry_gateway(entry: str) -> dict[str, Any]:
+    try:
+        candidate, journey, journey_payload, options = await _resolve_candidate_entry_gateway(entry_token=entry)
+    except CandidatePortalAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": str(exc),
+                "code": "hh_entry_invalid",
+                "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                "can_resume": False,
+                "requires_fresh_link": True,
+            },
+        ) from exc
+
+    return {
+        "candidate": {
+            "id": int(candidate.id),
+            "candidate_id": str(candidate.candidate_id or ""),
+            "fio": candidate.fio,
+            "city": candidate.city,
+            "vacancy_label": journey_payload["candidate"].get("vacancy_label"),
+            "company": journey_payload.get("company", {}).get("name"),
+        },
+        "journey": {
+            "session_id": int(journey.id),
+            "current_step": journey_payload["journey"].get("current_step"),
+            "current_step_label": journey_payload["journey"].get("current_step_label"),
+            "status": journey_payload["candidate"].get("status"),
+            "status_label": journey_payload["candidate"].get("status_label"),
+            "next_action": journey_payload["journey"].get("next_action"),
+            "last_entry_channel": journey_payload["journey"].get("last_entry_channel"),
+            "available_channels": journey_payload["journey"].get("available_channels") or ["web"],
+        },
+        "options": options,
+        "company_preview": {
+            "summary": journey_payload.get("company", {}).get("summary"),
+            "highlights": journey_payload.get("company", {}).get("highlights") or [],
+        },
+        "suggested_channel": "web",
+        "fallback_policy": "web_always_available_when_portal_public_ready",
+    }
+
+
+@router.post("/entry/select")
+@limiter.limit(PUBLIC_PORTAL_MUTATION_LIMIT, key_func=get_client_ip)
+async def select_candidate_entry_channel(request: Request, payload: CandidateEntrySelectPayload) -> dict[str, Any]:
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                access = parse_candidate_portal_hh_entry_token(payload.entry_token)
+                candidate = await resolve_candidate_portal_user(session, access)
+                if candidate is None:
+                    raise CandidatePortalAuthError("Кандидатская сессия не найдена.")
+                journey = await ensure_candidate_portal_session(
+                    session,
+                    candidate,
+                    entry_channel=access.entry_channel,
+                )
+                if (
+                    access.journey_session_id is not None
+                    and access.journey_session_id != int(journey.id)
+                ) or (
+                    access.session_version is not None
+                    and access.session_version != int(journey.session_version or 1)
+                ):
+                    raise CandidatePortalAuthError("Ссылка для входа устарела.")
+                options = await build_candidate_entry_options(
+                    session,
+                    candidate=candidate,
+                    journey=journey,
+                    source_channel="hh",
+                )
+                option = options.get(payload.channel)
+                if not option or not option.get("enabled") or not option.get("launch_url"):
+                    reason = str(option.get("reason_if_blocked") or "channel_entry_blocked") if isinstance(option, dict) else "channel_entry_blocked"
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "message": f"Канал {payload.channel} сейчас недоступен.",
+                            "code": reason,
+                            "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                            "can_resume": False,
+                            "requires_fresh_link": False,
+                        },
+                    )
+                await record_candidate_entry_selection(
+                    session,
+                    journey=journey,
+                    channel=payload.channel,
+                    source="hh",
+                    options_snapshot=[key for key, item in options.items() if bool(item.get("enabled"))],
+                )
+                cabinet_url = options.get("web", {}).get("launch_url")
+                return {
+                    "channel": payload.channel,
+                    "recorded": True,
+                    "launch": {
+                        "type": option.get("type") or ("cabinet" if payload.channel == "web" else "external"),
+                        "url": option.get("launch_url"),
+                        "requires_bot_start": bool(option.get("requires_bot_start")),
+                    },
+                    "cabinet_url": cabinet_url,
+                    "delivery_status": {
+                        "status": "launcher_ready",
+                        "source": "hh_gateway",
+                        "blocked_reason": None,
+                    },
+                }
+    except CandidatePortalAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": str(exc),
+                "code": "hh_entry_invalid",
+                "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+                "can_resume": False,
+                "requires_fresh_link": True,
+            },
+        ) from exc
 
 
 @router.post("/session/exchange")

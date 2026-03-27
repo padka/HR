@@ -21,10 +21,12 @@ from backend.domain.candidates.models import (
 )
 from backend.domain.candidates.portal_service import (
     build_candidate_public_max_mini_app_url_async,
+    build_candidate_public_telegram_entry_url_async,
     build_candidate_public_portal_url,
     get_candidate_active_slot,
     get_candidate_portal_public_status,
     get_candidate_portal_max_entry_status_async,
+    get_candidate_portal_telegram_entry_status_async,
     inspect_max_bot_profile_probe,
 )
 from backend.domain.models import OutboxNotification
@@ -208,9 +210,13 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
             .limit(1)
         )
         active_slot = await get_candidate_active_slot(session, candidate)
+        last_entry_channel = None
+        if active_journey is not None and isinstance(active_journey.payload_json, dict):
+            last_entry_channel = str(active_journey.payload_json.get("last_entry_channel") or "").strip() or None
 
     portal_status = get_candidate_portal_public_status()
     max_status = await get_candidate_portal_max_entry_status_async()
+    telegram_status = await get_candidate_portal_telegram_entry_status_async()
     degraded_channels = await get_messenger_channel_health()
     max_channel_state = degraded_channels.get("max") or {}
     active_slot_status = str(getattr(active_slot, "status", "") or "").strip().lower()
@@ -222,6 +228,7 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         config_errors.append(str(max_status["message"]))
     browser_link = None
     mini_app_link = None
+    telegram_link = None
     if active_journey is not None and candidate.candidate_id:
         browser_link = build_candidate_public_portal_url(
             candidate_uuid=str(candidate.candidate_id),
@@ -236,6 +243,12 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
             session_version=int(active_journey.session_version or 1),
             source_channel="admin_health",
         )
+        async with async_session() as session:
+            async with session.begin():
+                telegram_link = await build_candidate_public_telegram_entry_url_async(
+                    session,
+                    candidate_uuid=str(candidate.candidate_id),
+                )
 
     delivery_block_reason = None
     if not portal_status.get("ready"):
@@ -268,6 +281,7 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "public_link": str(max_status.get("url") or "").strip() or None,
         "portal_entry_ready": bool(portal_status.get("ready")),
         "max_entry_ready": bool(max_status.get("ready")),
+        "telegram_entry_ready": bool(telegram_status.get("ready")),
         "token_valid": max_status.get("token_valid"),
         "bot_profile_resolved": bool(max_status.get("bot_profile_resolved")),
         "bot_profile_name": max_status.get("bot_profile_name"),
@@ -275,9 +289,11 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "max_link_base_source": max_status.get("max_link_base_source"),
         "browser_link": browser_link or None,
         "mini_app_link": mini_app_link or None,
+        "telegram_link": telegram_link or None,
         "config_errors": config_errors,
         "active_journey_id": int(active_journey.id) if active_journey is not None else None,
         "session_version": int(active_journey.session_version or 1) if active_journey is not None else None,
+        "last_entry_channel": last_entry_channel or (str(active_journey.entry_channel or "").strip() if active_journey is not None else None),
         "last_link_issued_at": _iso(latest_invite.created_at) if latest_invite is not None else None,
         "restart_allowed": restart_allowed,
         "delivery_ready": delivery_ready,

@@ -19,6 +19,7 @@ import {
   restartCandidatePortal,
   scheduleCandidateInterview,
   scheduleCandidateIntroDay,
+  sendCandidateHhEntryLink,
   sendCandidateChatMessage,
   upsertCandidateAiResume,
   waitForCandidateChat,
@@ -211,12 +212,17 @@ export function useCandidateActions(candidateId: number) {
     mutationFn: () => restartCandidatePortal(candidateId),
   })
 
+  const sendHhEntryLinkMutation = useMutation({
+    mutationFn: () => sendCandidateHhEntryLink(candidateId),
+  })
+
   return {
     actionMutation,
     scheduleInterviewMutation,
     scheduleIntroDayMutation,
     createMaxLinkMutation,
     restartPortalMutation,
+    sendHhEntryLinkMutation,
   }
 }
 

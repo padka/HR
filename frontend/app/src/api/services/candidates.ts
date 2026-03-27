@@ -111,6 +111,7 @@ export type CandidateChannelHealth = {
   public_link?: string | null
   portal_entry_ready?: boolean
   max_entry_ready?: boolean
+  telegram_entry_ready?: boolean
   token_valid?: boolean | null
   bot_profile_resolved?: boolean
   bot_profile_name?: string | null
@@ -118,9 +119,11 @@ export type CandidateChannelHealth = {
   max_link_base_source?: 'env' | 'provider' | 'missing' | null
   browser_link?: string | null
   mini_app_link?: string | null
+  telegram_link?: string | null
   config_errors?: string[] | null
   active_journey_id?: number | null
   session_version?: number | null
+  last_entry_channel?: string | null
   last_link_issued_at?: string | null
   restart_allowed?: boolean
   delivery_ready?: boolean
@@ -136,6 +139,27 @@ export type CandidateChannelHealth = {
   } | null
   conflict_badge?: boolean
   degraded_channels?: Record<string, { status?: string | null; degraded_reason?: string | null; reason?: string | null }> | null
+}
+
+export type CandidateHhEntryDelivery = {
+  ready?: boolean
+  blocked_reason?: string | null
+  hh_entry_url?: string | null
+  cabinet_url?: string | null
+  last_sent_at?: string | null
+  last_status?: string | null
+  last_block_reason?: string | null
+  last_action_name?: string | null
+  selected_channel?: string | null
+  fallback_channel_options?: string[]
+  channels?: Record<string, {
+    channel?: string | null
+    enabled?: boolean
+    launch_url?: string | null
+    reason_if_blocked?: string | null
+    requires_bot_start?: boolean
+    type?: string | null
+  }>
 }
 
 export type TestQuestionAnswer = {
@@ -389,6 +413,23 @@ export type CandidateHHSummary = {
     created_at?: string | null
     finished_at?: string | null
   }>
+  entry_delivery?: CandidateHhEntryDelivery | null
+}
+
+export type CandidateHhSendEntryPayload = {
+  ok: boolean
+  sent?: boolean
+  blocked_reason?: string | null
+  fallback_channel_options?: string[]
+  cabinet_url?: string | null
+  hh_entry_url?: string | null
+  action_id?: string | null
+  action_name?: string | null
+  resulting_employer_state?: {
+    id?: string | null
+    name?: string | null
+  } | null
+  channels?: CandidateHhEntryDelivery['channels']
 }
 
 export type AIRiskItem = {
@@ -666,6 +707,12 @@ export function fetchCandidateChannelHealth(candidateId: number) {
 
 export function fetchCandidateHHSummary(candidateId: number) {
   return apiFetch<CandidateHHSummary>(`/candidates/${candidateId}/hh`)
+}
+
+export function sendCandidateHhEntryLink(candidateId: number) {
+  return apiFetch<CandidateHhSendEntryPayload>(`/candidates/${candidateId}/hh/send-entry-link`, {
+    method: 'POST',
+  })
 }
 
 export function fetchCandidateCohortComparison(candidateId: number) {

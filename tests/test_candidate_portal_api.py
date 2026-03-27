@@ -15,6 +15,7 @@ from backend.domain.candidates.portal_service import (
     bump_candidate_portal_session_version,
     ensure_candidate_portal_session,
     get_candidate_portal_questions,
+    sign_candidate_portal_hh_entry_token,
     sign_candidate_portal_max_launch_token,
     sign_candidate_portal_token,
 )
@@ -314,7 +315,69 @@ def test_candidate_portal_journey_can_be_restored_from_header_token(monkeypatch)
     assert payload["journey"]["current_step"] == "profile"
     assert payload["dashboard"]["primary_action"]["key"] == "complete_profile"
     assert payload["journey"]["inbox"]["conversation_id"] == f"candidate:{seeded['candidate_id']}"
+    assert payload["journey"]["channel_options"]["web"]["enabled"] is True
     assert payload["resources"]["faq"]
+
+
+def test_candidate_entry_gateway_resolves_web_and_records_selection(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+    app = app_module.create_app()
+    seeded: dict[str, int | str] = {}
+
+    with TestClient(app) as client:
+        seeded = asyncio.run(_seed_candidate_portal_flow())
+
+        async def _build_entry_token() -> tuple[str, int]:
+            async with async_session() as session:
+                candidate = await session.get(User, int(seeded["candidate_id"]))
+                assert candidate is not None
+                journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+                await session.commit()
+                return (
+                    sign_candidate_portal_hh_entry_token(
+                        candidate_uuid=str(seeded["candidate_uuid"]),
+                        journey_session_id=int(journey.id),
+                        session_version=int(journey.session_version or 1),
+                    ),
+                    int(journey.id),
+                )
+
+        entry_token, journey_id = asyncio.run(_build_entry_token())
+        resolve = client.get(f"/api/candidate/entry/resolve?entry={entry_token}")
+        assert resolve.status_code == 200
+        resolve_payload = resolve.json()
+        assert resolve_payload["candidate"]["id"] == seeded["candidate_id"]
+        assert resolve_payload["options"]["web"]["enabled"] is True
+        assert resolve_payload["suggested_channel"] == "web"
+
+        select_response = client.post(
+            "/api/candidate/entry/select",
+            json={"entry_token": entry_token, "channel": "web"},
+        )
+
+    assert select_response.status_code == 200
+    select_payload = select_response.json()
+    assert select_payload["channel"] == "web"
+    assert select_payload["recorded"] is True
+    assert select_payload["launch"]["type"] == "cabinet"
+    assert "candidate/start" in str(select_payload["launch"]["url"])
+
+    async def _load_payload() -> dict[str, object]:
+        async with async_session() as session:
+            candidate = await session.get(User, int(seeded["candidate_id"]))
+            assert candidate is not None
+            journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
+            assert journey is not None
+            return dict(journey.payload_json or {})
+
+    payload_meta = asyncio.run(_load_payload())
+    assert payload_meta["entry_source"] == "hh"
+    assert payload_meta["last_entry_channel"] == "web"
+    assert "web" in payload_meta["available_channels_snapshot"]
 
 
 def test_candidate_portal_journey_can_be_restored_from_resume_cookie_after_browser_restart(monkeypatch):

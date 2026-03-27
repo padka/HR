@@ -8,6 +8,7 @@ export const CANDIDATE_API_URL = '/api/candidate'
 
 export type CandidatePortalStepStatus = 'pending' | 'in_progress' | 'completed' | 'skipped'
 export type CandidatePortalRecoveryState = 'recoverable' | 'needs_new_link' | 'blocked'
+export type CandidateEntryChannel = 'web' | 'max' | 'telegram'
 
 export type CandidatePortalQuestion = {
   index: number
@@ -149,6 +150,9 @@ export type CandidatePortalJourneyResponse = {
     journey_key: string
     journey_version: string
     entry_channel: string
+    last_entry_channel?: string | null
+    available_channels?: string[]
+    channel_options?: Partial<Record<CandidateEntryChannel, CandidateEntryGatewayOption>>
     current_step: 'profile' | 'screening' | 'slot_selection' | 'status'
     current_step_label: string
     next_action: string
@@ -190,6 +194,59 @@ export type CandidatePortalJourneyResponse = {
       tz?: string | null
     }>
   }
+}
+
+export type CandidateEntryGatewayOption = {
+  channel: CandidateEntryChannel
+  enabled: boolean
+  launch_url?: string | null
+  reason_if_blocked?: string | null
+  requires_bot_start?: boolean
+  type?: 'cabinet' | 'external' | null
+}
+
+export type CandidateEntryGatewayResponse = {
+  candidate: {
+    id: number
+    candidate_id: string
+    fio?: string | null
+    city?: string | null
+    vacancy_label?: string | null
+    company?: string | null
+  }
+  journey: {
+    session_id: number
+    current_step?: string | null
+    current_step_label?: string | null
+    status?: string | null
+    status_label?: string | null
+    next_action?: string | null
+    last_entry_channel?: string | null
+    available_channels?: string[]
+  }
+  options: Record<CandidateEntryChannel, CandidateEntryGatewayOption>
+  company_preview?: {
+    summary?: string | null
+    highlights?: string[]
+  }
+  suggested_channel?: CandidateEntryChannel | null
+  fallback_policy?: string | null
+}
+
+export type CandidateEntrySelectResponse = {
+  channel: CandidateEntryChannel
+  recorded: boolean
+  launch: {
+    type: 'cabinet' | 'external'
+    url?: string | null
+    requires_bot_start?: boolean
+  }
+  cabinet_url?: string | null
+  delivery_status?: {
+    status?: string | null
+    source?: string | null
+    blocked_reason?: string | null
+  } | null
 }
 
 type CandidateFetchInit = RequestInit & {
@@ -302,6 +359,20 @@ export const fetchCandidatePortalJourney = async (options?: { skipStoredPortalTo
     throw error
   }
 }
+
+export const resolveCandidateEntryGateway = async (entryToken: string) => {
+  const query = new URLSearchParams({ entry: entryToken })
+  return await candidateFetch<CandidateEntryGatewayResponse>(`/entry/resolve?${query.toString()}`, {
+    skipStoredPortalToken: true,
+  })
+}
+
+export const selectCandidateEntryChannel = async (entryToken: string, channel: CandidateEntryChannel) =>
+  await candidateFetch<CandidateEntrySelectResponse>('/entry/select', {
+    method: 'POST',
+    json: { entry_token: entryToken, channel },
+    skipStoredPortalToken: true,
+  })
 
 export const saveCandidatePortalProfile = async (payload: {
   fio: string
