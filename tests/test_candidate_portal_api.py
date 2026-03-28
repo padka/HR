@@ -801,3 +801,42 @@ def test_candidate_shared_access_verify_rejects_invalid_code(monkeypatch):
 
     assert verify.status_code == 401
     assert verify.json()["detail"]["code"] == "candidate_shared_access_code_invalid"
+
+
+def test_candidate_shared_access_challenge_hides_unknown_or_ambiguous_phone(monkeypatch):
+    _configure_env(monkeypatch)
+    settings_module.get_settings.cache_clear()
+    from backend.apps.admin_ui import app as app_module
+    from backend.apps.admin_ui.services import candidate_shared_access as shared_access_module
+
+    monkeypatch.setattr(app_module, "setup_bot_state", _fake_setup_bot_state)
+
+    async def _fake_deliver(session, *, candidate, code: str):
+        return "hh"
+
+    monkeypatch.setattr(shared_access_module, "deliver_candidate_shared_access_code", _fake_deliver)
+    app = app_module.create_app()
+
+    async def _seed_candidates() -> None:
+        async with async_session() as session:
+            session.add_all(
+                [
+                    User(fio="Known Candidate", city="Москва", phone="+79990003344", source="hh"),
+                    User(fio="Ambiguous One", city="Москва", phone="+79990004455", source="hh"),
+                    User(fio="Ambiguous Two", city="Москва", phone="+79990004455", source="hh"),
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(_seed_candidates())
+
+    with TestClient(app) as client:
+        known = client.post("/api/candidate/access/challenge", json={"phone": "+7 999 000 33 44"})
+        unknown = client.post("/api/candidate/access/challenge", json={"phone": "+7 999 000 55 66"})
+        ambiguous = client.post("/api/candidate/access/challenge", json={"phone": "+7 999 000 44 55"})
+
+    assert known.status_code == 200
+    assert unknown.status_code == 200
+    assert ambiguous.status_code == 200
+    assert known.json()["message"] == unknown.json()["message"] == ambiguous.json()["message"]
+    assert known.json()["delivery_hint"] == unknown.json()["delivery_hint"] == ambiguous.json()["delivery_hint"]

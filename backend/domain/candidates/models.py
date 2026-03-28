@@ -21,10 +21,11 @@ from sqlalchemy import (
     Index,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from sqlalchemy.sql import func
 
 from backend.domain.base import Base
+from backend.domain.candidates.phones import normalize_candidate_phone
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     pass
@@ -36,6 +37,7 @@ class User(Base):
     __table_args__ = (
         Index("ix_users_workflow_status", "workflow_status"),
         Index("ix_users_responsible_recruiter", "responsible_recruiter_id"),
+        Index("ix_users_phone_normalized", "phone_normalized"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -65,6 +67,7 @@ class User(Base):
     )
     fio: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    phone_normalized: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     city: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     responsible_recruiter_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True
@@ -150,6 +153,12 @@ class User(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<User {self.id} cid={self.candidate_id} tg={self.telegram_id} status={self.candidate_status}>"
+
+    @validates("phone")
+    def _sync_phone_normalized(self, _key: str, value: Optional[str]) -> Optional[str]:
+        clean_value = str(value or "").strip() or None
+        self.phone_normalized = normalize_candidate_phone(clean_value)
+        return clean_value
 
 
 class TestResult(Base):

@@ -9,6 +9,7 @@ import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import '@/theme/pages/candidates.css'
 import { fadeIn, listItem, stagger } from '@/shared/motion'
+import { bulkSendSharedPortalInHh } from '@/api/services/candidates'
 
 type CityOption = {
   id: number
@@ -338,6 +339,9 @@ export function CandidatesPage() {
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
   const [movingCandidateId, setMovingCandidateId] = useState<number | null>(null)
   const [hasAnimatedLists, setHasAnimatedLists] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkSharedPortalMessage, setBulkSharedPortalMessage] = useState<string | null>(null)
+  const [bulkSharedPortalError, setBulkSharedPortalError] = useState<Error | null>(null)
   const [calendarFrom, setCalendarFrom] = useState(() => {
     const d = new Date()
     return d.toISOString().slice(0, 10)
@@ -439,6 +443,21 @@ export function CandidatesPage() {
       setMovingCandidateId(null)
     },
   })
+  const bulkSharedPortalMutation = useMutation({
+    mutationFn: async (candidateIds: number[]) => bulkSendSharedPortalInHh(candidateIds),
+    onSuccess: async (payload) => {
+      setBulkSharedPortalError(null)
+      const summary = payload.summary
+      setBulkSharedPortalMessage(
+        `Shared portal: отправлено ${summary.sent}, заблокировано ${summary.blocked}, пропущено ${summary.skipped}.`,
+      )
+      setSelectedIds(new Set())
+      await queryClient.invalidateQueries({ queryKey: ['candidates'] })
+    },
+    onError: (error: Error) => {
+      setBulkSharedPortalError(error)
+    },
+  })
   const deleteCandidateMutate = deleteCandidateMutation.mutate
   const moveKanbanCandidateMutate = moveKanbanCandidateMutation.mutate
 
@@ -502,6 +521,24 @@ export function CandidatesPage() {
   }
 
   useEffect(() => {
+    const currentIds = new Set((data?.items || []).map((item) => item.id))
+    setSelectedIds((prev) => {
+      if (prev.size === currentIds.size) {
+        let unchanged = true
+        prev.forEach((id) => {
+          if (!currentIds.has(id)) unchanged = false
+        })
+        if (unchanged) return prev
+      }
+      const next = new Set<number>()
+      prev.forEach((id) => {
+        if (currentIds.has(id)) next.add(id)
+      })
+      return next
+    })
+  }, [data?.items])
+
+  useEffect(() => {
     setHasAnimatedLists(true)
   }, [])
 
@@ -517,6 +554,40 @@ export function CandidatesPage() {
     setDeletingCandidateId(candidate.id)
     deleteCandidateMutate(candidate.id)
   }, [deleteCandidateMutate])
+
+  const toggleCandidateSelected = useCallback((candidateId: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(candidateId)) {
+        next.delete(candidateId)
+      } else {
+        next.add(candidateId)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleCurrentPageSelection = useCallback(() => {
+    const pageIds = (data?.items || []).map((item) => item.id)
+    if (pageIds.length === 0) return
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      const allSelected = pageIds.every((id) => next.has(id))
+      pageIds.forEach((id) => {
+        if (allSelected) {
+          next.delete(id)
+        } else {
+          next.add(id)
+        }
+      })
+      return next
+    })
+  }, [data?.items])
+
+  const handleBulkSendSharedPortal = useCallback(() => {
+    if (selectedIds.size === 0) return
+    bulkSharedPortalMutation.mutate(Array.from(selectedIds))
+  }, [bulkSharedPortalMutation, selectedIds])
 
   const handleKanbanDragStart = useCallback((event: DragEvent<HTMLDivElement>) => {
     const rawCandidateId = event.currentTarget.dataset.candidateId
@@ -740,10 +811,34 @@ export function CandidatesPage() {
             </select>
           </div>
 
+          {view === 'list' && selectedIds.size > 0 && (
+            <div className="toolbar app-page__toolbar" data-testid="candidates-bulk-bar">
+              <span className="toolbar__label">Выбрано: {selectedIds.size}</span>
+              <button
+                type="button"
+                className="ui-btn ui-btn--primary ui-btn--sm"
+                onClick={handleBulkSendSharedPortal}
+                disabled={bulkSharedPortalMutation.isPending}
+              >
+                {bulkSharedPortalMutation.isPending ? 'Отправляем…' : 'Отправить shared portal в HH'}
+              </button>
+              <button
+                type="button"
+                className="ui-btn ui-btn--ghost ui-btn--sm"
+                onClick={() => setSelectedIds(new Set())}
+                disabled={bulkSharedPortalMutation.isPending}
+              >
+                Снять выбор
+              </button>
+            </div>
+          )}
+
           {isLoading && <p className="text-muted">Загрузка…</p>}
           {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
           {deleteCandidateError && <ApiErrorBanner error={deleteCandidateError} title="Не удалось удалить кандидата" />}
           {kanbanMoveError && <ApiErrorBanner error={kanbanMoveError} title="Не удалось переместить кандидата в канбане" />}
+          {bulkSharedPortalError && <ApiErrorBanner error={bulkSharedPortalError} title="Не удалось отправить shared portal" />}
+          {bulkSharedPortalMessage && <p className="subtitle">{bulkSharedPortalMessage}</p>}
           {data && data.items.length === 0 && (
             <div className="empty-state" data-testid="candidates-empty-state">
               <p className="empty-state__text">
@@ -881,9 +976,18 @@ export function CandidatesPage() {
                     return (
                       <article key={`mobile-candidate-${c.id}`} className="candidate-mobile-card glass glass--subtle">
                         <div className="list-item__header">
-                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
-                            {c.fio || '—'}
-                          </Link>
+                          <div className="toolbar toolbar--compact" style={{ justifyContent: 'space-between', width: '100%' }}>
+                            <label className="ui-inline-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(c.id)}
+                                onChange={() => toggleCandidateSelected(c.id)}
+                              />
+                            </label>
+                            <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
+                              {c.fio || '—'}
+                            </Link>
+                          </div>
                           <span className={`status-badge status-badge--${tone || 'muted'}`}>
                             {c.status?.label || c.status?.slug || '—'}
                           </span>
@@ -930,6 +1034,14 @@ export function CandidatesPage() {
                 <table className="data-table candidates-table" data-testid="candidates-table">
                   <thead className="candidates-thead">
                     <tr>
+                      <th className="data-table__th--checkbox">
+                        <input
+                          type="checkbox"
+                          checked={data.items.length > 0 && data.items.every((item) => selectedIds.has(item.id))}
+                          onChange={toggleCurrentPageSelection}
+                          aria-label="Выбрать всех кандидатов на странице"
+                        />
+                      </th>
                       <th>Кандидат</th>
                       <th>Статус</th>
                       <th>Score</th>
@@ -955,7 +1067,15 @@ export function CandidatesPage() {
                       const scoreTone = candidateScoreTone(c.average_score)
                       const candidateDate = formatCandidateDate(resolveCandidateDate(c))
                       return (
-                        <motion.tr key={c.id} className="candidate-row" variants={firstRenderAnimation ? listItem : undefined}>
+                        <motion.tr key={c.id} className={`candidate-row ${selectedIds.has(c.id) ? 'data-table__row--selected' : ''}`} variants={firstRenderAnimation ? listItem : undefined}>
+                          <td className="candidate-row__cell">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(c.id)}
+                              onChange={() => toggleCandidateSelected(c.id)}
+                              aria-label={`Выбрать кандидата ${c.fio || c.id}`}
+                            />
+                          </td>
                           <td className="candidate-row__cell candidate-row__cell--identity">
                             <div className="candidate-row__identity">
                               <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">

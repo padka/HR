@@ -1041,14 +1041,35 @@ export function CandidateJourneyPage() {
     <div className="candidate-portal">
       <div className="candidate-portal__shell">
         <section className="glass glass--elevated candidate-portal__hero">
-          <div className="candidate-portal__eyebrow">Candidate Cabinet</div>
-          <h1 className="candidate-portal__title">{payload.candidate.fio || 'Ваш кабинет кандидата'}</h1>
-          <p className="candidate-portal__subtitle">{payload.journey.next_action}</p>
-          <div className="candidate-portal__status-meta">
-            {payload.journey.current_step_label ? <span className="candidate-portal__chip">Этап: {payload.journey.current_step_label}</span> : null}
-            {payload.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
-            {payload.journey.entry_channel ? <span className="candidate-portal__chip">Вход: {payload.journey.entry_channel}</span> : null}
-            {statusSummary ? <span className="candidate-portal__chip">{statusSummary}</span> : null}
+          <div className="candidate-portal__split">
+            <div className="candidate-portal__section-stack">
+              <div className="candidate-portal__eyebrow">Candidate Cabinet</div>
+              <h1 className="candidate-portal__title">{payload.candidate.fio || 'Ваш кабинет кандидата'}</h1>
+              <p className="candidate-portal__subtitle">{payload.journey.next_action}</p>
+              <div className="candidate-portal__status-meta">
+                {payload.journey.current_step_label ? <span className="candidate-portal__chip">Этап: {payload.journey.current_step_label}</span> : null}
+                {payload.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
+                {payload.journey.entry_channel ? <span className="candidate-portal__chip">Вход: {payload.journey.entry_channel}</span> : null}
+                {statusSummary ? <span className="candidate-portal__chip">{statusSummary}</span> : null}
+              </div>
+            </div>
+            <div className="candidate-portal__section-stack">
+              <article className="candidate-portal__summary-card">
+                <span className="candidate-portal__summary-label">Что сейчас важно</span>
+                <strong className="candidate-portal__summary-value">{nextStepLabel}</strong>
+                <p className="candidate-portal__card-copy">{nextStepMeta}</p>
+              </article>
+              <div className="candidate-portal__summary-grid" aria-label="Ключевая сводка">
+                <article className="candidate-portal__summary-card">
+                  <span className="candidate-portal__summary-label">Компания</span>
+                  <strong className="candidate-portal__card-title">{companyName}</strong>
+                </article>
+                <article className="candidate-portal__summary-card">
+                  <span className="candidate-portal__summary-label">Собеседование</span>
+                  <strong className="candidate-portal__card-title">{statusSummary || 'Шаг готовится'}</strong>
+                </article>
+              </div>
+            </div>
           </div>
         </section>
 

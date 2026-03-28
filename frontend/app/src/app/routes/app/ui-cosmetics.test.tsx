@@ -464,6 +464,11 @@ const candidateChannelHealthData = {
   max_link_base_resolved: false,
   max_link_base_source: 'missing',
   portal_public_url: 'https://crm.example.test',
+  shared_portal_url: 'https://crm.example.test/candidate/start',
+  shared_portal_ready: true,
+  shared_portal_block_reason: null,
+  last_shared_portal_sent_at: '2031-07-01T08:45:00Z',
+  last_otp_delivery_channel: 'hh',
   public_link: 'https://max.ru/id312260558067_bot',
   browser_link: 'https://crm.example.test/candidate/start?start=signed-token',
   mini_app_link: 'https://max.ru/id312260558067_bot?startapp=launch-token',
@@ -621,9 +626,11 @@ describe('UI cosmetics smoke', () => {
               ready: false,
               blocked_reason: 'hh_message_action_missing',
               cabinet_url: 'https://crm.example.test/candidate/start?start=signed-token',
-              hh_entry_url: 'https://crm.example.test/candidate/start?entry=hh-entry',
+              hh_entry_url: 'https://crm.example.test/candidate/start',
+              shared_portal_url: 'https://crm.example.test/candidate/start',
               last_status: 'blocked',
               selected_channel: 'web',
+              last_otp_delivery_channel: 'hh',
             },
             vacancy: {
               title: 'Оператор склада',
@@ -1071,11 +1078,12 @@ describe('UI cosmetics smoke', () => {
       expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
       expect(screen.getByText(/portal package: failed/)).toBeInTheDocument()
       expect(screen.getByText(/delivery: blocked/)).toBeInTheDocument()
+      expect(screen.getByText(/shared portal: ready/)).toBeInTheDocument()
       expect(screen.getByText(/MAX delivery: MAX токен отклонён провайдером/)).toBeInTheDocument()
       expect(screen.getByText(/HH block: HH не даёт action на отправку сообщения кандидату/)).toBeInTheDocument()
       expect(screen.getByText(/portal package error: HTTP 404/)).toBeInTheDocument()
       expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Отправить ссылку в HH' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Отправить shared portal в HH' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Подготовить browser link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Открыть MAX launcher' })).toBeInTheDocument()

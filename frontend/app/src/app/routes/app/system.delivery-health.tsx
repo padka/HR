@@ -30,6 +30,19 @@ export function MessengerHealthCards({
           <div className="subtitle">
             link base: {portal.max_link_base_source || 'missing'} · {portal.max_link_base || portal.public_url || 'Публичный URL не задан'}
           </div>
+          {portal.shared_access ? (
+            <>
+              <div className="subtitle">
+                shared portal auth: {portal.shared_access.production_ready ? 'ready' : 'attention'} · store: {portal.shared_access.store_backend || 'memory'} · rate-limit: {portal.shared_access.rate_limit_ready ? 'ready' : 'attention'}
+              </div>
+              <div className="subtitle">
+                challenge: {portal.shared_access.challenge_started ?? 0} · rate-limited: {portal.shared_access.challenge_rate_limited ?? 0}
+              </div>
+              <div className="subtitle">
+                verify ok: {portal.shared_access.verify_success ?? 0} · failed: {portal.shared_access.verify_failed ?? 0} · expired: {portal.shared_access.verify_expired ?? 0}
+              </div>
+            </>
+          ) : null}
           <div className="subtitle">
             {portal.public_message || portal.max_entry_message || portal.webhook_message || portal.subscription_message || 'Портал кандидата готов к выдаче ссылок'}
           </div>

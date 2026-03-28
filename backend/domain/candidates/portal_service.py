@@ -38,6 +38,7 @@ from backend.domain.candidates.models import (
     TestResult,
     User,
 )
+from backend.domain.candidates.phones import format_candidate_phone_display, require_candidate_phone
 from backend.domain.candidates.status import CandidateStatus, STATUS_LABELS
 from backend.domain.models import City, Slot, SlotStatus
 from backend.domain.repositories import find_city_by_plain_name
@@ -1076,6 +1077,18 @@ def build_candidate_hh_entry_url(
     return f"{base}/candidate/start?entry={encoded_token}"
 
 
+def build_candidate_shared_portal_url() -> str:
+    status = get_candidate_portal_public_status()
+    if not status["ready"]:
+        return ""
+    base = str(status["url"] or "").rstrip("/")
+    if not base:
+        return ""
+    if base.endswith("/candidate"):
+        return f"{base}/start"
+    return f"{base}/candidate/start"
+
+
 def build_candidate_public_portal_url(
     *,
     candidate_uuid: str | None = None,
@@ -1510,12 +1523,11 @@ def _is_placeholder_fio(value: Optional[str]) -> bool:
 
 
 def _normalize_phone(value: str) -> str:
-    digits = "".join(ch for ch in value if ch.isdigit())
-    if len(digits) == 11 and digits.startswith("8"):
-        digits = "7" + digits[1:]
-    if len(digits) != 11 or not digits.startswith("7"):
-        raise CandidatePortalError("Укажите телефон в формате +7XXXXXXXXXX.")
-    return f"+{digits}"
+    try:
+        normalized = require_candidate_phone(value)
+    except ValueError as exc:
+        raise CandidatePortalError(str(exc)) from exc
+    return format_candidate_phone_display(normalized) or f"+{normalized}"
 
 
 async def _resolve_city(session: AsyncSession, *, city_id: int | None = None, city_name: str | None = None) -> City | None:
@@ -2179,14 +2191,7 @@ async def build_candidate_portal_journey(
             "status": candidate.candidate_status.value if candidate.candidate_status else None,
             "status_label": STATUS_LABELS.get(candidate.candidate_status) if candidate.candidate_status else None,
             "source": candidate.source,
-            "entry_url": build_candidate_hh_entry_url(
-                candidate_uuid=str(candidate.candidate_id or ""),
-                journey_session_id=int(journey.id),
-                session_version=int(journey.session_version or 1),
-                source_channel="candidate_cabinet",
-            )
-            if candidate.candidate_id
-            else "",
+            "entry_url": build_candidate_shared_portal_url(),
             "portal_url": build_candidate_portal_url(
                 candidate_uuid=candidate.candidate_id,
                 entry_channel=entry_channel,

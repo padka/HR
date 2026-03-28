@@ -704,7 +704,7 @@ export function CandidateStartPage() {
       setSharedChallengeToken(payload.challenge_token)
       setSharedCode('')
       setSharedAccessMessage(
-        payload.message || 'Если номер найден, код отправлен в связанный канал кандидата.',
+        payload.delivery_hint || payload.message || 'Если номер найден, код отправлен в связанный канал кандидата.',
       )
     } catch (challengeError) {
       const info = parseCandidatePortalError(challengeError)

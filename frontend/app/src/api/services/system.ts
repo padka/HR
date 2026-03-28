@@ -168,6 +168,20 @@ export type MessengerHealthPayload = {
     subscription_ready?: boolean
     subscription_error?: string | null
     subscription_message?: string | null
+    shared_access?: {
+      store_backend?: 'redis' | 'memory' | string
+      store_ready?: boolean
+      rate_limit_ready?: boolean
+      production_required?: boolean
+      production_ready?: boolean
+      challenge_started?: number
+      challenge_rate_limited?: number
+      verify_success?: number
+      verify_failed?: number
+      verify_expired?: number
+      delivery_channel_used?: Record<string, number>
+      delivery_block_reason?: Record<string, number>
+    } | null
   } | null
 }
 

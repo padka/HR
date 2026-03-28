@@ -5,7 +5,7 @@
 }
 
 .candidate-portal__shell {
-  max-width: 1100px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 
@@ -47,13 +47,14 @@
   gap: 10px;
   padding: 18px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
 }
 
 .candidate-portal__hero {
   padding: 24px;
   margin-bottom: 20px;
+  background: color-mix(in srgb, var(--surface-elevated) 86%, white);
 }
 
 .candidate-portal__eyebrow,
@@ -69,7 +70,6 @@
 .candidate-portal__eyebrow {
   gap: 8px;
   padding: 7px 12px;
-  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
   color: var(--muted);
 }
 
@@ -113,7 +113,7 @@
 .candidate-portal__tab {
   padding: 10px 16px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, white);
   color: var(--muted);
   font-weight: 600;
 }
@@ -165,7 +165,7 @@
 .candidate-portal__summary-tag,
 .candidate-portal__chip {
   padding: 5px 10px;
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  background: color-mix(in srgb, var(--surface) 90%, white);
   color: var(--muted);
   font-size: 0.84rem;
 }
@@ -215,8 +215,15 @@
   padding: 13px 14px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 88%, white);
+  background: color-mix(in srgb, var(--surface) 92%, white);
   color: var(--text);
+}
+
+.candidate-portal__input:focus,
+.candidate-portal__select:focus,
+.candidate-portal__textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
 }
 
 .candidate-portal__textarea {
@@ -268,10 +275,6 @@
 @media (min-width: 960px) {
   .candidate-portal__dashboard-grid {
     grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr));
-  }
-
-  .candidate-portal__summary-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 
   .candidate-portal__grid {

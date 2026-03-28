@@ -16,6 +16,7 @@ export type CandidateSharedAccessChallengeResponse = {
   expires_in_seconds: number
   retry_after_seconds: number
   message: string
+  delivery_hint?: string | null
 }
 
 export type CandidatePortalQuestion = {

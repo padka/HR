@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from backend.domain.candidates.models import User
+from backend.domain.candidates.phones import normalize_candidate_phone
 from backend.domain.hh_integration.client import HHApiClient, HHApiError
 from backend.domain.hh_integration.contracts import HHIdentitySyncStatus
 from backend.domain.hh_integration.models import (
@@ -24,7 +24,6 @@ from backend.domain.hh_integration.service import decrypt_access_token
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_NON_DIGIT_RE = re.compile(r"\D+")
 _COLLECTION_QUERY_KEEP = {"vacancy_id", "status", "has_updates"}
 _COLLECTION_PATH_SKIP_PREFIXES = (
     "/negotiations/vacancy_visitors",
@@ -81,11 +80,7 @@ def _payload_hash(payload: dict[str, Any]) -> str:
 
 
 def _normalize_phone(value: Any) -> str | None:
-    text = _string(value)
-    if not text:
-        return None
-    digits = _NON_DIGIT_RE.sub("", text)
-    return digits or None
+    return normalize_candidate_phone(value)
 
 
 def _resume_snippet(item: dict[str, Any]) -> dict[str, Any]:
@@ -249,11 +244,12 @@ def _extract_collection_refs(payload: dict[str, Any]) -> list[tuple[str, str]]:
 async def _find_candidate_by_phone(session: AsyncSession, phone: str | None) -> User | None:
     if not phone:
         return None
-    result = await session.execute(select(User).where(User.phone.is_not(None)))
-    for user in result.scalars():
-        if _normalize_phone(user.phone) == phone:
-            return user
-    return None
+    return await session.scalar(
+        select(User)
+        .where(User.phone_normalized == phone)
+        .order_by(User.last_activity.desc(), User.id.desc())
+        .limit(1)
+    )
 
 
 async def _find_candidate_for_resume(

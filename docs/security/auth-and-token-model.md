@@ -10,7 +10,7 @@ Security / Backend Platform
 Canonical
 
 ## Last Reviewed
-2026-03-27
+2026-03-28
 
 ## Source Paths
 - `/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/security.py`
@@ -123,11 +123,14 @@ sequenceDiagram
 
 - Public recruiter-facing UX now assumes a shared candidate portal URL, not per-candidate magic links.
 - Shared public entry does not reveal a cabinet directly. The candidate first proves possession of a known contact point by entering a phone number from the application and confirming a one-time code.
+- Public challenge and verify responses are intentionally generic: unknown phone, ambiguous match, missing linked channel, expired code, and wrong code do not reveal different candidate-facing reason strings.
 - The one-time code is delivered through an already linked candidate channel with this priority:
   1. HH negotiation message action;
   2. Telegram linked chat;
   3. MAX linked chat.
 - The OTP challenge is short-lived, signed, resend-cooled-down, and attempt-limited. Success creates the normal candidate portal session and resume cookie; it does not create a second auth model.
+- Candidate phone lookup uses the normalized indexed `users.phone_normalized` field. Production shared-portal auth must not depend on unindexed ad-hoc phone comparisons.
+- Production shared-portal auth is considered degraded without Redis-backed challenge storage and rate limiting. Dev/test may fall back to in-memory storage, but production health must surface that state explicitly.
 - Portal token is a signed, time-limited token built with `itsdangerous.URLSafeTimedSerializer`.
 - Portal token payload contains `candidate_id`, `entry_channel`, `journey_session_id` and `session_version`.
 - Portal session is server-managed and lives under `candidate_portal` session key.
@@ -167,6 +170,8 @@ sequenceDiagram
 - Callback is valid only when state is intact and principal matches the authenticated admin.
 - HH access and refresh tokens are encrypted at rest.
 - HH webhook receiver is authenticated by the URL key; logs must not expose it.
+- Recruiter-facing `POST /api/candidates/{id}/hh/send-entry-link` now delivers the shared portal URL for backward compatibility. It no longer implies that a unique personal cabinet link was issued.
+- Explicit bulk HH delivery is available only for operator-selected candidate IDs through `POST /api/candidates/hh/send-shared-portal`; this avoids silent mass fan-out across arbitrary filters.
 
 ## CSRF Rules
 

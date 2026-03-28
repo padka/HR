@@ -339,7 +339,7 @@ export function CandidateDetailPage() {
       onSuccess: async (payload) => {
         await refreshCandidateSurfaces()
         if (payload?.sent) {
-          setActionMessage('HH entry link отправлен кандидату. Он сможет выбрать Web, MAX или Telegram.')
+          setActionMessage('Shared portal отправлен в HH. Кандидат войдёт через телефон и выберет Web, MAX или Telegram.')
           return
         }
         if (payload?.blocked_reason) {

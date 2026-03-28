@@ -15,7 +15,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt import InvalidTokenError
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter, _rate_limit_exceeded_handler as _slowapi_rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 from starlette.requests import HTTPConnection
@@ -156,6 +156,23 @@ def _build_limiter() -> Limiter:
 
 
 limiter = _build_limiter()
+
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    path = str(getattr(getattr(request, "url", None), "path", "") or "")
+    if path.startswith("/api/candidate/access/challenge"):
+        try:
+            from backend.apps.admin_ui.services.candidate_shared_access import (
+                record_candidate_shared_access_rate_limited,
+            )
+
+            await record_candidate_shared_access_rate_limited()
+        except Exception:
+            logger.debug("shared access rate-limit metric failed", exc_info=True)
+    response = _slowapi_rate_limit_exceeded_handler(request, exc)
+    if hasattr(response, "__await__"):
+        return await response
+    return response
 
 
 # ---- Principal helpers ------------------------------------------------------

@@ -10,7 +10,7 @@ Frontend platform / UI engineering.
 Canonical.
 
 ## Last Reviewed
-2026-03-27.
+2026-03-28.
 
 ## Source Paths
 - `frontend/app/src/app/main.tsx`
@@ -135,6 +135,7 @@ sequenceDiagram
 - Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
 - The browser keeps a separate long-lived candidate entry token in persistent storage, but the neutral public start page no longer auto-opens that stored chooser for unrelated visitors. Stored entry recovery is used only as part of an explicit candidate resume path on the same device.
 - Shared public access now adds an OTP pre-auth step on `/candidate/start`: the candidate enters the phone number from the original application, receives a one-time code through a linked HH/Telegram/MAX channel, and only then receives the usual candidate portal session + chooser/journey bootstrap.
+- The phone step is anti-enumeration-safe: the UI always moves through the same `phone -> code -> cabinet/chooser` flow and only shows a masked delivery hint such as `HH`, `Telegram`, or `MAX`.
 - Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
 - Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
 
@@ -189,6 +190,7 @@ flowchart TD
 - Messages written from recruiter CRM must appear in the candidate web inbox even when no external messenger binding exists.
 - The cabinet can now expose lightweight launchers for `web`, `MAX` and `Telegram` from the same journey payload. Switching launcher must not create a second candidate flow or split slot/message history.
 - Launcher switching from inside the cabinet goes through a session-authenticated mutation first, so `last_entry_channel` is persisted before the browser opens the next launcher.
+- Recruiter list/detail surfaces now treat the shared portal URL as the canonical mass-delivery web entry. HH bulk actions operate only on explicitly selected candidate IDs and summarize `sent / blocked / skipped` per batch.
 
 ## System Delivery Flow
 

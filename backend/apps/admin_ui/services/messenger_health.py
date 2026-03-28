@@ -11,6 +11,7 @@ from backend.core.messenger.channel_state import get_messenger_channel_health
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import get_registry
 from backend.core.settings import get_settings
+from backend.apps.admin_ui.services.candidate_shared_access import get_candidate_shared_access_health
 from backend.domain.candidates.models import (
     CandidateInviteToken,
     CandidateJourneySession,
@@ -20,6 +21,7 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import (
+    build_candidate_shared_portal_url,
     build_candidate_public_max_mini_app_url_async,
     build_candidate_public_telegram_entry_url_async,
     build_candidate_public_portal_url,
@@ -211,8 +213,10 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         )
         active_slot = await get_candidate_active_slot(session, candidate)
         last_entry_channel = None
+        journey_meta = {}
         if active_journey is not None and isinstance(active_journey.payload_json, dict):
-            last_entry_channel = str(active_journey.payload_json.get("last_entry_channel") or "").strip() or None
+            journey_meta = dict(active_journey.payload_json)
+            last_entry_channel = str(journey_meta.get("last_entry_channel") or "").strip() or None
 
     portal_status = get_candidate_portal_public_status()
     max_status = await get_candidate_portal_max_entry_status_async()
@@ -260,6 +264,12 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
     elif str(max_channel_state.get("status") or "").strip().lower() == "degraded":
         delivery_block_reason = str(max_channel_state.get("reason") or "max_channel_degraded")
     delivery_ready = delivery_block_reason is None
+    shared_portal_ready = bool(portal_status.get("ready") and str(candidate.phone_normalized or "").strip())
+    shared_portal_block_reason = None
+    if not portal_status.get("ready"):
+        shared_portal_block_reason = str(portal_status.get("error") or "candidate_portal_public_url_invalid")
+    elif not str(candidate.phone_normalized or "").strip():
+        shared_portal_block_reason = "shared_portal_phone_missing"
 
     return {
         "candidate_id": candidate_id,
@@ -278,6 +288,11 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "last_outbound": _serialize_outbound_message(last_outbound),
         "last_portal_access_delivery": _serialize_outbound_message(last_portal_access),
         "portal_public_url": portal_status.get("url"),
+        "shared_portal_url": build_candidate_shared_portal_url(),
+        "shared_portal_ready": shared_portal_ready,
+        "shared_portal_block_reason": shared_portal_block_reason,
+        "last_shared_portal_sent_at": journey_meta.get("shared_portal_last_sent_at"),
+        "last_otp_delivery_channel": journey_meta.get("shared_portal_last_delivery_channel"),
         "public_link": str(max_status.get("url") or "").strip() or None,
         "portal_entry_ready": bool(portal_status.get("ready")),
         "max_entry_ready": bool(max_status.get("ready")),
@@ -367,6 +382,7 @@ async def get_messenger_health(
     max_status = await get_candidate_portal_max_entry_status_async()
     profile_probe = await inspect_max_bot_profile_probe()
     webhook_status = await _inspect_max_webhook_status()
+    shared_access = await get_candidate_shared_access_health()
 
     return {
         "channels": channel_payloads,
@@ -391,6 +407,7 @@ async def get_messenger_health(
             "subscription_ready": webhook_status.get("subscription_ready"),
             "subscription_error": webhook_status.get("subscription_error"),
             "subscription_message": webhook_status.get("subscription_message"),
+            "shared_access": shared_access,
         },
     }
 

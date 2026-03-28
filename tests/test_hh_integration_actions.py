@@ -99,7 +99,7 @@ async def _seed_candidate_with_hh_action():
                 payload_snapshot={},
             )
         )
-        candidate = User(fio="Иван Петров", source="hh")
+        candidate = User(fio="Иван Петров", phone="+79990001122", source="hh")
         session.add(candidate)
         await session.flush()
         identity = CandidateExternalIdentity(
@@ -249,10 +249,11 @@ class TestHHActionsRoutes:
         body = resp.json()
         assert body["ok"] is True
         assert body["sent"] is True
-        assert "candidate/start?entry=" in body["hh_entry_url"]
+        assert body["hh_entry_url"] == "https://crm.example.test/candidate/start"
+        assert body["shared_portal_url"] == "https://crm.example.test/candidate/start"
         mock_client.execute_negotiation_action.assert_awaited_once()
         kwargs = mock_client.execute_negotiation_action.await_args.kwargs
-        assert "Выберите удобный канал" in kwargs["arguments"]["message"]
+        assert "единый портал кандидата" in kwargs["arguments"]["message"]
 
     @pytest.mark.asyncio
     async def test_send_hh_entry_link_returns_blocked_when_message_action_missing(self, admin_app):
@@ -291,3 +292,31 @@ class TestHHActionsRoutes:
         body = resp.json()
         assert body["ok"] is False
         assert body["blocked_reason"] == "hh_message_action_missing"
+
+    @pytest.mark.asyncio
+    async def test_bulk_send_shared_portal_returns_per_candidate_summary(self, admin_app):
+        candidate_id = await _seed_candidate_with_hh_action()
+
+        def _call():
+            with patch("backend.apps.admin_ui.routers.api_misc.HHApiClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.execute_negotiation_action.return_value = {"ok": True}
+                mock_client_cls.return_value = mock_client
+                with TestClient(admin_app) as client:
+                    response = client.post(
+                        "/api/candidates/hh/send-shared-portal",
+                        json={"candidate_ids": [candidate_id, 999999]},
+                    )
+                return response, mock_client
+
+        resp, mock_client = await asyncio.to_thread(_call)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["summary"]["requested"] == 2
+        assert body["summary"]["sent"] == 1
+        assert body["summary"]["skipped"] == 1
+        assert body["sent"][0]["candidate_id"] == candidate_id
+        assert body["sent"][0]["shared_portal_url"] == "https://crm.example.test/candidate/start"
+        assert body["skipped"][0]["reason"] == "candidate_not_accessible"
+        mock_client.execute_negotiation_action.assert_awaited_once()

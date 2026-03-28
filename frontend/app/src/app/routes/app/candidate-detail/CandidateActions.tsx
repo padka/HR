@@ -32,6 +32,7 @@ const DELIVERY_REASON_LABELS: Record<string, string> = {
   hh_actions_missing: 'HH actions snapshot ещё не загружен',
   hh_message_action_missing: 'HH не даёт action на отправку сообщения кандидату',
   candidate_uuid_missing: 'у кандидата отсутствует публичный cabinet id',
+  shared_portal_phone_missing: 'у кандидата не заполнен телефон для shared portal',
 }
 
 function describeDeliveryReason(reason?: string | null) {
@@ -117,6 +118,11 @@ export function CandidateActions({
   const browserLink = channelHealth?.browser_link || null
   const miniAppLink = channelHealth?.mini_app_link || null
   const telegramEntryLink = channelHealth?.telegram_link || null
+  const hhEntryDelivery = hhSummary?.entry_delivery || null
+  const sharedPortalUrl = channelHealth?.shared_portal_url || hhEntryDelivery?.shared_portal_url || null
+  const sharedPortalReady = channelHealth?.shared_portal_ready !== false && hhEntryDelivery?.shared_portal_ready !== false
+  const sharedPortalBlockedReason = describeDeliveryReason(channelHealth?.shared_portal_block_reason || hhEntryDelivery?.blocked_reason)
+  const lastOtpDeliveryChannel = channelHealth?.last_otp_delivery_channel || hhEntryDelivery?.last_otp_delivery_channel || null
   const candidateCabinetUrl = candidate.candidate_portal_url || browserLink || publicLink || null
   const configErrors = channelHealth?.config_errors || []
   const restartAllowed = channelHealth?.restart_allowed !== false
@@ -125,7 +131,6 @@ export function CandidateActions({
   const maxLinkBaseSource = channelHealth?.max_link_base_source || null
   const canReissuePortalAccess = Boolean(channelHealth?.portal_entry_ready)
   const reissueLabel = channelHealth?.max_entry_ready ? 'Переотправить ссылку' : 'Подготовить browser link'
-  const hhEntryDelivery = hhSummary?.entry_delivery || null
   const hhReady = hhEntryDelivery?.ready !== false
   const hhBlockedReason = describeDeliveryReason(hhEntryDelivery?.blocked_reason || hhEntryDelivery?.last_block_reason)
   const hhLastSentAt = hhEntryDelivery?.last_sent_at || null
@@ -302,6 +307,10 @@ export function CandidateActions({
               {' · '}
               inbox: {canOpenChat ? 'available' : 'blocked'}
             </p>
+            <p className="subtitle" style={{ margin: '4px 0 0' }}>
+              shared portal: {sharedPortalReady ? 'ready' : 'blocked'}
+              {sharedPortalUrl ? ` · ${sharedPortalUrl}` : ''}
+            </p>
             <p className="subtitle" style={{ margin: 0 }}>
               portal: {channelHealth.portal_entry_ready ? 'public ready' : 'public blocked'}
               {' · '}
@@ -351,9 +360,19 @@ export function CandidateActions({
                 last portal package: {new Date(lastPortalAccessAt).toLocaleString('ru-RU')}
               </p>
             ) : null}
+            {lastOtpDeliveryChannel ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last OTP delivery: {lastOtpDeliveryChannel}
+              </p>
+            ) : null}
             {lastPortalAccessError ? (
               <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
                 portal package error: {lastPortalAccessError}
+              </p>
+            ) : null}
+            {sharedPortalBlockedReason ? (
+              <p className="subtitle subtitle--danger" style={{ margin: '4px 0 0' }}>
+                shared portal: {sharedPortalBlockedReason}
               </p>
             ) : null}
             {deliveryBlockReason ? (
@@ -440,15 +459,18 @@ export function CandidateActions({
             <div>
               <div className="section-title" style={{ margin: 0, fontSize: '0.95rem' }}>Entry / Delivery</div>
               <p className="subtitle" style={{ margin: '4px 0 0' }}>
-                HH остаётся основным входом. Web cabinet работает независимо от состояния мессенджеров.
+                Рекрутер отправляет одну общую ссылку портала в HH. Candidate cabinet и OTP живут независимо от состояния мессенджеров.
               </p>
             </div>
             <span className={`status-badge ${hhReady ? 'status-badge--success' : 'status-badge--warning'}`}>
-              HH delivery {hhReady ? 'ready' : 'blocked'}
+              Shared portal {hhReady ? 'ready' : 'blocked'}
             </span>
           </div>
 
           <div style={{ marginTop: 10 }}>
+            <p className="subtitle" style={{ margin: 0 }}>
+              shared URL: {hhEntryDelivery?.shared_portal_url || sharedPortalUrl || '—'}
+            </p>
             <p className="subtitle" style={{ margin: 0 }}>
               selected channel: {hhEntryDelivery?.selected_channel || channelHealth?.last_entry_channel || 'web'}
             </p>
@@ -461,7 +483,12 @@ export function CandidateActions({
             </p>
             {hhLastSentAt ? (
               <p className="subtitle" style={{ margin: '4px 0 0' }}>
-                last HH entry sent: {new Date(hhLastSentAt).toLocaleString('ru-RU')}
+                last shared portal sent: {new Date(hhLastSentAt).toLocaleString('ru-RU')}
+              </p>
+            ) : null}
+            {hhEntryDelivery?.last_otp_delivery_channel ? (
+              <p className="subtitle" style={{ margin: '4px 0 0' }}>
+                last OTP delivery: {hhEntryDelivery.last_otp_delivery_channel}
               </p>
             ) : null}
             {hhEntryDelivery?.last_action_name ? (
@@ -483,7 +510,7 @@ export function CandidateActions({
               onClick={onSendHhEntryLink}
               disabled={hhSendPending}
             >
-              {hhSendPending ? 'Отправляем в HH…' : 'Отправить ссылку в HH'}
+              {hhSendPending ? 'Отправляем в HH…' : 'Отправить shared portal в HH'}
             </button>
             <button
               type="button"

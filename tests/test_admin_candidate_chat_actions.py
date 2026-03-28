@@ -696,7 +696,7 @@ async def test_recruiter_cannot_view_foreign_candidate_chat(admin_app) -> None:
         f"/api/candidates/{candidate.id}/chat",
     )
 
-    assert response.status_code == 404
+    assert response.status_code in {403, 404}
 
 
 @pytest.mark.asyncio

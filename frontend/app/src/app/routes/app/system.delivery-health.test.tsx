@@ -38,6 +38,16 @@ describe('MessengerHealthCards', () => {
           webhook_message: 'MAX_WEBHOOK_URL должен быть публичным HTTPS URL.',
           max_entry_message: 'MAX_BOT_LINK_BASE не настроен.',
           max_link_base: null,
+          shared_access: {
+            store_backend: 'redis',
+            production_ready: true,
+            rate_limit_ready: true,
+            challenge_started: 12,
+            challenge_rate_limited: 2,
+            verify_success: 8,
+            verify_failed: 3,
+            verify_expired: 1,
+          },
         }}
       />,
     )
@@ -51,5 +61,6 @@ describe('MessengerHealthCards', () => {
     expect(screen.getByText(/MAX_BOT_LINK_BASE не настроен/)).toBeInTheDocument()
     expect(screen.getByText(/profile: Attila MAX Bot/)).toBeInTheDocument()
     expect(screen.getByText(/webhook: blocked/)).toBeInTheDocument()
+    expect(screen.getByText(/shared portal auth: ready · store: redis · rate-limit: ready/)).toBeInTheDocument()
   })
 })

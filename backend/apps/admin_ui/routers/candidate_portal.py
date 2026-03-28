@@ -279,13 +279,20 @@ def _candidate_portal_not_found_error(
 
 
 def _candidate_shared_access_error(exc: CandidateSharedAccessError) -> HTTPException:
+    status_code = status.HTTP_401_UNAUTHORIZED
+    state = PORTAL_RECOVERY_STATE_RECOVERABLE
+    can_resume = True
+    if exc.code == "candidate_shared_access_temporarily_unavailable":
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        state = PORTAL_RECOVERY_STATE_BLOCKED
+        can_resume = False
     return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
+        status_code=status_code,
         detail={
             "message": str(exc),
             "code": exc.code,
-            "state": PORTAL_RECOVERY_STATE_RECOVERABLE,
-            "can_resume": True,
+            "state": state,
+            "can_resume": can_resume,
             "requires_fresh_link": False,
         },
     )
@@ -701,6 +708,7 @@ async def start_candidate_shared_access(
         "expires_in_seconds": challenge.expires_in_seconds,
         "retry_after_seconds": challenge.retry_after_seconds,
         "message": "Если номер найден, мы отправили код в связанный канал кандидата.",
+        "delivery_hint": "Проверьте HH, Telegram или MAX, если один из каналов уже связан с откликом.",
     }
 
 

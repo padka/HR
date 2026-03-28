@@ -267,6 +267,7 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
         assert "token_valid" in payload["portal"]
         assert "max_link_base_source" in payload["portal"]
         assert "webhook_public_ready" in payload["portal"]
+        assert "shared_access" in payload["portal"]
     finally:
         _run(mark_messenger_channel_healthy("max"))
 

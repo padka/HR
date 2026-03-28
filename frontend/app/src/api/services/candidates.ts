@@ -108,6 +108,11 @@ export type CandidateChannelHealth = {
     text?: string | null
   } | null
   portal_public_url?: string | null
+  shared_portal_url?: string | null
+  shared_portal_ready?: boolean
+  shared_portal_block_reason?: string | null
+  last_shared_portal_sent_at?: string | null
+  last_otp_delivery_channel?: string | null
   public_link?: string | null
   portal_entry_ready?: boolean
   max_entry_ready?: boolean
@@ -145,11 +150,14 @@ export type CandidateHhEntryDelivery = {
   ready?: boolean
   blocked_reason?: string | null
   hh_entry_url?: string | null
+  shared_portal_url?: string | null
+  shared_portal_ready?: boolean
   cabinet_url?: string | null
   last_sent_at?: string | null
   last_status?: string | null
   last_block_reason?: string | null
   last_action_name?: string | null
+  last_otp_delivery_channel?: string | null
   selected_channel?: string | null
   fallback_channel_options?: string[]
   channels?: Record<string, {
@@ -423,6 +431,7 @@ export type CandidateHhSendEntryPayload = {
   fallback_channel_options?: string[]
   cabinet_url?: string | null
   hh_entry_url?: string | null
+  shared_portal_url?: string | null
   action_id?: string | null
   action_name?: string | null
   resulting_employer_state?: {
@@ -430,6 +439,37 @@ export type CandidateHhSendEntryPayload = {
     name?: string | null
   } | null
   channels?: CandidateHhEntryDelivery['channels']
+}
+
+export type CandidateBulkSharedPortalSendPayload = {
+  ok: boolean
+  sent: Array<{
+    candidate_id: number
+    fio?: string | null
+    shared_portal_url?: string | null
+    cabinet_url?: string | null
+    action_id?: string | null
+  }>
+  blocked: Array<{
+    candidate_id: number
+    fio?: string | null
+    reason?: string | null
+    shared_portal_url?: string | null
+    cabinet_url?: string | null
+  }>
+  skipped: Array<{
+    candidate_id: number
+    fio?: string | null
+    reason?: string | null
+    shared_portal_url?: string | null
+    cabinet_url?: string | null
+  }>
+  summary: {
+    requested: number
+    sent: number
+    blocked: number
+    skipped: number
+  }
 }
 
 export type AIRiskItem = {
@@ -712,6 +752,13 @@ export function fetchCandidateHHSummary(candidateId: number) {
 export function sendCandidateHhEntryLink(candidateId: number) {
   return apiFetch<CandidateHhSendEntryPayload>(`/candidates/${candidateId}/hh/send-entry-link`, {
     method: 'POST',
+  })
+}
+
+export function bulkSendSharedPortalInHh(candidateIds: number[]) {
+  return apiFetch<CandidateBulkSharedPortalSendPayload>('/candidates/hh/send-shared-portal', {
+    method: 'POST',
+    body: JSON.stringify({ candidate_ids: candidateIds }),
   })
 }
 

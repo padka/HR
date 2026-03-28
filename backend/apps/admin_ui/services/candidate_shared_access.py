@@ -12,7 +12,7 @@ import secrets
 from typing import Any
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_ui.services.bot_service import get_bot_service
@@ -21,6 +21,7 @@ from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import get_registry
 from backend.core.settings import get_settings
 from backend.domain.candidates.models import User
+from backend.domain.candidates.phones import normalize_candidate_phone
 from backend.domain.candidates.portal_service import (
     build_candidate_portal_journey,
     ensure_candidate_portal_session,
@@ -37,8 +38,10 @@ SHARED_ACCESS_CODE_LENGTH = 6
 SHARED_ACCESS_TOKEN_SALT = "candidate-shared-access"
 SHARED_ACCESS_STORE_PREFIX = "candidate:shared_access:challenge:"
 SHARED_ACCESS_PHONE_PREFIX = "candidate:shared_access:phone:"
+SHARED_ACCESS_METRIC_PREFIX = "candidate:shared_access:metric:"
 
 _memory_store: dict[str, tuple[float, dict[str, Any]]] = {}
+_memory_counters: dict[str, int] = {}
 
 
 class CandidateSharedAccessError(ValueError):
@@ -92,6 +95,32 @@ def _cache_client():
     return getattr(cache, "client", None)
 
 
+def _shared_access_requires_redis() -> bool:
+    settings = get_settings()
+    return settings.environment == "production"
+
+
+def _shared_access_store_backend() -> str:
+    return "redis" if _cache_client() is not None else "memory"
+
+
+def _shared_access_store_ready() -> bool:
+    if not _shared_access_requires_redis():
+        return True
+    return _cache_client() is not None
+
+
+def _metric_key(name: str, label: str | None = None) -> str:
+    suffix = str(name or "").strip().lower().replace(" ", "_") or "unknown"
+    if label:
+        normalized_label = "".join(
+            ch if ch.isalnum() or ch in {"_", "-", ":"} else "_"
+            for ch in str(label).strip().lower()
+        ).strip("_") or "unknown"
+        suffix = f"{suffix}:{normalized_label}"
+    return f"{SHARED_ACCESS_METRIC_PREFIX}{suffix}"
+
+
 async def _store_json(key: str, payload: dict[str, Any], ttl_seconds: int) -> None:
     client = _cache_client()
     if client is not None:
@@ -130,62 +159,48 @@ async def _delete_key(key: str) -> None:
     _memory_store.pop(key, None)
 
 
-def _normalize_phone(value: str) -> str:
-    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-    if len(digits) == 11 and digits.startswith("8"):
-        digits = "7" + digits[1:]
-    if len(digits) != 11 or not digits.startswith("7"):
+async def _increment_metric(name: str, *, label: str | None = None, amount: int = 1) -> None:
+    key = _metric_key(name, label)
+    client = _cache_client()
+    if client is not None:
+        await client.incrby(key, int(amount))
+        return
+    _memory_counters[key] = int(_memory_counters.get(key, 0) or 0) + int(amount)
+
+
+async def _read_metric(name: str, *, label: str | None = None) -> int:
+    key = _metric_key(name, label)
+    client = _cache_client()
+    if client is not None:
+        raw = await client.get(key)
+        if raw is None:
+            return 0
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "ignore")
+        try:
+            return int(str(raw).strip() or "0")
+        except Exception:
+            return 0
+    return int(_memory_counters.get(key, 0) or 0)
+
+
+async def find_candidate_by_phone(session: AsyncSession, phone: str) -> User | None:
+    normalized = normalize_candidate_phone(phone)
+    if not normalized:
         raise CandidateSharedAccessError(
             "Укажите телефон в формате +7XXXXXXXXXX.",
             code="candidate_shared_access_phone_invalid",
         )
-    return f"+{digits}"
-
-
-def _phone_lookup_expr():
-    return func.replace(
-        func.replace(
-            func.replace(
-                func.replace(
-                    func.replace(
-                        func.replace(func.coalesce(User.phone, ""), "+", ""),
-                        " ",
-                        "",
-                    ),
-                    "-",
-                    "",
-                ),
-                "(",
-                "",
-            ),
-            ")",
-            "",
-        ),
-        "\t",
-        "",
-    )
-
-
-async def find_candidate_by_phone(session: AsyncSession, phone: str) -> User | None:
-    normalized = _normalize_phone(phone)
-    digits = normalized.removeprefix("+")
-    variants = {digits, f"8{digits[1:]}"}
     result = await session.execute(
         select(User)
         .where(
             User.is_active.is_(True),
-            _phone_lookup_expr().in_(variants),
+            User.phone_normalized == normalized,
         )
         .order_by(User.last_activity.desc(), User.id.desc())
         .limit(3)
     )
-    matches: list[User] = []
-    for candidate in result.scalars().all():
-        try:
-            if _normalize_phone(candidate.phone or "") == normalized:
-                matches.append(candidate)
-        except CandidateSharedAccessError:
-            continue
+    matches = list(result.scalars().all())
     if len(matches) != 1:
         return None
     return matches[0]
@@ -422,7 +437,17 @@ async def start_candidate_shared_access_challenge(
     *,
     phone: str,
 ) -> CandidateSharedAccessChallenge:
-    normalized_phone = _normalize_phone(phone)
+    normalized_phone = normalize_candidate_phone(phone)
+    if not normalized_phone:
+        raise CandidateSharedAccessError(
+            "Укажите телефон в формате +7XXXXXXXXXX.",
+            code="candidate_shared_access_phone_invalid",
+        )
+    if not _shared_access_store_ready():
+        raise CandidateSharedAccessError(
+            "Вход в кабинет временно недоступен. Попробуйте позже.",
+            code="candidate_shared_access_temporarily_unavailable",
+        )
     phone_hash = _phone_hash(normalized_phone)
     now_ts = int(_utcnow().timestamp())
     existing_index = await _load_json(_phone_index_key(phone_hash))
@@ -430,6 +455,7 @@ async def start_candidate_shared_access_challenge(
         existing_challenge_id = str(existing_index.get("challenge_id") or "").strip()
         retry_after = max(0, int(existing_index.get("retry_after") or 0) - now_ts)
         if existing_challenge_id and retry_after > 0:
+            await _increment_metric("challenge_rate_limited")
             record = await _load_json(_challenge_key(existing_challenge_id))
             if isinstance(record, dict):
                 return CandidateSharedAccessChallenge(
@@ -444,6 +470,7 @@ async def start_candidate_shared_access_challenge(
     delivery_channel = None
     journey_id = None
     session_version = None
+    delivery_block_reason = None
 
     if candidate is not None:
         journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
@@ -454,6 +481,19 @@ async def start_candidate_shared_access_challenge(
             candidate=candidate,
             code=code,
         )
+        journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
+        journey_meta["shared_portal_last_challenge_at"] = _utcnow().isoformat()
+        journey_meta["shared_portal_last_phone_hash"] = phone_hash[:12]
+        if delivery_channel:
+            journey_meta["shared_portal_last_delivery_channel"] = delivery_channel
+            journey_meta["shared_portal_block_reason"] = None
+        else:
+            delivery_block_reason = "shared_access_delivery_unavailable"
+            journey_meta["shared_portal_block_reason"] = delivery_block_reason
+        journey.payload_json = journey_meta
+        await session.flush()
+    else:
+        delivery_block_reason = "candidate_not_found_or_ambiguous"
 
     expires_at = now_ts + SHARED_ACCESS_CHALLENGE_TTL_SECONDS
     record = {
@@ -483,6 +523,11 @@ async def start_candidate_shared_access_challenge(
             "delivery_channel": delivery_channel,
         },
     )
+    await _increment_metric("challenge_started")
+    if delivery_channel:
+        await _increment_metric("delivery_channel_used", label=delivery_channel)
+    elif delivery_block_reason:
+        await _increment_metric("delivery_block_reason", label=delivery_block_reason)
     return CandidateSharedAccessChallenge(
         token=_sign_challenge_token(challenge_id),
         expires_in_seconds=SHARED_ACCESS_CHALLENGE_TTL_SECONDS,
@@ -499,6 +544,7 @@ async def verify_candidate_shared_access_code(
     challenge_id = _parse_challenge_token(challenge_token)
     record = await _load_json(_challenge_key(challenge_id))
     if not isinstance(record, dict):
+        await _increment_metric("verify_expired")
         raise CandidateSharedAccessError(
             "Код входа устарел. Запросите новый код.",
             code="candidate_shared_access_challenge_expired",
@@ -506,6 +552,7 @@ async def verify_candidate_shared_access_code(
     attempts = int(record.get("attempts") or 0)
     if attempts >= SHARED_ACCESS_MAX_ATTEMPTS:
         await _delete_key(_challenge_key(challenge_id))
+        await _increment_metric("verify_failed")
         raise CandidateSharedAccessError(
             "Попытки входа исчерпаны. Запросите новый код.",
             code="candidate_shared_access_attempts_exceeded",
@@ -520,21 +567,24 @@ async def verify_candidate_shared_access_code(
         else:
             ttl = max(1, int(record.get("expires_at") or 0) - int(_utcnow().timestamp()))
             await _store_json(_challenge_key(challenge_id), record, ttl)
+        await _increment_metric("verify_failed")
         raise CandidateSharedAccessError(
             "Код не подошёл или уже истёк. Запросите новый код.",
             code="candidate_shared_access_code_invalid",
         )
     await _delete_key(_challenge_key(challenge_id))
     if candidate_id <= 0:
+        await _increment_metric("verify_failed")
         raise CandidateSharedAccessError(
             "Код не подошёл или уже истёк. Запросите новый код.",
             code="candidate_shared_access_code_invalid",
         )
     candidate = await session.get(User, candidate_id)
     if candidate is None:
+        await _increment_metric("verify_failed")
         raise CandidateSharedAccessError(
-            "Кандидат не найден.",
-            code="candidate_shared_access_candidate_missing",
+            "Код не подошёл или уже истёк. Запросите новый код.",
+            code="candidate_shared_access_code_invalid",
         )
     journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
     journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
@@ -547,4 +597,45 @@ async def verify_candidate_shared_access_code(
         entry_channel="web",
         journey=journey,
     )
+    await _increment_metric("verify_success")
     return candidate, journey, response_payload
+
+
+async def get_candidate_shared_access_health() -> dict[str, Any]:
+    settings = get_settings()
+    rate_limit_ready = (
+        settings.environment != "production"
+        or (settings.rate_limit_enabled and bool(settings.rate_limit_redis_url))
+    )
+    production_ready = _shared_access_store_ready() and rate_limit_ready
+    return {
+        "store_backend": _shared_access_store_backend(),
+        "store_ready": _shared_access_store_ready(),
+        "rate_limit_ready": rate_limit_ready,
+        "production_required": settings.environment == "production",
+        "production_ready": production_ready,
+        "challenge_started": await _read_metric("challenge_started"),
+        "challenge_rate_limited": await _read_metric("challenge_rate_limited"),
+        "verify_success": await _read_metric("verify_success"),
+        "verify_failed": await _read_metric("verify_failed"),
+        "verify_expired": await _read_metric("verify_expired"),
+        "delivery_channel_used": {
+            "hh": await _read_metric("delivery_channel_used", label="hh"),
+            "telegram": await _read_metric("delivery_channel_used", label="telegram"),
+            "max": await _read_metric("delivery_channel_used", label="max"),
+        },
+        "delivery_block_reason": {
+            "candidate_not_found_or_ambiguous": await _read_metric(
+                "delivery_block_reason",
+                label="candidate_not_found_or_ambiguous",
+            ),
+            "shared_access_delivery_unavailable": await _read_metric(
+                "delivery_block_reason",
+                label="shared_access_delivery_unavailable",
+            ),
+        },
+    }
+
+
+async def record_candidate_shared_access_rate_limited() -> None:
+    await _increment_metric("challenge_rate_limited")
