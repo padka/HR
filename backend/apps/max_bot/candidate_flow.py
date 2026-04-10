@@ -35,6 +35,13 @@ from backend.domain.candidates.models import (
     TestResult,
     User,
 )
+from backend.domain.candidates.max_ownership import (
+    MaxOwnershipSnapshot,
+    acquire_max_user_id_claim_lock,
+    inspect_max_user_ownership,
+    max_user_id_fingerprint,
+    normalize_max_user_id,
+)
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
     build_candidate_portal_journey,
@@ -281,6 +288,20 @@ def _invite_required_message(status: str) -> OutboundMessage:
                 "Попросите рекрутера выпустить новую персональную ссылку."
             )
         )
+    if status == "ownership_conflict":
+        return OutboundMessage(
+            text=(
+                "Этот аккаунт MAX уже связан с другой анкетой.\n"
+                "Попросите рекрутера проверить привязку и выпустить новую ссылку, если это ваш профиль."
+            )
+        )
+    if status == "ownership_ambiguous":
+        return OutboundMessage(
+            text=(
+                "Привязку аккаунта MAX нельзя продолжить автоматически.\n"
+                "Попросите рекрутера проверить существующие связи и отправить новую ссылку после исправления."
+            )
+        )
     return OutboundMessage(
         text=(
             "Чтобы продолжить в MAX, нужна персональная ссылка от рекрутера.\n"
@@ -300,6 +321,85 @@ def _new_max_candidate(*, max_user_id: str, now: datetime) -> User:
     )
 
 
+def _max_ownership_details(
+    *,
+    max_user_id: str,
+    ownership: MaxOwnershipSnapshot,
+    candidate: User | None = None,
+    reason: str,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "channel": "max",
+        "reason": reason,
+        "max_user_fingerprint": max_user_id_fingerprint(max_user_id),
+        "ownership_status": ownership.status,
+        "owner_count": ownership.owner_count,
+    }
+    if ownership.owner_candidate_ids:
+        details["owner_candidate_ids"] = list(ownership.owner_candidate_ids)
+    if candidate is not None:
+        details["candidate_id"] = int(candidate.id)
+    return details
+
+
+def _ownership_ambiguous_resolution(
+    *,
+    audit_events: list[AuditEvent],
+    max_user_id: str,
+    ownership: MaxOwnershipSnapshot,
+    candidate: User | None = None,
+) -> CandidateResolution:
+    changes = _max_ownership_details(
+        max_user_id=max_user_id,
+        ownership=ownership,
+        candidate=candidate,
+        reason="duplicate_owner_rows",
+    )
+    logger.warning("max_bot.ownership_ambiguous", extra=changes)
+    audit_events.append(
+        AuditEvent(
+            action="max_ownership_ambiguous",
+            entity_id=int(candidate.id) if candidate is not None else None,
+            changes=changes,
+        )
+    )
+    return CandidateResolution(
+        candidate=None,
+        status="ownership_ambiguous",
+        audit_events=tuple(audit_events),
+    )
+
+
+def _ownership_conflict_resolution(
+    *,
+    audit_events: list[AuditEvent],
+    max_user_id: str,
+    ownership: MaxOwnershipSnapshot,
+    candidate: User | None = None,
+    reason: str,
+    status: str = "ownership_conflict",
+) -> CandidateResolution:
+    changes = _max_ownership_details(
+        max_user_id=max_user_id,
+        ownership=ownership,
+        candidate=candidate,
+        reason=reason,
+    )
+    logger.warning("max_bot.ownership_conflict", extra=changes)
+    audit_events.append(
+        AuditEvent(
+            action="max_ownership_conflict",
+            entity_id=int(candidate.id) if candidate is not None else None,
+            changes=changes,
+        )
+    )
+    return CandidateResolution(
+        candidate=None,
+        status=status,
+        audit_events=tuple(audit_events),
+    )
+
+
 async def _resolve_max_candidate(
     session: AsyncSession,
     *,
@@ -309,177 +409,145 @@ async def _resolve_max_candidate(
 ) -> CandidateResolution:
     now = _utcnow()
     audit_events: list[AuditEvent] = []
-    existing_by_max = await session.scalar(
-        select(User)
-        .where(User.max_user_id == max_user_id)
-        .order_by(User.id.asc())
-        .limit(1)
-    )
+    normalized_max_user_id = normalize_max_user_id(max_user_id)
     raw_payload = str(start_payload or "").strip()
+    await acquire_max_user_id_claim_lock(session, normalized_max_user_id)
+    ownership = await inspect_max_user_ownership(session, normalized_max_user_id)
+    if ownership.status == "ambiguous":
+        return _ownership_ambiguous_resolution(
+            audit_events=audit_events,
+            max_user_id=normalized_max_user_id,
+            ownership=ownership,
+        )
 
-    candidate = existing_by_max
+    candidate = ownership.primary_owner
     payload_linked = False
     linked_now = False
     candidate_created = False
 
-    if candidate is None:
-        if raw_payload:
+    if raw_payload:
+        invite: CandidateInviteToken | None = None
+        try:
+            access = await resolve_candidate_portal_access_token(session, raw_payload)
+        except CandidatePortalError:
+            access = None
+
+        if access is not None:
             try:
-                access = await resolve_candidate_portal_access_token(session, raw_payload)
+                payload_candidate = await resolve_candidate_portal_user(session, access)
             except CandidatePortalError:
-                access = None
-
-            if access is not None:
-                try:
-                    candidate = await resolve_candidate_portal_user(session, access)
-                except CandidatePortalError:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-                existing_link = await session.scalar(
-                    select(User)
-                    .where(User.max_user_id == max_user_id)
-                    .where(User.id != candidate.id)
-                    .limit(1)
-                )
-                if existing_link is not None:
-                    audit_events.append(
-                        AuditEvent(
-                            action="invite_conflict",
-                            entity_id=int(candidate.id),
-                            changes={"channel": "max", "max_user_id": max_user_id, "reason": "existing_link"},
-                        )
-                    )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
-                    )
-
-                if candidate.max_user_id and candidate.max_user_id != max_user_id:
-                    audit_events.append(
-                        AuditEvent(
-                            action="max_relink_attempt",
-                            entity_id=int(candidate.id),
-                            changes={
-                                "channel": "max",
-                                "current_max_user_id": candidate.max_user_id,
-                                "incoming_max_user_id": max_user_id,
-                            },
-                        )
-                    )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
-                    )
-
-                linked_now = candidate.max_user_id in {None, "", max_user_id}
-                candidate.max_user_id = max_user_id
-                payload_linked = True
-            else:
-                invite = await session.scalar(
-                    select(CandidateInviteToken)
-                    .where(CandidateInviteToken.token == raw_payload)
-                    .limit(1)
-                )
-                if invite is None:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-                if _normalize_invite_channel(invite.channel) not in {"generic", "max"}:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-                if (invite.status or "active") not in {"active", "used"}:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-
-                settings = get_settings()
-                invite_ttl = timedelta(seconds=settings.candidate_portal_token_ttl_seconds)
-                created_at = invite.created_at
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
-                if now - created_at > invite_ttl:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-
-                candidate = await session.scalar(
-                    select(User).where(User.candidate_id == invite.candidate_id).limit(1)
-                )
-                if candidate is None:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-
-                existing_link = await session.scalar(
-                    select(User)
-                    .where(User.max_user_id == max_user_id)
-                    .where(User.id != candidate.id)
-                    .limit(1)
-                )
-                if existing_link is not None:
-                    audit_events.append(
-                        AuditEvent(
-                            action="invite_conflict",
-                            entity_id=int(candidate.id),
-                            changes={"channel": "max", "max_user_id": max_user_id, "reason": "existing_link"},
-                        )
-                    )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
-                    )
-
-                if candidate.max_user_id and candidate.max_user_id != max_user_id:
-                    audit_events.append(
-                        AuditEvent(
-                            action="max_relink_attempt",
-                            entity_id=int(candidate.id),
-                            changes={
-                                "channel": "max",
-                                "current_max_user_id": candidate.max_user_id,
-                                "incoming_max_user_id": max_user_id,
-                            },
-                        )
-                    )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
-                    )
-
-                if invite.used_at is not None and invite.used_by_external_id not in {None, "", max_user_id}:
-                    audit_events.append(
-                        AuditEvent(
-                            action="invite_conflict",
-                            entity_id=int(candidate.id),
-                            changes={
-                                "channel": "max",
-                                "max_user_id": max_user_id,
-                                "reason": "invite_already_used",
-                            },
-                        )
-                    )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
-                    )
-
-                linked_now = invite.used_at is None and candidate.max_user_id in {None, "", max_user_id}
-                if invite.used_at is None:
-                    invite.used_at = now
-                invite.status = "used"
-                invite.used_by_external_id = max_user_id
-                candidate.max_user_id = max_user_id
-                payload_linked = True
+                return CandidateResolution(candidate=None, status="invalid_invite")
         else:
-            allow_public_entry = bool(
-                getattr(get_settings(), "max_bot_allow_public_entry", default_max_public_entry_enabled())
+            invite = await session.scalar(
+                select(CandidateInviteToken)
+                .where(CandidateInviteToken.token == raw_payload)
+                .limit(1)
             )
-            if not allow_public_entry:
-                return CandidateResolution(candidate=None, status="invite_required")
-            candidate = _new_max_candidate(max_user_id=max_user_id, now=now)
-            session.add(candidate)
-            await session.flush()
-            linked_now = True
-            candidate_created = True
+            if invite is None:
+                return CandidateResolution(candidate=None, status="invalid_invite")
+            if _normalize_invite_channel(invite.channel) not in {"generic", "max"}:
+                return CandidateResolution(candidate=None, status="invalid_invite")
+            if (invite.status or "active") not in {"active", "used"}:
+                return CandidateResolution(candidate=None, status="invalid_invite")
+
+            settings = get_settings()
+            invite_ttl = timedelta(seconds=settings.candidate_portal_token_ttl_seconds)
+            created_at = invite.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if now - created_at > invite_ttl:
+                return CandidateResolution(candidate=None, status="invalid_invite")
+
+            payload_candidate = await session.scalar(
+                select(User).where(User.candidate_id == invite.candidate_id).limit(1)
+            )
+            if payload_candidate is None:
+                return CandidateResolution(candidate=None, status="invalid_invite")
+
+        if ownership.owner_candidate_id(exclude_candidate_id=int(payload_candidate.id)) is not None:
+            return _ownership_conflict_resolution(
+                audit_events=audit_events,
+                max_user_id=normalized_max_user_id,
+                ownership=ownership,
+                candidate=payload_candidate,
+                reason="already_owned_by_other_candidate",
+            )
+
+        current_candidate_max_user_id = normalize_max_user_id(payload_candidate.max_user_id)
+        if current_candidate_max_user_id and current_candidate_max_user_id != normalized_max_user_id:
+            changes = {
+                "channel": "max",
+                "current_max_user_fingerprint": max_user_id_fingerprint(current_candidate_max_user_id),
+                "incoming_max_user_fingerprint": max_user_id_fingerprint(normalized_max_user_id),
+                "reason": "candidate_bound_to_other_max_user",
+            }
+            logger.warning(
+                "max_bot.max_relink_attempt",
+                extra={**changes, "candidate_id": int(payload_candidate.id)},
+            )
+            audit_events.append(
+                AuditEvent(
+                    action="max_relink_attempt",
+                    entity_id=int(payload_candidate.id),
+                    changes=changes,
+                )
+            )
+            return CandidateResolution(
+                candidate=None,
+                status="invite_conflict",
+                audit_events=tuple(audit_events),
+            )
+
+        if invite is not None and invite.used_at is not None and invite.used_by_external_id not in {
+            None,
+            "",
+            normalized_max_user_id,
+        }:
+            audit_events.append(
+                AuditEvent(
+                    action="invite_conflict",
+                    entity_id=int(payload_candidate.id),
+                    changes={
+                        "channel": "max",
+                        "invite_id": int(invite.id),
+                        "max_user_fingerprint": max_user_id_fingerprint(normalized_max_user_id),
+                        "reason": "invite_already_used",
+                    },
+                )
+            )
+            return CandidateResolution(
+                candidate=None,
+                status="invite_conflict",
+                audit_events=tuple(audit_events),
+            )
+
+        linked_now = ownership.status == "unclaimed" and normalize_max_user_id(payload_candidate.max_user_id) in {
+            "",
+            normalized_max_user_id,
+        }
+        if invite is not None:
+            if invite.used_at is None:
+                invite.used_at = now
+            invite.status = "used"
+            invite.used_by_external_id = normalized_max_user_id
+        if linked_now:
+            payload_linked = True
+        candidate = payload_candidate
+    elif candidate is None:
+        allow_public_entry = bool(
+            getattr(get_settings(), "max_bot_allow_public_entry", default_max_public_entry_enabled())
+        )
+        if not allow_public_entry:
+            return CandidateResolution(candidate=None, status="invite_required")
+        candidate = _new_max_candidate(max_user_id=normalized_max_user_id, now=now)
+        session.add(candidate)
+        await session.flush()
+        linked_now = True
+        candidate_created = True
 
     assert candidate is not None
 
-    candidate.max_user_id = max_user_id
+    candidate.max_user_id = normalized_max_user_id
     current_platform = str(candidate.messenger_platform or "").strip().lower()
     if candidate_created or current_platform == "max" or (
         current_platform in {"", "telegram"} and not _candidate_has_telegram_identity(candidate)
@@ -496,22 +564,26 @@ async def _resolve_max_candidate(
             AuditEvent(
                 action="max_linked",
                 entity_id=int(candidate.id),
-                changes={"channel": "max", "max_user_id": max_user_id, "payload_linked": payload_linked},
+                changes={
+                    "channel": "max",
+                    "max_user_fingerprint": max_user_id_fingerprint(normalized_max_user_id),
+                    "payload_linked": payload_linked,
+                },
             )
         )
         await analytics.log_funnel_event(
             analytics.FunnelEvent.BOT_ENTERED,
-            user_id=_max_numeric_id(max_user_id),
+            user_id=_max_numeric_id(normalized_max_user_id),
             candidate_id=candidate.id,
-            metadata={"channel": "max", "max_user_id": max_user_id},
+            metadata={"channel": "max", "max_user_id": normalized_max_user_id},
             session=session,
         )
 
     await analytics.log_funnel_event(
         analytics.FunnelEvent.BOT_START,
-        user_id=_max_numeric_id(max_user_id),
+        user_id=_max_numeric_id(normalized_max_user_id),
         candidate_id=candidate.id,
-        metadata={"channel": "max", "max_user_id": max_user_id},
+        metadata={"channel": "max", "max_user_id": normalized_max_user_id},
         session=session,
     )
     if payload_linked:

@@ -442,6 +442,53 @@ async def test_generate_max_link_returns_deterministic_block_reason_when_provide
 
 
 @pytest.mark.asyncio
+async def test_candidate_channel_health_surfaces_ambiguous_max_ownership(admin_app) -> None:
+    first_candidate = await candidate_services.create_or_update_user(
+        telegram_id=90127,
+        fio="MAX Ownership Duplicate 1",
+        city="Москва",
+        username="max_owner_dup_1",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+    second_candidate = await candidate_services.create_or_update_user(
+        telegram_id=90128,
+        fio="MAX Ownership Duplicate 2",
+        city="Москва",
+        username="max_owner_dup_2",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+    duplicate_max_user_id = "max-owner-duplicate-1"
+
+    async with async_session() as session:
+        first_row = await session.get(User, first_candidate.id)
+        second_row = await session.get(User, second_candidate.id)
+        assert first_row is not None
+        assert second_row is not None
+        first_row.max_user_id = duplicate_max_user_id
+        second_row.max_user_id = duplicate_max_user_id
+        first_row.messenger_platform = "max"
+        second_row.messenger_platform = "max"
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "get",
+        f"/api/candidates/{first_candidate.id}/channel-health",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["max"]["linked"] is True
+    assert payload["max"]["ownership_status"] == "ambiguous"
+    assert sorted(payload["max"]["ownership_candidate_ids"]) == sorted(
+        [int(first_candidate.id), int(second_candidate.id)]
+    )
+    assert payload["max"]["ownership_duplicate_count"] == 1
+    assert payload["delivery_ready"] is False
+    assert payload["delivery_block_reason"] == "max_ownership_ambiguous"
+
+
+@pytest.mark.asyncio
 async def test_restart_candidate_portal_creates_new_active_journey(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=90123,

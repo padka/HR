@@ -118,6 +118,7 @@ async def _seed_candidate(
     fio: str | None = "Иванов Иван Иванович",
     phone: str | None = "+79991112233",
     city: str | None = "Москва Existing",
+    max_user_id: str | None = None,
 ) -> int:
     async with async_session() as session:
         candidate = User(
@@ -126,6 +127,7 @@ async def _seed_candidate(
             phone=phone,
             city=city,
             source="seed",
+            max_user_id=max_user_id,
         )
         session.add(candidate)
         await session.commit()
@@ -139,6 +141,20 @@ async def _load_candidate_by_max(max_user_id: str) -> User | None:
         if candidate:
             session.expunge(candidate)
         return candidate
+
+
+async def _load_candidates_by_max(max_user_id: str) -> list[User]:
+    async with async_session() as session:
+        candidates = (
+            await session.scalars(
+                select(User)
+                .where(User.max_user_id == max_user_id)
+                .order_by(User.id.asc())
+            )
+        ).all()
+        for candidate in candidates:
+            session.expunge(candidate)
+        return list(candidates)
 
 
 async def _load_candidate_by_uuid(candidate_uuid: str) -> User | None:
@@ -417,3 +433,46 @@ def test_max_link_does_not_silently_override_telegram_preferred_channel(
     assert candidate is not None
     assert candidate.max_user_id == max_user_id
     assert candidate.messenger_platform == "telegram"
+
+
+def test_max_same_user_cannot_claim_another_candidate_invite(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    first_candidate_uuid = str(uuid4())
+    second_candidate_uuid = str(uuid4())
+    asyncio.run(_seed_candidate(first_candidate_uuid))
+    asyncio.run(_seed_candidate(second_candidate_uuid))
+    first_invite = asyncio.run(create_candidate_invite_token(first_candidate_uuid, channel="max"))
+    second_invite = asyncio.run(create_candidate_invite_token(second_candidate_uuid, channel="max"))
+    max_user_id = f"22{uuid4().hex[:10]}"
+
+    assert _post_bot_started(client, max_user_id=max_user_id, start_payload=first_invite.token).status_code == 200
+    response = _post_bot_started(client, max_user_id=max_user_id, start_payload=second_invite.token)
+
+    assert response.status_code == 200
+    assert "уже связан с другой анкетой" in str(_isolated_registry.calls[-1]["text"]).lower()
+
+    first_candidate = asyncio.run(_load_candidate_by_uuid(first_candidate_uuid))
+    second_candidate = asyncio.run(_load_candidate_by_uuid(second_candidate_uuid))
+    assert first_candidate is not None
+    assert second_candidate is not None
+    assert first_candidate.max_user_id == max_user_id
+    assert second_candidate.max_user_id is None
+
+
+def test_max_duplicate_owners_block_start_and_resume_with_explicit_ambiguity(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    max_user_id = f"11{uuid4().hex[:10]}"
+    asyncio.run(_seed_candidate(str(uuid4()), max_user_id=max_user_id))
+    asyncio.run(_seed_candidate(str(uuid4()), max_user_id=max_user_id))
+
+    started = _post_bot_started(client, max_user_id=max_user_id)
+    resumed = _post_callback(client, max_user_id=max_user_id, payload="maxflow:start")
+
+    assert started.status_code == 200
+    assert resumed.status_code == 200
+    assert "нельзя продолжить автоматически" in str(_isolated_registry.calls[-1]["text"]).lower()
+    assert len(asyncio.run(_load_candidates_by_max(max_user_id))) == 2

@@ -242,6 +242,7 @@ stateDiagram-v2
 ### Reliability Contract
 - Only one active MAX invite is canonical per candidate. Rotation supersedes previous invite instead of leaving multiple active links.
 - Same invite + same `max_user_id` is idempotent. Same invite + different `max_user_id` is conflict with no duplicate candidate/journey rows.
+- Same `max_user_id` cannot silently claim another candidate. Cross-candidate reuse is an explicit ownership conflict, and persisted duplicate owner rows are treated as ambiguity that must be repaired before MAX re-entry resumes.
 - `messenger_platform` becomes MAX automatically only when candidate has no existing Telegram identity; otherwise preferred channel is preserved until explicit operator action.
 
 ## 5. HH Sync And Import
