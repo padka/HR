@@ -14,11 +14,14 @@ from backend.core import settings as settings_module
 from backend.core.messenger.protocol import MessengerPlatform, MessengerProtocol, SendResult
 from backend.core.messenger.registry import MessengerRegistry
 from backend.core.db import async_session
-from backend.domain.candidates.services import create_candidate_invite_token
-from backend.domain.candidates.models import TestResult, User
+from backend.domain.candidates.services import create_candidate_invite_token, issue_candidate_invite_token
+from backend.domain.candidates.models import CandidateInviteToken, TestResult, User
 from backend.domain.candidates.portal_service import (
+    bump_candidate_portal_session_version,
+    ensure_candidate_portal_session,
     get_candidate_portal_questions,
     invalidate_max_bot_profile_probe_cache,
+    sign_candidate_portal_max_launch_token,
     sign_candidate_portal_token,
 )
 from backend.domain.models import City
@@ -160,6 +163,20 @@ async def _load_latest_test1(candidate_id: int) -> TestResult | None:
         if row:
             session.expunge(row)
         return row
+
+
+async def _load_invites(candidate_uuid: str) -> list[CandidateInviteToken]:
+    async with async_session() as session:
+        rows = (
+            await session.scalars(
+                select(CandidateInviteToken)
+                .where(CandidateInviteToken.candidate_id == candidate_uuid)
+                .order_by(CandidateInviteToken.id.asc())
+            )
+        ).all()
+        for row in rows:
+            session.expunge(row)
+        return rows
 
 
 async def _count_candidates_by_uuid(candidate_uuid: str) -> int:
@@ -417,3 +434,87 @@ def test_max_link_does_not_silently_override_telegram_preferred_channel(
     assert candidate is not None
     assert candidate.max_user_id == max_user_id
     assert candidate.messenger_platform == "telegram"
+
+
+def test_max_launch_token_rejects_stale_session_after_version_bump(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    candidate_uuid = str(uuid4())
+    asyncio.run(_seed_candidate(candidate_uuid))
+
+    async def _issue_stale_launch_token() -> str:
+        async with async_session() as session:
+            async with session.begin():
+                candidate = await session.scalar(select(User).where(User.candidate_id == candidate_uuid).limit(1))
+                assert candidate is not None
+                journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
+                launch_token = sign_candidate_portal_max_launch_token(
+                    candidate_uuid=candidate_uuid,
+                    journey_session_id=int(journey.id),
+                    session_version=int(journey.session_version or 1),
+                )
+                await bump_candidate_portal_session_version(session, candidate_id=int(candidate.id))
+                return launch_token
+
+    stale_launch_token = asyncio.run(_issue_stale_launch_token())
+    max_user_id = f"22{uuid4().hex[:10]}"
+
+    response = _post_bot_started(client, max_user_id=max_user_id, start_payload=stale_launch_token)
+
+    assert response.status_code == 200
+    assert "устарела" in str(_isolated_registry.calls[-1]["text"]).lower()
+
+    candidate = asyncio.run(_load_candidate_by_uuid(candidate_uuid))
+    assert candidate is not None
+    assert candidate.max_user_id is None
+
+
+def test_superseded_max_invite_is_rejected_after_reissue(
+    client: TestClient,
+    _isolated_registry: _FakeMaxAdapter,
+):
+    candidate_uuid = str(uuid4())
+    asyncio.run(_seed_candidate(candidate_uuid))
+
+    async def _rotate_invites() -> tuple[str, str]:
+        async with async_session() as session:
+            async with session.begin():
+                first, _ = await issue_candidate_invite_token(
+                    candidate_uuid,
+                    channel="max",
+                    rotate_active=True,
+                    session=session,
+                )
+                first_token = str(first.token)
+            async with session.begin():
+                second, _ = await issue_candidate_invite_token(
+                    candidate_uuid,
+                    channel="max",
+                    rotate_active=True,
+                    session=session,
+                )
+                second_token = str(second.token)
+        return first_token, second_token
+
+    superseded_token, fresh_token = asyncio.run(_rotate_invites())
+    max_user_id = f"11{uuid4().hex[:10]}"
+
+    rejected = _post_bot_started(client, max_user_id=max_user_id, start_payload=superseded_token)
+    assert rejected.status_code == 200
+    assert "недействительна" in str(_isolated_registry.calls[-1]["text"]).lower()
+
+    accepted = _post_bot_started(client, max_user_id=max_user_id, start_payload=fresh_token)
+
+    assert accepted.status_code == 200
+
+    candidate = asyncio.run(_load_candidate_by_uuid(candidate_uuid))
+    assert candidate is not None
+    assert candidate.max_user_id == max_user_id
+
+    invites = asyncio.run(_load_invites(candidate_uuid))
+    assert [row.status for row in invites] == ["superseded", "used", "active"]
+    assert invites[0].token == superseded_token
+    assert invites[1].token == fresh_token
+    assert invites[1].used_by_external_id == max_user_id
+    assert invites[2].channel == "max"

@@ -1275,12 +1275,39 @@ async def get_candidate_portal_user(
     )
 
 
+def candidate_portal_access_session_mismatch(
+    access: CandidatePortalAccess,
+    journey: CandidateJourneySession,
+) -> dict[str, int | None] | None:
+    actual_session_id = int(journey.id)
+    actual_session_version = int(journey.session_version or 1)
+    if (
+        access.journey_session_id is not None
+        and access.journey_session_id != actual_session_id
+    ) or (
+        access.session_version is not None
+        and access.session_version != actual_session_version
+    ):
+        return {
+            "token_session_id": access.journey_session_id,
+            "token_session_version": access.session_version,
+            "actual_session_id": actual_session_id,
+            "actual_session_version": actual_session_version,
+        }
+    return None
+
+
 async def ensure_candidate_portal_session(
     session: AsyncSession,
     candidate: User,
     *,
     entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
 ) -> CandidateJourneySession:
+    await session.scalar(
+        select(User.id)
+        .where(User.id == candidate.id)
+        .with_for_update()
+    )
     journey = await session.scalar(
         select(CandidateJourneySession)
         .where(
@@ -1313,6 +1340,19 @@ async def ensure_candidate_portal_session(
     journey.last_activity_at = now
     await session.flush()
     return journey
+
+
+async def ensure_candidate_portal_session_for_access(
+    session: AsyncSession,
+    candidate: User,
+    access: CandidatePortalAccess,
+) -> tuple[CandidateJourneySession, dict[str, int | None] | None]:
+    journey = await ensure_candidate_portal_session(
+        session,
+        candidate,
+        entry_channel=access.entry_channel,
+    )
+    return journey, candidate_portal_access_session_mismatch(access, journey)
 
 
 def build_candidate_portal_session_payload(
@@ -2341,6 +2381,11 @@ async def restart_candidate_portal_journey(
     *,
     entry_channel: str = "max",
 ) -> tuple[CandidateJourneySession, int | None]:
+    await session.scalar(
+        select(User.id)
+        .where(User.id == candidate.id)
+        .with_for_update()
+    )
     active_slot = await get_candidate_active_slot(session, candidate)
     active_slot_status = str(active_slot.status or "").lower() if active_slot is not None else ""
     if active_slot_status in {SlotStatus.CONFIRMED.lower(), SlotStatus.CONFIRMED_BY_CANDIDATE.lower()}:

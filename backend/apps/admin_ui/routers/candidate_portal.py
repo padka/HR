@@ -29,6 +29,7 @@ from backend.domain.candidates.portal_service import (
     confirm_candidate_portal_slot,
     create_candidate_portal_message,
     ensure_candidate_portal_session,
+    ensure_candidate_portal_session_for_access,
     get_latest_test1_result_for_journey,
     get_candidate_portal_user,
     is_candidate_portal_session_valid,
@@ -342,41 +343,18 @@ async def _candidate_session_payload(
                         message="Кандидатская сессия не найдена.",
                         clear_resume_cookie=portal_token_from_resume_cookie,
                     )
-                journey = await ensure_candidate_portal_session(
+                journey, mismatch = await ensure_candidate_portal_session_for_access(
                     session,
                     candidate,
-                    entry_channel=access.entry_channel,
+                    access,
                 )
-                if (
-                    access.journey_session_id is not None
-                    and access.journey_session_id != int(journey.id)
-                ) or (
-                    access.session_version is not None
-                    and access.session_version != int(journey.session_version or 1)
-                ):
-                    await log_audit_action(
-                        "portal_session_rejected_version_mismatch",
-                        "candidate",
-                        candidate.id,
-                        changes={
-                            "token_session_id": access.journey_session_id,
-                            "token_session_version": access.session_version,
-                            "actual_session_id": int(journey.id),
-                            "actual_session_version": int(journey.session_version or 1),
-                        },
+                if mismatch is not None:
+                    await _log_portal_session_mismatch(
+                        candidate_id=int(candidate.id),
+                        mismatch=mismatch,
                     )
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "message": "Сессия портала устарела. Откройте новую ссылку.",
-                            "code": "portal_session_version_mismatch",
-                            "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
-                            "can_resume": False,
-                            "requires_fresh_link": True,
-                        },
-                        headers=_candidate_portal_resume_cookie_clear_headers()
-                        if portal_token_from_resume_cookie
-                        else None,
+                    raise _portal_session_mismatch_error(
+                        clear_resume_cookie=portal_token_from_resume_cookie,
                     )
                 next_payload = build_candidate_portal_session_payload(
                     candidate_id=int(candidate.id),
@@ -399,16 +377,7 @@ async def _candidate_session_payload(
                         "session_version": payload.get("session_version"),
                     },
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "message": "Сессия портала устарела. Откройте новую ссылку.",
-                        "code": "portal_session_version_mismatch",
-                        "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
-                        "can_resume": False,
-                        "requires_fresh_link": True,
-                    },
-                )
+                raise _portal_session_mismatch_error()
     next_payload = touch_candidate_portal_session(dict(payload))
     request.session[PORTAL_SESSION_KEY] = next_payload
     return next_payload
@@ -431,6 +400,38 @@ def _portal_error(exc: CandidatePortalError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={"message": str(exc)},
+    )
+
+
+async def _log_portal_session_mismatch(
+    *,
+    candidate_id: int,
+    mismatch: dict[str, int | None],
+) -> None:
+    await log_audit_action(
+        "portal_session_rejected_version_mismatch",
+        "candidate",
+        candidate_id,
+        changes=mismatch,
+    )
+
+
+def _portal_session_mismatch_error(
+    *,
+    clear_resume_cookie: bool = False,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "message": "Сессия портала устарела. Откройте новую ссылку.",
+            "code": "portal_session_version_mismatch",
+            "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
+            "can_resume": False,
+            "requires_fresh_link": True,
+        },
+        headers=_candidate_portal_resume_cookie_clear_headers()
+        if clear_resume_cookie
+        else None,
     )
 
 
@@ -779,39 +780,17 @@ async def exchange_candidate_portal_session(
                         "requires_fresh_link": False,
                     },
                 )
-            journey = await ensure_candidate_portal_session(
+            journey, mismatch = await ensure_candidate_portal_session_for_access(
                 session,
                 candidate,
-                entry_channel=access.entry_channel,
+                access,
             )
-            if (
-                access.journey_session_id is not None
-                and access.journey_session_id != int(journey.id)
-            ) or (
-                access.session_version is not None
-                and access.session_version != int(journey.session_version or 1)
-            ):
-                await log_audit_action(
-                    "portal_session_rejected_version_mismatch",
-                    "candidate",
-                    candidate.id,
-                    changes={
-                        "token_session_id": access.journey_session_id,
-                        "token_session_version": access.session_version,
-                        "actual_session_id": int(journey.id),
-                        "actual_session_version": int(journey.session_version or 1),
-                    },
+            if mismatch is not None:
+                await _log_portal_session_mismatch(
+                    candidate_id=int(candidate.id),
+                    mismatch=mismatch,
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "message": "Сессия портала устарела. Откройте новую ссылку.",
-                        "code": "portal_session_version_mismatch",
-                        "state": PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK,
-                        "can_resume": False,
-                        "requires_fresh_link": True,
-                    },
-                )
+                raise _portal_session_mismatch_error()
             test1_result = await get_latest_test1_result_for_journey(
                 session,
                 candidate_id=int(candidate.id),

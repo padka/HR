@@ -397,6 +397,74 @@ async def test_generate_max_link_resolves_public_link_from_provider(admin_app, m
 
 
 @pytest.mark.asyncio
+async def test_generate_max_link_records_delivery_boundary_metadata(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90127,
+        fio="MAX Delivery Metadata Tester",
+        city="Москва",
+        username="max_delivery_metadata_tester",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        stored = await session.get(User, candidate.id)
+        assert stored is not None
+        stored.max_user_id = "max-user-90127"
+        stored.messenger_platform = "max"
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/channels/max-link",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["delivery"]["status"] == "sent"
+    assert payload["delivery"]["attempted"] is True
+    assert payload["delivery"]["channel"] == "max"
+    assert payload["delivery"]["journey_id"] == payload["journey"]["id"]
+    assert payload["delivery"]["session_version"] == payload["journey"]["session_version"]
+    assert payload["delivery"]["invite_id"]
+    assert payload["delivery"]["correlation_id"]
+
+    async with async_session() as session:
+        message = await session.scalar(
+            select(ChatMessage)
+            .where(
+                ChatMessage.candidate_id == candidate.id,
+                ChatMessage.direction == ChatMessageDirection.OUTBOUND.value,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(1)
+        )
+
+    assert message is not None
+    assert isinstance(message.payload_json, dict)
+    assert message.payload_json["kind"] == "portal_access_package"
+    assert message.payload_json["invite_id"] == payload["delivery"]["invite_id"]
+    assert message.payload_json["journey_id"] == payload["journey"]["id"]
+    assert message.payload_json["session_version"] == payload["journey"]["session_version"]
+    assert message.payload_json["delivery_status"] == "sent"
+    assert message.payload_json["correlation_id"] == payload["delivery"]["correlation_id"]
+
+    channel_health = await _async_request(
+        admin_app,
+        "get",
+        f"/api/candidates/{candidate.id}/channel-health",
+    )
+    assert channel_health.status_code == 200
+    health_payload = channel_health.json()
+    assert health_payload["last_portal_access_delivery"]["portal_access"]["journey_id"] == payload["journey"]["id"]
+    assert (
+        health_payload["last_portal_access_delivery"]["portal_access"]["session_version"]
+        == payload["journey"]["session_version"]
+    )
+    assert health_payload["last_portal_access_delivery"]["portal_access"]["delivery_status"] == "sent"
+
+
+@pytest.mark.asyncio
 async def test_generate_max_link_returns_deterministic_block_reason_when_provider_link_missing(
     admin_app,
     monkeypatch,

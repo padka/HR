@@ -21,6 +21,7 @@ Read in this order:
 - Telegram bot: `backend/apps/bot/app.py`
 - MAX bot: `backend/apps/max_bot/app.py`
 - Candidate domain: `backend/domain/candidates/*`
+- Delivery/MAX reliability map: [docs/architecture/delivery-max-reliability-map.md](/Users/mikhail/Projects/recruitsmart_admin_delivery_max_hardening/docs/architecture/delivery-max-reliability-map.md)
 - Slot/schedule domain: `backend/domain/slot_service.py`, `backend/domain/slot_assignment_service.py`
 - Frontend SPA: `frontend/app/src/app/main.tsx`
 - Candidate portal: `frontend/app/src/app/routes/candidate/*`
@@ -33,6 +34,7 @@ Read in this order:
 - recruiter chat and dashboard actions
 - candidate portal and MAX mini app
 - bot/webhook delivery and idempotency
+- invite / deep-link / session recovery boundaries
 - analytics and KPI reporting
 
 ## High-risk surfaces
@@ -50,3 +52,10 @@ Read in this order:
 - `.codex/config.toml` holds project defaults for safe agent operation.
 - `.agents/skills/` holds reusable workflow gates for recurring tasks.
 - `.codexrc` remains only as a compatibility shim until runtime precedence is confirmed.
+
+## Current delivery/MAX hardening anchors
+
+- MAX payload/session validation now rejects stale portal/MAX launch tokens using the same `journey_session_id` + `session_version` boundary as the web portal.
+- Candidate portal session creation/restart now serializes on the candidate row to reduce duplicate-active-journey drift.
+- `ensure_candidate_invite_token(...)` now locks/reuses active invite rows deterministically for the same candidate/channel.
+- Admin MAX delivery outcome now records `invite_id`, `journey_id`, `session_version`, `restarted`, and `correlation_id` in message/audit metadata.

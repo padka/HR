@@ -175,3 +175,57 @@ async def test_max_invite_unique_active_constraint_per_candidate():
         with pytest.raises(IntegrityError):
             await session.commit()
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_ensure_candidate_invite_token_reuses_existing_active_max_invite():
+    async with async_session() as session:
+        candidate = candidate_models.User(
+            telegram_id=None,
+            fio="MAX Invite Reuse",
+            city="Москва",
+            is_active=True,
+            candidate_status=CandidateStatus.LEAD,
+            source="manual_call",
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+    async with async_session() as session:
+        async with session.begin():
+            first = await candidate_services.ensure_candidate_invite_token(
+                session,
+                candidate.candidate_id,
+                channel="max",
+            )
+            first_id = int(first.id)
+            first_token = str(first.token)
+
+    async with async_session() as session:
+        async with session.begin():
+            second = await candidate_services.ensure_candidate_invite_token(
+                session,
+                candidate.candidate_id,
+                channel="max",
+            )
+            second_id = int(second.id)
+            second_token = str(second.token)
+
+    assert second_id == first_id
+    assert second_token == first_token
+
+    async with async_session() as session:
+        tokens = (
+            await session.scalars(
+                select(candidate_models.CandidateInviteToken)
+                .where(
+                    candidate_models.CandidateInviteToken.candidate_id == candidate.candidate_id,
+                    candidate_models.CandidateInviteToken.channel == "max",
+                )
+                .order_by(candidate_models.CandidateInviteToken.id.asc())
+            )
+        ).all()
+
+    assert len(tokens) == 1
+    assert tokens[0].status == "active"
