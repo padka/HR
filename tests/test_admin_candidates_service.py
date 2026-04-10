@@ -24,7 +24,16 @@ from backend.domain.candidates import (
 )
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.workflow import WorkflowStatus
-from backend.domain.models import City, MessageTemplate, Recruiter, Slot, SlotStatus
+from backend.domain.models import (
+    City,
+    MessageTemplate,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    SlotStatus,
+)
+from backend.domain.scheduling_repair_service import repair_slot_assignment_scheduling_conflict
 
 
 @pytest.mark.asyncio
@@ -84,6 +93,12 @@ async def test_list_candidates_and_detail():
     assert "views" in payload
     assert isinstance(payload["views"].get("candidates"), list)
     assert payload["views"]["candidates"]
+    assert payload["views"]["candidates"][0]["lifecycle_summary"]["record_state"] == "active"
+    assert payload["views"]["candidates"][0]["candidate_next_action"]["worklist_bucket"] in {
+        "incoming",
+        "awaiting_recruiter",
+        "awaiting_candidate",
+    }
     kanban_view = payload["views"].get("kanban", {})
     assert isinstance(kanban_view.get("columns"), list)
     assert kanban_view["columns"]
@@ -96,6 +111,8 @@ async def test_list_candidates_and_detail():
     assert detail["tests"]
     assert "slots" in detail
     assert "timeline" in detail
+    assert detail["lifecycle_summary"]["record_state"] == "active"
+    assert isinstance(detail["state_reconciliation"]["issues"], list)
 
 
 @pytest.mark.asyncio
@@ -134,6 +151,455 @@ async def test_list_candidates_includes_responsible_recruiter_fallback_fields():
     assert card.get("recruiter_id") == recruiter_id
     assert card.get("recruiter_name") == "Fallback Recruiter"
     assert card.get("recruiter", {}).get("name") == "Fallback Recruiter"
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_supports_canonical_kanban_state_filters() -> None:
+    async with async_session() as session:
+        city = City(name="Filter City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Filter Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999901,
+        fio="Canonical Filter Candidate",
+        city="Filter City",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    async with async_session() as session:
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="Canonical Filter Candidate",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        pipeline="main",
+        state_filters=["kanban:interview_confirmed"],
+        principal=Principal(type="admin", id=-1),
+    )
+
+    assert payload["total"] == 1
+    assert payload["filters"]["state"] == ["kanban:interview_confirmed"]
+    card = payload["views"]["candidates"][0]
+    assert card["operational_summary"]["kanban_column"] == "interview_confirmed"
+    assert card["scheduling_summary"]["status"] == "confirmed"
+
+    confirmed_column = next(
+        column for column in payload["views"]["kanban"]["columns"] if column["slug"] == "interview_confirmed"
+    )
+    assert confirmed_column["target_status"] == "interview_confirmed"
+    assert [candidate_card["id"] for candidate_card in confirmed_column["candidates"]] == [candidate.id]
+
+
+@pytest.mark.asyncio
+async def test_get_candidate_detail_marks_persisted_scheduling_split_brain_for_manual_repair() -> None:
+    async with async_session() as session:
+        city = City(name="Split Brain City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Split Brain Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999912,
+        fio="Persisted Conflict Candidate",
+        city="Split Brain City",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+        responsible_recruiter_id=recruiter.id,
+    )
+
+    async with async_session() as session:
+        stale_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        target_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([stale_slot, target_slot])
+        await session.commit()
+        await session.refresh(target_slot)
+
+        session.add(
+            SlotAssignment(
+                slot_id=target_slot.id,
+                recruiter_id=recruiter.id,
+                candidate_id=candidate.candidate_id,
+                candidate_tg_id=candidate.telegram_id,
+                candidate_tz="Europe/Moscow",
+                status=SlotAssignmentStatus.CONFIRMED,
+                confirmed_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id, principal=Principal(type="admin", id=-1))
+
+    assert detail is not None
+    scheduling_summary = detail["scheduling_summary"]
+    issue_codes = {issue.get("code") for issue in scheduling_summary["issues"]}
+    assert scheduling_summary["integrity_state"] == "needs_manual_repair"
+    assert scheduling_summary["write_behavior"] == "needs_manual_repair"
+    assert scheduling_summary["write_owner"] == "slot_assignment"
+    assert scheduling_summary["assignment_owned"] is True
+    assert scheduling_summary["slot_only_writes_allowed"] is False
+    assert scheduling_summary["repairability"] == "repairable"
+    assert scheduling_summary["manual_repair_reasons"] == []
+    assert scheduling_summary["repair_options"][0]["action"] == "assignment_authoritative"
+    assert scheduling_summary["repair_workflow"]["policy"] == "repairable"
+    assert scheduling_summary["repair_workflow"]["conflict_class"] == "scheduling_split_brain"
+    assert scheduling_summary["repair_workflow"]["allowed_actions"][0]["action"] == "assignment_authoritative"
+    assert "scheduling_split_brain" in issue_codes
+    assert detail["operational_summary"]["has_scheduling_conflict"] is True
+    assert detail["candidate_next_action"]["primary_action"]["type"] == "repair_inconsistency"
+
+
+@pytest.mark.asyncio
+async def test_get_candidate_detail_exposes_manual_repair_workflow_for_multiple_active_assignments() -> None:
+    async with async_session() as session:
+        city = City(name="Manual Workflow City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Manual Workflow Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999914,
+        fio="Manual Workflow Candidate",
+        city="Manual Workflow City",
+        initial_status=CandidateStatus.WAITING_SLOT,
+        responsible_recruiter_id=recruiter.id,
+    )
+
+    async with async_session() as session:
+        first_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.PENDING,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        second_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=SlotStatus.PENDING,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        session.add_all([first_slot, second_slot])
+        await session.commit()
+        await session.refresh(first_slot)
+        await session.refresh(second_slot)
+
+        session.add_all(
+            [
+                SlotAssignment(
+                    slot_id=first_slot.id,
+                    recruiter_id=recruiter.id,
+                    candidate_id=None,
+                    candidate_tg_id=candidate.telegram_id,
+                    candidate_tz="Europe/Moscow",
+                    status=SlotAssignmentStatus.OFFERED,
+                ),
+                SlotAssignment(
+                    slot_id=second_slot.id,
+                    recruiter_id=recruiter.id,
+                    candidate_id=None,
+                    candidate_tg_id=candidate.telegram_id,
+                    candidate_tz="Europe/Moscow",
+                    status=SlotAssignmentStatus.OFFERED,
+                ),
+            ]
+        )
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id, principal=Principal(type="admin", id=-1))
+    assert detail is not None
+    scheduling_summary = detail["scheduling_summary"]
+    workflow = scheduling_summary["repair_workflow"]
+    assert scheduling_summary["repairability"] == "manual_only"
+    assert scheduling_summary["manual_repair_reasons"] == ["multiple_active_assignments"]
+    assert workflow["policy"] == "manual_only"
+    assert workflow["conflict_class"] == "multiple_active_assignments"
+    assert workflow["allowed_actions"][0]["action"] == "resolve_to_active_assignment"
+    assert workflow["allowed_actions"][0]["selection_options"]["assignments"]
+    assert workflow["allowed_actions"][0]["required_confirmations"] == [
+        "selected_assignment_is_canonical",
+        "cancel_non_selected_active_assignments",
+    ]
+    assert detail["candidate_next_action"]["primary_action"]["type"] == "repair_inconsistency"
+
+
+@pytest.mark.asyncio
+async def test_get_candidate_detail_becomes_consistent_after_controlled_scheduling_repair() -> None:
+    async with async_session() as session:
+        city = City(name="Repair Detail City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Repair Detail Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999913,
+        fio="Repair Detail Candidate",
+        city="Repair Detail City",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+        responsible_recruiter_id=recruiter.id,
+    )
+
+    async with async_session() as session:
+        stale_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        target_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([stale_slot, target_slot])
+        await session.commit()
+        await session.refresh(target_slot)
+
+        assignment = SlotAssignment(
+            slot_id=target_slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=SlotAssignmentStatus.CONFIRMED,
+            confirmed_at=datetime.now(timezone.utc),
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+        assignment_id = assignment.id
+
+    repair_result = await repair_slot_assignment_scheduling_conflict(
+        assignment_id=assignment_id,
+        repair_action="assignment_authoritative",
+        performed_by_type="admin",
+        performed_by_id=0,
+    )
+    assert repair_result.ok is True
+
+    detail = await get_candidate_detail(candidate.id, principal=Principal(type="admin", id=-1))
+    assert detail is not None
+    scheduling_summary = detail["scheduling_summary"]
+    assert scheduling_summary["integrity_state"] == "consistent"
+    assert scheduling_summary["write_behavior"] == "allow"
+    assert scheduling_summary["repairability"] == "not_needed"
+    assert scheduling_summary["repair_options"] == []
+    assert scheduling_summary["manual_repair_reasons"] == []
+    assert scheduling_summary["repair_workflow"]["policy"] == "not_needed"
+    assert scheduling_summary["repair_workflow"]["allowed_actions"] == []
+    assert scheduling_summary["issues"] == []
+    assert detail["operational_summary"]["has_scheduling_conflict"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_canonical_filter_handles_test2_completion_when_legacy_status_lags() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999902,
+        fio="Late Test2 Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.TEST2_SENT,
+    )
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=999,
+        final_score=100.0,
+        rating="TEST2",
+        total_time=120,
+        question_data=[],
+    )
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="Late Test2 Candidate",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        pipeline="main",
+        state_filters=["kanban:test2_completed"],
+        principal=Principal(type="admin", id=-1),
+    )
+
+    assert payload["total"] == 1
+    card = payload["views"]["candidates"][0]
+    assert card["status"]["slug"] == CandidateStatus.TEST2_SENT.value
+    assert card["operational_summary"]["kanban_column"] == "test2_completed"
+    issue_codes = {issue.get("code") for issue in card["state_reconciliation"]["issues"]}
+    assert "candidate_status_stale_after_test2_pass" in issue_codes
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_kanban_totals_match_visible_candidate_cards() -> None:
+    async with async_session() as session:
+        city = City(name="Consistency City", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Consistency Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+    waiting_candidate = await candidate_services.create_or_update_user(
+        telegram_id=999903,
+        fio="Consistency Candidate Waiting",
+        city="Consistency City",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    interview_candidate = await candidate_services.create_or_update_user(
+        telegram_id=999904,
+        fio="Consistency Candidate Interview",
+        city="Consistency City",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    test2_candidate = await candidate_services.create_or_update_user(
+        telegram_id=999905,
+        fio="Consistency Candidate Test2",
+        city="Consistency City",
+        initial_status=CandidateStatus.TEST2_SENT,
+    )
+
+    await candidate_services.save_test_result(
+        user_id=test2_candidate.id,
+        raw_score=999,
+        final_score=100.0,
+        rating="TEST2",
+        total_time=120,
+        question_data=[],
+    )
+
+    async with async_session() as session:
+        session.add(
+            Slot(
+                recruiter_id=recruiter.id,
+                city_id=city.id,
+                tz_name=city.tz,
+                start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                duration_min=60,
+                status=SlotStatus.CONFIRMED_BY_CANDIDATE,
+                candidate_id=interview_candidate.candidate_id,
+                candidate_tg_id=interview_candidate.telegram_id,
+                candidate_fio=interview_candidate.fio,
+                candidate_tz="Europe/Moscow",
+            )
+        )
+        await session.commit()
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="Consistency Candidate",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        pipeline="main",
+        principal=Principal(type="admin", id=-1),
+    )
+
+    cards = payload["views"]["candidates"]
+    assert payload["total"] == 3
+    assert len(cards) == 3
+
+    expected_counts: dict[str, int] = {}
+    for card in cards:
+        slug = card["operational_summary"]["kanban_column"]
+        expected_counts[slug] = expected_counts.get(slug, 0) + 1
+
+    assert payload["summary"]["kanban_totals"]["incoming"] == expected_counts["incoming"]
+    assert payload["summary"]["kanban_totals"]["interview_confirmed"] == expected_counts["interview_confirmed"]
+    assert payload["summary"]["kanban_totals"]["test2_completed"] == expected_counts["test2_completed"]
+
+    for column in payload["views"]["kanban"]["columns"]:
+        slug = column["slug"]
+        column_candidates = [candidate_card["id"] for candidate_card in column["candidates"]]
+        expected_column_candidates = [
+            card["id"] for card in cards if card["operational_summary"]["kanban_column"] == slug
+        ]
+        assert column["total"] == len(column_candidates)
+        assert sorted(column_candidates) == sorted(expected_column_candidates)
 
 
 @pytest.mark.asyncio
@@ -258,6 +724,41 @@ async def test_candidate_detail_prefers_candidate_status_without_mutating_workfl
         refreshed = await session.get(candidate_models.User, candidate.id)
         assert refreshed is not None
         assert refreshed.workflow_status == WorkflowStatus.INTERVIEW_CONFIRMED.value
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_does_not_autofix_test2_status_on_read():
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999304,
+        fio="Stable Test2 Status",
+        city="Москва",
+        initial_status=CandidateStatus.TEST2_SENT,
+    )
+
+    await candidate_services.save_test_result(
+        user_id=candidate.id,
+        raw_score=99,
+        final_score=99.0,
+        rating="TEST2",
+        total_time=120,
+        question_data=[],
+    )
+
+    detail = await get_candidate_detail(candidate.id)
+
+    assert detail is not None
+    assert detail["candidate_status_slug"] == CandidateStatus.TEST2_SENT.value
+    assert detail["lifecycle_summary"]["stage"] == "waiting_intro_day"
+    issue_codes = {
+        issue.get("code")
+        for issue in detail["state_reconciliation"]["issues"]
+    }
+    assert "candidate_status_stale_after_test2_pass" in issue_codes
+
+    async with async_session() as session:
+        refreshed = await session.get(candidate_models.User, candidate.id)
+        assert refreshed is not None
+        assert refreshed.candidate_status == CandidateStatus.TEST2_SENT
 
 
 @pytest.mark.asyncio

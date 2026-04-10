@@ -161,6 +161,16 @@ export type MessengerHealthPayload = {
     bot_profile_name?: string | null
     max_link_base_resolved?: boolean
     max_link_base_source?: 'env' | 'provider' | 'missing' | null
+    runtime_status?: string | null
+    runtime_ready?: boolean
+    adapter_ready?: boolean
+    public_entry_enabled?: boolean
+    webhook_url_public_ready?: boolean
+    dedupe_ready?: boolean
+    dedupe_mode?: string | null
+    dedupe_requires_redis?: boolean
+    dedupe_error?: string | null
+    dedupe_message?: string | null
     webhook_public_ready?: boolean
     webhook_url?: string | null
     webhook_error?: string | null
@@ -168,6 +178,16 @@ export type MessengerHealthPayload = {
     subscription_ready?: boolean
     subscription_error?: string | null
     subscription_message?: string | null
+    subscription_status?: {
+      status?: string | null
+      action?: string | null
+      url?: string | null
+      error?: string | null
+    } | null
+    readiness_blockers?: string[] | null
+    browser_portal_fallback_allowed?: boolean
+    telegram_business_fallback_allowed?: boolean
+    shared_contract_mode?: string | null
     shared_access?: {
       store_backend?: 'redis' | 'memory' | string
       store_ready?: boolean

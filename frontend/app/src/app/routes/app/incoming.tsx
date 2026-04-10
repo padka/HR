@@ -3,6 +3,11 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
 import '@/theme/pages/dashboard.css'
 import { apiFetch } from '@/api/client'
+import {
+  RecruiterActionBlock,
+  RecruiterRiskBanner,
+  RecruiterStateContext,
+} from '@/app/components/RecruiterState'
 import { fetchCandidateDetail, type CandidateDetail } from '@/api/services/candidates'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
@@ -28,6 +33,12 @@ import {
   resolveAiScoreTone,
   toIsoDate,
 } from './incoming.utils'
+import {
+  buildCandidateSurfaceState,
+  compareIncomingCandidates,
+  matchesIncomingStatusFilter,
+  summarizeIncomingCandidates,
+} from './candidate-state.adapter'
 import type {
   ActionResponse,
   AvailableSlotsPayload,
@@ -275,11 +286,7 @@ export function IncomingPage() {
     }
 
     if (statusFilter !== 'all') {
-      if (statusFilter === 'requested_other_time') {
-        items = items.filter((item) => Boolean(item.requested_another_time))
-      } else {
-        items = items.filter((item) => item.status_slug === statusFilter)
-      }
+      items = items.filter((item) => matchesIncomingStatusFilter(item, statusFilter))
     }
 
     if (ownerFilter !== 'all') {
@@ -310,29 +317,68 @@ export function IncomingPage() {
           String(item.telegram_id || ''),
           item.responsible_recruiter_name,
           item.status_display,
+          item.lifecycle_summary?.stage_label,
+          item.scheduling_summary?.status_label,
+          item.candidate_next_action?.primary_action?.label,
+          item.state_reconciliation?.issues?.map((issue) => issue.message).filter(Boolean).join(' '),
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q))
       )
     }
 
-    return [...items].sort((left, right) => {
-      const leftRequested = left.requested_another_time ? 1 : 0
-      const rightRequested = right.requested_another_time ? 1 : 0
-      if (leftRequested !== rightRequested) return rightRequested - leftRequested
-      const leftStalled = left.status_slug === 'stalled_waiting_slot' ? 1 : 0
-      const rightStalled = right.status_slug === 'stalled_waiting_slot' ? 1 : 0
-      if (leftStalled !== rightStalled) return rightStalled - leftStalled
-      return (right.waiting_hours || 0) - (left.waiting_hours || 0)
-    })
+    return [...items].sort((left, right) => compareIncomingCandidates(left, right, 'waiting'))
   }, [aiFilter, baseItems, cityFilter, ownerFilter, recruiterId, search, statusFilter, waitingFilter])
 
+  const triageItems = useMemo(
+    () => filteredItems.map((candidate) => ({ candidate, state: buildCandidateSurfaceState(candidate) })),
+    [filteredItems],
+  )
+
+  const triageLanes = useMemo(() => {
+    const lanes = {
+      action_now: [] as typeof triageItems,
+      waiting: [] as typeof triageItems,
+      review: [] as typeof triageItems,
+    }
+    for (const item of triageItems) {
+      lanes[item.state.triageLane].push(item)
+    }
+    return [
+      {
+        key: 'action_now' as const,
+        title: 'Требует действия сейчас',
+        description: 'Срочные и управляемые кандидаты, где следующий шаг уже понятен.',
+        items: lanes.action_now,
+      },
+      {
+        key: 'waiting' as const,
+        title: 'Ждет кандидата / в процессе',
+        description: 'Есть движение по воронке, но ручное вмешательство не горит.',
+        items: lanes.waiting,
+      },
+      {
+        key: 'review' as const,
+        title: 'Требует разбора',
+        description: 'Конфликты состояния, блокировки и кандидаты, которые нельзя двигать вслепую.',
+        items: lanes.review,
+      },
+    ]
+  }, [triageItems])
+
+  const laneCounts = useMemo(
+    () => triageLanes.reduce((acc, lane) => ({ ...acc, [lane.key]: lane.items.length }), { action_now: 0, waiting: 0, review: 0 }),
+    [triageLanes],
+  )
+
   const stats = useMemo(() => {
-    const total = baseItems.length
-    const pending = baseItems.filter((item) => item.status_slug === 'slot_pending').length
-    const stalled = baseItems.filter((item) => item.status_slug === 'stalled_waiting_slot').length
-    const requested = baseItems.filter((item) => item.requested_another_time).length
-    return { total, pending, stalled, requested }
+    const summary = summarizeIncomingCandidates(baseItems)
+    return {
+      total: summary.total,
+      pending: summary.pending,
+      stalled: summary.stalled,
+      requested: summary.requested,
+    }
   }, [baseItems])
 
   useEffect(() => {
@@ -380,9 +426,10 @@ export function IncomingPage() {
 
         <section className="glass page-section ui-stack-16 app-page__section">
           <div className="toolbar toolbar--compact ui-section-kpis app-page__toolbar">
-            <span className="cd-chip">Всего: {stats.total}</span>
-            <span className="cd-chip">На согласовании: {stats.pending}</span>
-            <span className="cd-chip">Запросили другое время: {stats.requested}</span>
+            <span className="cd-chip">Всего: {triageItems.length}</span>
+            <span className="cd-chip">Сейчас: {laneCounts.action_now}</span>
+            <span className="cd-chip">В ожидании: {laneCounts.waiting}</span>
+            <span className="cd-chip">Требуют разбора: {laneCounts.review}</span>
             <span className="cd-chip">Застряли {'>'}24ч: {stats.stalled}</span>
           </div>
           {incomingDemoCount > 0 && (
@@ -451,26 +498,33 @@ export function IncomingPage() {
           {incomingQuery.isError && (
             <p className="text-danger">Ошибка: {(incomingQuery.error as Error).message}</p>
           )}
-          {incomingQuery.data && filteredItems.length === 0 && (
+          {incomingQuery.data && triageItems.length === 0 && (
             <div data-testid="incoming-empty-state">
               <p className="subtitle">Нет кандидатов по выбранным фильтрам.</p>
             </div>
           )}
-          {incomingQuery.data && filteredItems.length > 0 && (
-            <div className="incoming-grid">
-              {filteredItems.map((candidate) => {
+          {incomingQuery.data && triageItems.length > 0 && (
+            <div className="incoming-lanes" data-testid="incoming-lanes">
+              {triageLanes.map((lane) => (
+                <section key={lane.key} className={`glass glass--subtle incoming-lane incoming-lane--${lane.key}`} data-testid={`incoming-lane-${lane.key}`}>
+                  <header className="incoming-lane__header">
+                    <div>
+                      <h2 className="incoming-lane__title">{lane.title}</h2>
+                      <p className="incoming-lane__subtitle">{lane.description}</p>
+                    </div>
+                    <span className="incoming-lane__count">{lane.items.length}</span>
+                  </header>
+                  {lane.items.length === 0 ? (
+                    <div className="incoming-lane__empty">Нет кандидатов в этой зоне.</div>
+                  ) : (
+                    <div className="incoming-grid">
+                      {lane.items.map(({ candidate, state }) => {
                 const isNew = candidate.last_message_at
                   ? Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
                   : false
                 const selectedRecruiter =
                   assignTargets[candidate.id] ??
                   (candidate.responsible_recruiter_id ? String(candidate.responsible_recruiter_id) : '')
-                const statusTone =
-                  candidate.status_slug === 'stalled_waiting_slot'
-                    ? 'danger'
-                    : candidate.status_slug === 'slot_pending'
-                      ? 'info'
-                      : 'warning'
                 const isExpanded = Boolean(expandedCards[candidate.id])
                 const requestedAnotherTimeLabel = formatRequestedAnotherTime(candidate)
                 return (
@@ -491,24 +545,33 @@ export function IncomingPage() {
                           {candidate.availability_window && (
                             <span>· {candidate.availability_window}</span>
                           )}
-                        </div>
-                        {candidate.availability_note && isExpanded && (
-                          <div className="incoming-card__note incoming-card__note--muted">
-                            ✉️ {candidate.availability_note}
                           </div>
-                        )}
                       </div>
                     </div>
 
+                    <RecruiterActionBlock
+                      label={state.nextActionLabel || 'Откройте профиль'}
+                      explanation={state.nextActionExplanation || 'Следующий шаг появится в профиле кандидата.'}
+                      tone={state.nextActionTone}
+                      enabled={state.nextActionEnabled}
+                      compact
+                    />
+                    <RecruiterStateContext
+                      bucketLabel={state.worklistBucketLabel}
+                      contextLine={state.stateContextLine}
+                      schedulingLine={state.schedulingContextLine}
+                      compact
+                    />
+                    {state.riskLevel && state.riskTitle && state.riskMessage ? (
+                      <RecruiterRiskBanner
+                        level={state.riskLevel}
+                        title={state.riskTitle}
+                        message={state.riskMessage}
+                        count={state.riskCount > 0 ? state.riskCount : undefined}
+                        compact
+                      />
+                    ) : null}
                     <div className="incoming-card__status-row toolbar toolbar--compact">
-                      {candidate.status_display && (
-                        <span className={`status-pill status-pill--${statusTone}`}>
-                          {candidate.status_display}
-                        </span>
-                      )}
-                      {candidate.requested_another_time && (
-                        <span className="status-pill status-pill--warning">Запросил другое время</span>
-                      )}
                       {(candidate.ai_relevance_score != null || candidate.ai_relevance_level) && (
                         <span className={`status-pill status-pill--${resolveAiScoreTone(candidate.ai_relevance_score, candidate.ai_recommendation)}`}>
                           AI {typeof candidate.ai_relevance_score === 'number' ? `${Math.round(candidate.ai_relevance_score)}/100` : candidate.ai_relevance_level || 'unknown'}
@@ -521,24 +584,14 @@ export function IncomingPage() {
                       )}
                     </div>
 
-                    {candidate.requested_another_time && (
-                      <div className="incoming-card__note incoming-card__note--highlight">
-                        🔁 Запросил другое время
-                        {candidate.requested_another_time_at && (
-                          <span className="incoming-card__note-time">
-                            {new Date(candidate.requested_another_time_at).toLocaleString('ru-RU', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        )}
-                      </div>
-                    )}
                     {requestedAnotherTimeLabel && (
                       <div className="incoming-card__note incoming-card__note--highlight">
                         🗓 {requestedAnotherTimeLabel}
+                      </div>
+                    )}
+                    {candidate.availability_note && isExpanded && (
+                      <div className="incoming-card__note incoming-card__note--muted">
+                        ✉️ {candidate.availability_note}
                       </div>
                     )}
                     {candidate.requested_another_time_comment && isExpanded && requestedAnotherTimeLabel !== `Пожелание: ${candidate.requested_another_time_comment}` && (
@@ -640,7 +693,11 @@ export function IncomingPage() {
                     </div>
                   </div>
                 )
-              })}
+                      })}
+                    </div>
+                  )}
+                </section>
+              ))}
             </div>
           )}
         </section>

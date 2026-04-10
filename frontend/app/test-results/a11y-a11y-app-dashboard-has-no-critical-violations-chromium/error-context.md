@@ -1,0 +1,190 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner:
+    - navigation "Основная навигация" [ref=e4]:
+      - link "Дашборд" [ref=e5] [cursor=pointer]:
+        - /url: /app/dashboard
+        - img [ref=e7]
+        - generic [ref=e12]: Дашборд
+      - link "Слоты" [ref=e13] [cursor=pointer]:
+        - /url: /app/slots
+        - img [ref=e15]
+        - generic [ref=e18]: Слоты
+      - link "Кандидаты" [ref=e19] [cursor=pointer]:
+        - /url: /app/candidates
+        - img [ref=e21]
+        - generic [ref=e26]: Кандидаты
+      - link "Чаты" [ref=e27] [cursor=pointer]:
+        - /url: /app/messenger
+        - img [ref=e29]
+        - generic [ref=e31]: Чаты
+      - link "Детализация" [ref=e32] [cursor=pointer]:
+        - /url: /app/detailization
+        - img [ref=e34]
+        - generic [ref=e39]: Детализация
+      - link "Рекрутёры" [ref=e40] [cursor=pointer]:
+        - /url: /app/recruiters
+        - img [ref=e42]
+        - generic [ref=e44]: Рекрутёры
+      - link "Города" [ref=e45] [cursor=pointer]:
+        - /url: /app/cities
+        - img [ref=e47]
+        - generic [ref=e50]: Города
+      - link "Copilot" [ref=e51] [cursor=pointer]:
+        - /url: /app/copilot
+        - img [ref=e53]
+        - generic [ref=e57]: Copilot
+      - link "Система" [ref=e58] [cursor=pointer]:
+        - /url: /app/system
+        - img [ref=e60]
+        - generic [ref=e62]: Система
+    - link "Профиль" [ref=e64] [cursor=pointer]:
+      - /url: /app/profile
+      - img [ref=e66]
+  - main [ref=e70]:
+    - generic [ref=e71]:
+      - generic [ref=e72]:
+        - generic [ref=e73]:
+          - heading "Дашборд" [level=1] [ref=e74]
+          - paragraph [ref=e75]: Метрики отдела, KPI и эффективность рекрутеров.
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - generic [ref=e78]:
+              - generic [ref=e79]: От
+              - textbox "От" [ref=e80]: 2026-03-31
+            - generic [ref=e81]:
+              - generic [ref=e82]: До
+              - textbox "До" [ref=e83]: 2026-04-06
+          - generic [ref=e84]:
+            - generic [ref=e85]: Рекрутёр
+            - combobox "Рекрутёр" [ref=e86]:
+              - option "Все специалисты" [selected]
+              - option "E2E Recruiter"
+      - generic [ref=e87]:
+        - generic [ref=e88]:
+          - generic [ref=e89]:
+            - heading "Control Tower" [level=2] [ref=e90]
+            - paragraph [ref=e91]: Сначала разберите следующий шаг по кандидатам, потом смотрите на KPI.
+          - generic [ref=e92]:
+            - button "Обновить очередь" [ref=e93] [cursor=pointer]
+            - link "Полная triage-консоль" [ref=e94] [cursor=pointer]:
+              - /url: /app/incoming
+        - generic [ref=e95]:
+          - generic [ref=e96]: "Сейчас: 0"
+          - generic [ref=e97]: "В ожидании: 0"
+          - generic [ref=e98]: "Требуют разбора: 0"
+          - generic [ref=e99]: "Всего в потоке: 0"
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - strong [ref=e102]: "0"
+            - generic [ref=e103]: из 0 кандидатов
+          - generic [ref=e104]:
+            - 'searchbox "Поиск: имя, город, TG, комментарий..." [ref=e105]'
+            - combobox [ref=e106]:
+              - option "Все города" [selected]
+            - combobox [ref=e107]:
+              - option "Все статусы" [selected]
+              - option "На согласовании"
+              - option "Запросили другое время"
+              - option "Застряли >24ч"
+              - option "NEW (24ч)"
+            - combobox [ref=e108]:
+              - option "Сначала кто дольше ждет" [selected]
+              - option "Последние сообщения"
+              - option "По имени"
+        - paragraph [ref=e110]: По текущим фильтрам кандидатов нет.
+      - generic [ref=e111]:
+        - heading "Общая сводка" [level=2] [ref=e113]
+        - generic [ref=e114]:
+          - article [ref=e116]:
+            - generic [ref=e117]: Рекрутёры
+            - strong [ref=e118]: "1"
+          - article [ref=e120]:
+            - generic [ref=e121]: Города
+            - strong [ref=e122]: "5"
+          - article [ref=e124]:
+            - generic [ref=e125]: Слоты (всего)
+            - strong [ref=e126]: "0"
+          - article [ref=e128]:
+            - generic [ref=e129]: Свободные
+            - strong [ref=e130]: "0"
+          - article [ref=e132]:
+            - generic [ref=e133]: Ожидают
+            - strong [ref=e134]: "0"
+          - article [ref=e136]:
+            - generic [ref=e137]: Забронированы
+            - strong [ref=e138]: "0"
+          - article [ref=e140]:
+            - generic [ref=e141]: Ждут слота
+            - strong [ref=e142]: "0"
+          - article [ref=e144]:
+            - generic [ref=e145]: Отказы тест1
+            - strong [ref=e146]: "0"
+          - article [ref=e148]:
+            - generic [ref=e149]: "% отказов тест1"
+            - strong [ref=e150]: "0"
+      - generic [ref=e152]:
+        - generic [ref=e153]:
+          - generic [ref=e154]:
+            - heading "Лидерборд эффективности" [level=2] [ref=e155]
+            - paragraph [ref=e156]: Оценка по конверсии, подтверждениям и загрузке слотов
+          - button "Обновить" [ref=e157] [cursor=pointer]
+        - article [ref=e160]:
+          - generic [ref=e161]: "1"
+          - generic [ref=e162]:
+            - generic [ref=e163]:
+              - strong [ref=e164]: E2E Recruiter
+              - generic [ref=e165]: "20"
+            - generic [ref=e166]:
+              - generic [ref=e167]: "Конверсия: 0%"
+              - generic [ref=e168]: "Подтв.: 0%"
+              - generic [ref=e169]: "Заполн.: 0%"
+              - generic [ref=e170]: "Кандидаты: 1"
+              - generic [ref=e171]: "Нанято: 0"
+              - generic [ref=e172]: "Отказ: 0"
+      - generic [ref=e173]:
+        - generic [ref=e174]:
+          - generic [ref=e175]:
+            - heading "Weekly KPI" [level=2] [ref=e176]
+            - paragraph [ref=e177]: 05.04.2026 — 11.04.2026
+          - button "Обновить" [ref=e178] [cursor=pointer]
+        - generic [ref=e179]:
+          - article [ref=e180]:
+            - generic [ref=e181]:
+              - generic [ref=e182]: 🧪
+              - generic [ref=e183]: Проходили тест
+            - generic [ref=e184]: "0"
+            - generic [ref=e185]: —
+          - article [ref=e186]:
+            - generic [ref=e187]:
+              - generic [ref=e188]: 🎯
+              - generic [ref=e189]: Дошли до конца теста
+            - generic [ref=e190]: "0"
+            - generic [ref=e191]: —
+          - article [ref=e192]:
+            - generic [ref=e193]:
+              - generic [ref=e194]: 🗓
+              - generic [ref=e195]: Записались на собеседование
+            - generic [ref=e196]: "0"
+            - generic [ref=e197]: —
+          - article [ref=e198]:
+            - generic [ref=e199]:
+              - generic [ref=e200]: ✅
+              - generic [ref=e201]: Подтвердили участие
+            - generic [ref=e202]: "0"
+            - generic [ref=e203]: —
+          - article [ref=e204]:
+            - generic [ref=e205]:
+              - generic [ref=e206]: 🏁
+              - generic [ref=e207]: Прошли собеседование
+            - generic [ref=e208]: "0"
+            - generic [ref=e209]: —
+          - article [ref=e210]:
+            - generic [ref=e211]:
+              - generic [ref=e212]: 🌅
+              - generic [ref=e213]: Пришли на ознакомительный день
+            - generic [ref=e214]: "0"
+            - generic [ref=e215]: —
+```

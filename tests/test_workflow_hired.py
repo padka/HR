@@ -18,7 +18,7 @@ from backend.domain.candidates.status import CandidateStatus
 
 
 @pytest.mark.asyncio
-async def test_mark_hired_from_intro_day_confirmed():
+async def test_mark_hired_from_intro_day_confirmed(monkeypatch):
     """Test mark_hired action from INTRO_DAY_CONFIRMED_DAY_OF status."""
     now = datetime.now(timezone.utc)
     async with async_session() as session:
@@ -32,6 +32,14 @@ async def test_mark_hired_from_intro_day_confirmed():
         await session.commit()
         await session.refresh(user)
         user_id = user.id
+
+    async def _legacy_should_not_run(*_args, **_kwargs):
+        raise AssertionError("legacy update_candidate_status should not be used")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.write_intents.update_candidate_status",
+        _legacy_should_not_run,
+    )
 
     app = create_app()
     async with AsyncClient(
@@ -59,7 +67,7 @@ async def test_mark_hired_from_intro_day_confirmed():
 
 
 @pytest.mark.asyncio
-async def test_mark_not_hired_from_intro_day_confirmed():
+async def test_mark_not_hired_from_intro_day_confirmed(monkeypatch):
     """Test mark_not_hired action from INTRO_DAY_CONFIRMED_DAY_OF status."""
     now = datetime.now(timezone.utc)
     async with async_session() as session:
@@ -73,6 +81,14 @@ async def test_mark_not_hired_from_intro_day_confirmed():
         await session.commit()
         await session.refresh(user)
         user_id = user.id
+
+    async def _legacy_should_not_run(*_args, **_kwargs):
+        raise AssertionError("legacy update_candidate_status should not be used")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.write_intents.update_candidate_status",
+        _legacy_should_not_run,
+    )
 
     app = create_app()
     async with AsyncClient(
@@ -97,6 +113,7 @@ async def test_mark_not_hired_from_intro_day_confirmed():
     async with async_session() as session:
         stored = await session.get(User, user_id)
         assert stored.candidate_status == CandidateStatus.NOT_HIRED
+        assert stored.is_active is False
 
 
 @pytest.mark.asyncio

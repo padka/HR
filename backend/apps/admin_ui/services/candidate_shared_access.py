@@ -23,6 +23,7 @@ from backend.core.settings import get_settings
 from backend.domain.candidates.models import User
 from backend.domain.candidates.phones import normalize_candidate_phone
 from backend.domain.candidates.portal_service import (
+    _mark_journey_event_once,
     build_candidate_portal_journey,
     ensure_candidate_portal_session,
 )
@@ -591,6 +592,15 @@ async def verify_candidate_shared_access_code(
     journey_meta["entry_source"] = "shared_portal"
     journey_meta["shared_access_verified_at"] = _utcnow().isoformat()
     journey.payload_json = journey_meta
+    _mark_journey_event_once(
+        candidate,
+        journey,
+        flag_key="shared_access_verified_event_logged_at",
+        event_key="shared_access_verified",
+        summary="Кандидат подтвердил вход по одноразовому коду.",
+        stage="lead",
+        payload={"entry_channel": "web", "source": "shared_portal"},
+    )
     response_payload = await build_candidate_portal_journey(
         session,
         candidate,

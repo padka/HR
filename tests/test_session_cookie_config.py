@@ -21,6 +21,11 @@ def _build_app(env: str, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
         monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+        monkeypatch.setenv("MAX_BOT_ENABLED", "1")
+        monkeypatch.setenv("MAX_BOT_TOKEN", "test-max-token")
+        monkeypatch.setenv("MAX_WEBHOOK_SECRET", "prod-max-webhook-secret-0123456789abcdef")
+        monkeypatch.setenv("MAX_WEBHOOK_URL", "https://max.example.test/webhook")
+        monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
     else:
         monkeypatch.setenv("REDIS_URL", "")
         monkeypatch.setenv("NOTIFICATION_BROKER", "memory")

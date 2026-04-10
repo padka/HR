@@ -10,27 +10,37 @@ from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, ForceReply, Message
 from sqlalchemy import select
 
 from backend.apps.bot.backend_client import BackendClient, BackendClientError
 from backend.apps.bot.config import DEFAULT_TZ, TIME_FMT
-from backend.apps.bot.keyboards import kb_slot_assignment_reschedule_options
+from backend.apps.bot.keyboards import (
+    kb_slot_assignment_reschedule_options,
+)
 from backend.apps.bot.security import verify_callback_data
 from backend.apps.bot.services import (
     _format_manual_window_label,
     _parse_manual_availability_window,
+    build_candidate_active_meeting_keyboard,
+    get_candidate_assignment_controls,
     get_bot,
     get_state_manager,
+    render_candidate_assignment_details,
 )
+from backend.apps.bot.utils.text import escape_html
 from backend.core.db import async_session
 from backend.domain.models import Slot, SlotAssignment
-from backend.domain.repositories import get_free_slots_by_recruiter
+from backend.domain.repositories import add_message_log, get_free_slots_by_recruiter
 from backend.domain.slot_assignment_service import begin_reschedule_request
 
 STATE_WAITING_DATETIME = "waiting_candidate_datetime_input"
 RESCHEDULE_PICK_PREFIX = "slotres:pick:"
 RESCHEDULE_MANUAL_PREFIX = "slotres:manual:"
+DETAILS_PREFIX = "slotasg:details:"
+LEGACY_CONFIRM_PREFIX = "confirm_assignment:"
+LEGACY_RESCHEDULE_PREFIX = "reschedule_assignment:"
+LEGACY_DECLINE_PREFIX = "decline_assignment:"
 
 WORKDAY_START = time(9, 0)
 WORKDAY_END = time(20, 0)
@@ -164,6 +174,87 @@ async def handle_slot_assignment_callback(callback: CallbackQuery) -> bool:
     return True
 
 
+async def handle_assignment_details_callback(callback: CallbackQuery) -> bool:
+    payload = verify_callback_data(callback.data or "", expected_prefix=DETAILS_PREFIX)
+    if not payload:
+        await callback.answer("Ссылка устарела. Откройте детали встречи заново.", show_alert=True)
+        return True
+
+    try:
+        assignment_id = int(payload.split(":", 2)[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return True
+
+    user = callback.from_user
+    if user is None:
+        await callback.answer()
+        return True
+
+    controls = await get_candidate_assignment_controls(
+        candidate_tg_id=int(user.id),
+        assignment_id=assignment_id,
+    )
+    if controls is None:
+        await callback.answer("Встреча не найдена или уже недоступна.", show_alert=True)
+        return True
+
+    await callback.answer()
+    await get_bot().send_message(
+        user.id,
+        render_candidate_assignment_details(controls),
+        reply_markup=build_candidate_active_meeting_keyboard(controls),
+    )
+    return True
+
+
+async def handle_legacy_assignment_callback(callback: CallbackQuery) -> bool:
+    raw = callback.data or ""
+    if raw.startswith(LEGACY_CONFIRM_PREFIX):
+        action = "confirm"
+        prefix = LEGACY_CONFIRM_PREFIX
+    elif raw.startswith(LEGACY_RESCHEDULE_PREFIX):
+        action = "reschedule"
+        prefix = LEGACY_RESCHEDULE_PREFIX
+    elif raw.startswith(LEGACY_DECLINE_PREFIX):
+        action = "decline"
+        prefix = LEGACY_DECLINE_PREFIX
+    else:
+        return False
+
+    try:
+        assignment_id = int(raw.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный запрос.", show_alert=True)
+        return True
+
+    user = callback.from_user
+    if user is None:
+        await callback.answer()
+        return True
+
+    controls = await get_candidate_assignment_controls(
+        candidate_tg_id=int(user.id),
+        assignment_id=assignment_id,
+    )
+    if controls is None:
+        await callback.answer("Назначение не найдено или уже недоступно.", show_alert=True)
+        return True
+
+    if action == "confirm" and controls.confirm_token:
+        await _handle_confirm(callback, assignment_id, controls.confirm_token, int(user.id))
+        return True
+    if action == "reschedule" and controls.reschedule_token:
+        await _handle_reschedule_prompt(callback, assignment_id, controls.reschedule_token, int(user.id))
+        return True
+    if action == "decline" and controls.decline_token:
+        await _handle_decline(callback, assignment_id, controls.decline_token, int(user.id))
+        return True
+
+    await callback.answer("Действие больше недоступно.", show_alert=True)
+    return True
+
+
 async def _handle_confirm(
     callback: CallbackQuery,
     assignment_id: int,
@@ -294,6 +385,10 @@ async def _handle_decline(
     action_token: str,
     candidate_id: int,
 ) -> None:
+    controls = await get_candidate_assignment_controls(
+        candidate_tg_id=int(candidate_id),
+        assignment_id=assignment_id,
+    )
     client = BackendClient()
     if not client.configured:
         await callback.answer("Сервис временно недоступен", show_alert=True)
@@ -344,7 +439,103 @@ async def _handle_decline(
     await callback.answer("Отказ принят")
     bot = get_bot()
     message_text = data.get("message") if isinstance(data, dict) else None
-    await bot.send_message(candidate_id, message_text or "Мы зафиксировали отказ. Спасибо за ответ.")
+    prompt = (
+        "Напишите, пожалуйста, коротко причину отмены, чтобы мы сразу передали её рекрутёру."
+    )
+    await get_state_manager().update(
+        candidate_id,
+        {
+            "awaiting_slot_assignment_decline_reason": {
+                "assignment_id": assignment_id,
+                "slot_id": controls.slot_id if controls else None,
+                "recruiter_chat_id": controls.recruiter_tg_id if controls else None,
+                "recruiter_name": controls.recruiter_name if controls else "",
+                "candidate_name": controls.candidate_name if controls else "",
+                "start_local": (
+                    controls.start_utc.astimezone(_safe_zone(controls.candidate_tz)).strftime(TIME_FMT)
+                    if controls is not None
+                    else ""
+                ),
+            },
+            "slot_assignment_state": "declined",
+            "slot_assignment_id": assignment_id,
+        },
+    )
+    await bot.send_message(
+        candidate_id,
+        message_text or "Мы зафиксировали отказ. Спасибо за ответ.",
+    )
+    await bot.send_message(
+        candidate_id,
+        prompt,
+        reply_markup=ForceReply(selective=True),
+    )
+
+
+async def capture_slot_assignment_decline_reason(message: Message, state: Dict[str, Any]) -> bool:
+    reason_payload = state.get("awaiting_slot_assignment_decline_reason") or {}
+    assignment_id = reason_payload.get("assignment_id")
+    if not assignment_id:
+        return False
+
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        await message.answer("Напишите, пожалуйста, коротко причину отмены.")
+        return True
+
+    recruiter_chat_id = reason_payload.get("recruiter_chat_id")
+    candidate_name = reason_payload.get("candidate_name") or str(message.from_user.id if message.from_user else "")
+    start_local = reason_payload.get("start_local") or ""
+    recruiter_note_sent = False
+    if recruiter_chat_id:
+        recruiter_text = (
+            "⛔️ Кандидат отменил встречу.\n"
+            f"👤 {escape_html(str(candidate_name))}\n"
+            f"🗓 {escape_html(str(start_local))}\n"
+            f"Причина: {escape_html(text)}"
+        )
+        try:
+            await get_bot().send_message(int(recruiter_chat_id), recruiter_text)
+            recruiter_note_sent = True
+        except Exception:
+            logger.exception(
+                "slot_assignment.decline_reason.forward_failed",
+                extra={"assignment_id": assignment_id, "recruiter_chat_id": recruiter_chat_id},
+            )
+
+    try:
+        await add_message_log(
+            "slot_assignment_decline_reason",
+            recipient_type="candidate",
+            recipient_id=message.from_user.id if message.from_user else 0,
+            slot_assignment_id=int(assignment_id),
+            payload={"reason": text, "recruiter_notified": recruiter_note_sent},
+        )
+    except Exception:
+        logger.exception(
+            "slot_assignment.decline_reason.log_failed",
+            extra={"assignment_id": assignment_id},
+        )
+
+    await message.answer("Спасибо, передали информацию рекрутеру." if recruiter_note_sent else "Спасибо, получили причину отмены.")
+
+    try:
+        state_manager = get_state_manager()
+
+        def _clear(st):
+            current = dict(st or {})
+            current.pop("awaiting_slot_assignment_decline_reason", None)
+            return current, None
+
+        if message.from_user is not None:
+            await state_manager.atomic_update(message.from_user.id, _clear)
+    except Exception:
+        logger.exception(
+            "slot_assignment.decline_reason.state_clear_failed",
+            extra={"assignment_id": assignment_id},
+        )
+
+    return True
 
 
 async def _handle_reschedule_manual(callback: CallbackQuery) -> bool:

@@ -725,9 +725,17 @@ async def approve_slot_and_notify(slot_id: int, *, force_notify: bool = False) -
                 )
 
             try:
+                reply_markup = None
+                try:
+                    reply_markup = await build_candidate_active_meeting_keyboard_for_slot(slot)
+                except Exception:
+                    logger.exception(
+                        "candidate_approval.controls_build_failed",
+                        extra={"slot_id": slot.id, "candidate_tg_id": slot.candidate_tg_id},
+                    )
                 await _send_with_retry(
                     bot,
-                    SendMessage(chat_id=slot.candidate_tg_id, text=message_text),
+                    SendMessage(chat_id=slot.candidate_tg_id, text=message_text, reply_markup=reply_markup),
                     correlation_id=f"approve:{slot.id}:{uuid.uuid4().hex}",
                 )
                 notify_status = "sent"

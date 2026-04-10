@@ -21,6 +21,22 @@ TABLE_NEW = "message_templates_v2"
 TABLE_HISTORY = "message_template_history"
 
 
+def _sync_message_templates_sequence(conn: Connection) -> None:
+    if conn.dialect.name != "postgresql":
+        return
+    conn.execute(
+        sa.text(
+            f"""
+            SELECT setval(
+                pg_get_serial_sequence('{TABLE_OLD}', 'id'),
+                COALESCE((SELECT MAX(id) FROM {TABLE_OLD}), 1),
+                EXISTS (SELECT 1 FROM {TABLE_OLD})
+            )
+            """
+        )
+    )
+
+
 def upgrade(conn: Connection) -> None:
     """Add city_id support and history tracking to message_templates."""
 
@@ -51,6 +67,7 @@ def upgrade(conn: Connection) -> None:
                         FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE SET NULL
                 )
             """))
+        _sync_message_templates_sequence(conn)
         return
 
     # Создаём новую таблицу с поддержкой city_id (только если её ещё нет)
@@ -87,6 +104,7 @@ def upgrade(conn: Connection) -> None:
         # Удаляем старую таблицу и переименовываем новую
         conn.execute(sa.text(f"DROP TABLE {TABLE_OLD} CASCADE"))
         conn.execute(sa.text(f"ALTER TABLE {TABLE_NEW} RENAME TO {TABLE_OLD}"))
+        _sync_message_templates_sequence(conn)
 
     # Создаём индексы для быстрого поиска
     if not index_exists(conn, TABLE_OLD, "ix_template_active_lookup"):
@@ -137,6 +155,7 @@ def upgrade(conn: Connection) -> None:
         """),
         {"now": now},
     )
+    _sync_message_templates_sequence(conn)
 
 
 def downgrade(conn: Connection) -> None:  # pragma: no cover

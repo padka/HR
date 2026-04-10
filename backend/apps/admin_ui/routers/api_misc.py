@@ -50,6 +50,10 @@ from backend.apps.admin_ui.services.candidates import (
     upsert_candidate,
     update_candidate_status,
 )
+from backend.apps.admin_ui.services.candidates.write_intents import (
+    execute_candidate_action_intent,
+    execute_kanban_move_intent,
+)
 from backend.apps.admin_ui.services.chat import (
     get_chat_templates,
     list_chat_history,
@@ -143,6 +147,7 @@ from backend.domain.candidates.models import (
     ChatMessageStatus,
     User,
 )
+from backend.domain.candidates.state_contract import LEGACY_KANBAN_COLUMN_BY_STATUS
 from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.candidates.portal_service import (
     CandidatePortalError,
@@ -222,7 +227,8 @@ def _empty_weekly_kpis(timezone_label: Optional[str]) -> dict[str, object]:
     }
 
 class CandidateKanbanMovePayload(BaseModel):
-    target_status: str
+    target_column: Optional[str] = None
+    target_status: Optional[str] = None
 
 
 class CandidateChatQuickActionPayload(BaseModel):
@@ -3320,6 +3326,7 @@ async def api_candidates_list(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=5, le=100),
     search: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
     status: Optional[list[str]] = Query(None),
     recruiter_id: Optional[str] = Query(None),
     active: Optional[str] = Query(None),
@@ -3329,6 +3336,7 @@ async def api_candidates_list(
     calendar_mode: Optional[str] = Query(None),
     principal: Principal = Depends(require_principal),
 ):
+    state_values = tuple(sorted({str(item).strip().lower() for item in (state or []) if str(item).strip()}))
     status_values = tuple(sorted({str(item).strip().lower() for item in (status or []) if str(item).strip()}))
     range_start = _parse_date_param(date_from)
     range_end = _parse_date_param(date_to, end=True)
@@ -3348,6 +3356,7 @@ async def api_candidates_list(
             has_messages=None,
             stage=None,
             statuses=list(status_values) if status_values else None,
+            state_filters=list(state_values) if state_values else None,
             recruiter_id=parsed_recruiter_id,
             city_ids=None,
             date_from=range_start,
@@ -3381,7 +3390,7 @@ async def api_candidates_list(
         key = (
             "candidates:list:v1:"
             f"{principal.type}:{principal.id}:pp{per_page}:"
-            f"pipe:{pipeline_slug}:status:{','.join(status_values) or 'all'}:"
+            f"pipe:{pipeline_slug}:state:{','.join(state_values) or 'all'}:status:{','.join(status_values) or 'all'}:"
             f"rid:{parsed_recruiter_id or 'all'}:active:{parsed_active if parsed_active is not None else 'all'}:"
             f"from:{range_start.isoformat() if range_start else 'none'}:"
             f"to:{range_end.isoformat() if range_end else 'none'}"
@@ -3422,88 +3431,20 @@ async def api_candidate_action(
         payload = {}
     reason = payload.get("reason") or payload.get("reject_reason")
     comment = payload.get("comment") or payload.get("reject_comment")
-    
-    # 1. Get candidate and allowed actions
-    detail = await get_candidate_detail(candidate_id, principal=principal)
-    if not detail:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    
-    # 2. Find matching action definition
-    # detail["candidate_actions"] is a list of CandidateAction objects
-    actions = detail.get("candidate_actions", [])
-    action_def = next((a for a in actions if a.key == action_key), None)
-    
-    if not action_def:
-        logger.warning(f"Action {action_key} not allowed for candidate {candidate_id}")
-        return JSONResponse(
-            {"ok": False, "message": "Действие недоступно в текущем статусе"}, 
-            status_code=400
-        )
-
-    # Special handling for approve_upcoming_slot
-    if action_key == "approve_upcoming_slot":
-        user = detail["user"]
-        from sqlalchemy import select as sql_select
-        async with async_session() as session:
-            pending_slot = await session.scalar(
-                sql_select(Slot)
-                .where(
-                    Slot.candidate_tg_id == user.telegram_id,
-                    func.lower(Slot.status) == SlotStatus.PENDING,
-                    Slot.start_utc >= datetime.now(timezone.utc),
-                )
-                .order_by(Slot.start_utc.asc())
-                .limit(1)
-            )
-        if not pending_slot:
-            return JSONResponse({"ok": False, "message": "Нет слотов, ожидающих подтверждения"}, status_code=400)
-        ok, message, notified = await approve_slot_booking(pending_slot.id, principal=principal)
-        if not ok:
-            return JSONResponse({"ok": False, "message": message}, status_code=400)
-        return JSONResponse({"ok": True, "message": "Собеседование подтверждено", "action": action_key})
-
-    target_status = action_def.target_status
-
-    if not target_status:
-        # Action without status change
-        return JSONResponse({"ok": True, "message": "Action executed"})
-
-    # 3. Execute status change
-    ok, message, stored_status, dispatch = await update_candidate_status(
+    result = await execute_candidate_action_intent(
         candidate_id,
-        target_status,
+        action_key,
         bot_service=bot_service,
         principal=principal,
         reason=reason,
         comment=comment,
     )
-    
-    if not ok:
-        return JSONResponse({"ok": False, "message": message}, status_code=400)
-        
-    # 4. Handle side effects (Bot)
+
+    dispatch = getattr(result, "dispatch", None)
     if dispatch and dispatch.plan:
-        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored_status or "", bot_service)
-        
-    return JSONResponse({
-        "ok": True, 
-        "message": message, 
-        "status": stored_status,
-        "action": action_key
-    })
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, result.status or "", bot_service)
 
-
-KANBAN_ALLOWED_TARGET_STATUSES = {
-    "waiting_slot",
-    "slot_pending",
-    "interview_scheduled",
-    "interview_confirmed",
-    "test2_sent",
-    "test2_completed",
-    "intro_day_scheduled",
-    "intro_day_confirmed_preliminary",
-    "intro_day_confirmed_day_of",
-}
+    return JSONResponse(result.as_payload(), status_code=result.status_code)
 
 
 @router.post("/candidates/{candidate_id}/kanban-status")
@@ -3517,41 +3458,42 @@ async def api_candidate_kanban_status(
 ):
     _ = await require_csrf_token(request)
 
-    target_status = (payload.target_status or "").strip().lower()
-    if target_status == "incoming":
-        target_status = "waiting_slot"
-    if target_status not in KANBAN_ALLOWED_TARGET_STATUSES:
+    target_column = str(payload.target_column or "").strip().lower()
+    compatibility_source: Optional[str] = None
+    if not target_column:
+        target_status = str(payload.target_status or "").strip().lower()
+        if target_status == "incoming":
+            target_column = "incoming"
+            compatibility_source = "legacy_target_status"
+        else:
+            target_column = LEGACY_KANBAN_COLUMN_BY_STATUS.get(target_status) or ""
+            if target_column:
+                compatibility_source = "legacy_target_status"
+
+    if not target_column:
         return JSONResponse(
-            {"ok": False, "message": "Недопустимый статус для канбана"},
+            {"ok": False, "message": "Недопустимая колонка канбана", "error": "invalid_kanban_column"},
             status_code=400,
         )
 
-    ok, message, stored_status, dispatch = await update_candidate_status(
+    result = await execute_kanban_move_intent(
         candidate_id,
-        target_status,
+        target_column=target_column,
         bot_service=bot_service,
         principal=principal,
+        compatibility_source=compatibility_source,
     )
-    if not ok:
-        status_code = 404 if message == "Кандидат не найден" else 400
-        return JSONResponse({"ok": False, "message": message}, status_code=status_code)
 
+    dispatch = getattr(result, "dispatch", None)
     if dispatch and dispatch.plan:
         background_tasks.add_task(
             execute_bot_dispatch,
             dispatch.plan,
-            stored_status or "",
+            result.status or "",
             bot_service,
         )
 
-    return JSONResponse(
-        {
-            "ok": True,
-            "message": message,
-            "status": stored_status,
-            "candidate_id": candidate_id,
-        }
-    )
+    return JSONResponse(result.as_payload(), status_code=result.status_code)
 
 
 @router.post("/candidates/{candidate_id}/assign-recruiter")

@@ -1,18 +1,22 @@
-"""Telegram WebApp authentication and initData validation.
+"""Telegram and MAX WebApp authentication and initData validation.
 
-This module implements secure validation of Telegram WebApp initData
-according to Telegram's official documentation.
+This module implements secure validation of WebApp initData / WebAppData
+according to the provider HMAC validation model.
 
-Reference: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+References:
+- https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+- https://dev.max.ru/docs/webapps/validation
 """
 
 from __future__ import annotations
 
+import json
 import hmac
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import parse_qsl, unquote
 
 from fastapi import Depends, HTTPException, Header, status
@@ -44,6 +48,48 @@ class TelegramUser:
         return " ".join(parts) or self.username or str(self.user_id)
 
 
+@dataclass
+class MaxWebAppUser:
+    """MAX WebApp user data extracted from WebAppData."""
+
+    user_id: str
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    language_code: Optional[str] = None
+    auth_date: int = 0
+    hash: str = ""
+    query_id: Optional[str] = None
+    start_param: Optional[str] = None
+
+    @property
+    def full_name(self) -> str:
+        parts = []
+        if self.first_name:
+            parts.append(self.first_name)
+        if self.last_name:
+            parts.append(self.last_name)
+        return " ".join(parts) or self.username or str(self.user_id)
+
+
+def _parse_webapp_params(init_data: str) -> dict[str, str]:
+    params = dict(parse_qsl(init_data, keep_blank_values=True))
+    if not params:
+        raise ValueError("initData is empty")
+    return params
+
+
+def _load_user_json_from_params(params: dict[str, str]) -> dict[str, Any]:
+    user_json = params.get("user")
+    if not user_json:
+        raise ValueError("Missing 'user' field in initData")
+
+    try:
+        return json.loads(unquote(user_json))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"Invalid user JSON: {exc}") from exc
+
+
 def _parse_user_from_init_data(init_data: str) -> dict:
     """Parse user data from initData query string.
 
@@ -53,20 +99,8 @@ def _parse_user_from_init_data(init_data: str) -> dict:
     Returns:
         Dict with parsed user data
     """
-    params = dict(parse_qsl(init_data))
-
-    # Parse user JSON (if present)
-    user_json = params.get("user")
-    if not user_json:
-        raise ValueError("Missing 'user' field in initData")
-
-    # Telegram sends user as JSON string
-    import json
-
-    try:
-        user_data = json.loads(unquote(user_json))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"Invalid user JSON: {exc}") from exc
+    params = _parse_webapp_params(init_data)
+    user_data = _load_user_json_from_params(params)
 
     return {
         "user_id": int(user_data.get("id", 0)),
@@ -80,36 +114,19 @@ def _parse_user_from_init_data(init_data: str) -> dict:
     }
 
 
-def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> TelegramUser:
-    """Validate Telegram WebApp initData signature.
-
-    This function validates that the initData was indeed sent by Telegram
-    and has not been tampered with.
-
-    Args:
-        init_data: Raw initData string from Telegram WebApp
-        bot_token: Telegram bot token for validation
-        max_age_seconds: Maximum age of initData in seconds (default: 24h)
-
-    Returns:
-        TelegramUser object with validated user data
-
-    Raises:
-        ValueError: If validation fails
-
-    Reference:
-        https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
-    """
+def _validate_signed_webapp_data(
+    init_data: str,
+    bot_token: str,
+    *,
+    max_age_seconds: int,
+) -> tuple[dict[str, str], str, int]:
     if not init_data:
         raise ValueError("initData is empty")
 
     if not bot_token:
         raise ValueError("bot_token is empty")
 
-    # Parse initData as query string
-    params = dict(parse_qsl(init_data))
-
-    # Extract hash from params
+    params = _parse_webapp_params(init_data)
     received_hash = params.pop("hash", None)
     if not received_hash:
         raise ValueError("Missing 'hash' field in initData")
@@ -124,9 +141,6 @@ def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86
     except (ValueError, TypeError) as exc:
         raise ValueError(f"Invalid auth_date: {exc}") from exc
 
-    # Check initData age
-    import time
-
     current_timestamp = int(time.time())
     age_seconds = current_timestamp - auth_timestamp
 
@@ -136,36 +150,39 @@ def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86
     if age_seconds < -60:  # Allow 60s clock skew
         raise ValueError(f"initData is from the future (age: {age_seconds}s)")
 
-    # Build data_check_string
-    # Format: key=value pairs, sorted alphabetically by key, joined with \n
     data_check_string = "\n".join(
         f"{key}={value}" for key, value in sorted(params.items())
     )
 
-    # Compute secret key
-    # secret_key = HMAC_SHA256(<bot_token>, "WebAppData")
     secret_key = hmac.new(
         key=b"WebAppData",
         msg=bot_token.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).digest()
 
-    # Compute hash
-    # hash = HMAC_SHA256(secret_key, data_check_string)
     computed_hash = hmac.new(
         key=secret_key,
         msg=data_check_string.encode("utf-8"),
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    # Compare hashes (constant-time comparison)
     if not hmac.compare_digest(computed_hash, received_hash):
         raise ValueError("Invalid initData signature")
 
-    # Parse user data
+    return params, received_hash, age_seconds
+
+
+def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> TelegramUser:
+    """Validate Telegram WebApp initData signature."""
+    _, received_hash, age_seconds = _validate_signed_webapp_data(
+        init_data,
+        bot_token,
+        max_age_seconds=max_age_seconds,
+    )
     user_data = _parse_user_from_init_data(init_data)
     if not user_data.get("user_id"):
         raise ValueError("Missing or invalid user_id")
+    user_data["hash"] = received_hash
 
     logger.info(
         "Validated initData for user %d (age: %ds)",
@@ -174,6 +191,47 @@ def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86
     )
 
     return TelegramUser(**user_data)
+
+
+def validate_max_webapp_data(
+    init_data: str,
+    bot_token: str,
+    max_age_seconds: int = 900,
+) -> MaxWebAppUser:
+    """Validate MAX WebAppData signature and extract normalized user context."""
+
+    params, received_hash, age_seconds = _validate_signed_webapp_data(
+        init_data,
+        bot_token,
+        max_age_seconds=max_age_seconds,
+    )
+    user_data = _load_user_json_from_params({**params, "hash": received_hash})
+    user_id = str(user_data.get("id") or user_data.get("user_id") or "").strip()
+    if not user_id:
+        raise ValueError("Missing or invalid user_id")
+
+    max_user = MaxWebAppUser(
+        user_id=user_id,
+        username=user_data.get("username"),
+        first_name=user_data.get("first_name"),
+        last_name=user_data.get("last_name"),
+        language_code=user_data.get("language_code"),
+        auth_date=int(params.get("auth_date", 0)),
+        hash=received_hash,
+        query_id=str(params.get("query_id") or "").strip() or None,
+        start_param=str(
+            params.get("start_param")
+            or params.get("startapp")
+            or params.get("payload")
+            or ""
+        ).strip() or None,
+    )
+    logger.info(
+        "Validated MAX WebAppData for user %s (age: %ds)",
+        max_user.user_id,
+        age_seconds,
+    )
+    return max_user
 
 
 class TelegramWebAppAuth:
@@ -240,4 +298,53 @@ def get_telegram_webapp_auth(max_age_seconds: int = 86400) -> TelegramWebAppAuth
     return TelegramWebAppAuth(max_age_seconds=max_age_seconds)
 
 
-__all__ = ["TelegramUser", "TelegramWebAppAuth", "validate_init_data", "get_telegram_webapp_auth"]
+class MaxWebAppAuth:
+    """FastAPI dependency for MAX WebAppData validation."""
+
+    def __init__(self, *, bot_token: Optional[str] = None, max_age_seconds: int = 900):
+        self._bot_token = bot_token
+        self._max_age_seconds = max_age_seconds
+
+    async def __call__(
+        self,
+        x_max_webapp_data: str = Header(..., alias="X-Max-WebApp-Data"),
+    ) -> MaxWebAppUser:
+        bot_token = self._bot_token
+        if not bot_token:
+            from backend.core.settings import get_settings
+
+            bot_token = get_settings().max_bot_token
+        if not bot_token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="MAX bot token is not configured",
+            )
+
+        try:
+            return validate_max_webapp_data(
+                x_max_webapp_data,
+                bot_token,
+                max_age_seconds=self._max_age_seconds,
+            )
+        except ValueError as exc:
+            logger.warning("MAX WebAppData validation failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid MAX WebAppData: {exc}",
+            ) from exc
+
+
+def get_max_webapp_auth(max_age_seconds: int = 900) -> MaxWebAppAuth:
+    return MaxWebAppAuth(max_age_seconds=max_age_seconds)
+
+
+__all__ = [
+    "TelegramUser",
+    "MaxWebAppUser",
+    "TelegramWebAppAuth",
+    "MaxWebAppAuth",
+    "validate_init_data",
+    "validate_max_webapp_data",
+    "get_telegram_webapp_auth",
+    "get_max_webapp_auth",
+]

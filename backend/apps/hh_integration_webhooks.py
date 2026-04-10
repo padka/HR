@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,8 +13,9 @@ from sqlalchemy import select
 
 from backend.core.dependencies import get_async_session
 from backend.domain.hh_integration import get_connection_for_webhook_key
+from backend.domain.hh_integration.contracts import HHWebhookDeliveryStatus
 from backend.domain.hh_integration.jobs import enqueue_hh_sync_job
-from backend.domain.hh_integration.models import HHWebhookDelivery
+from backend.domain.hh_integration.models import HHNegotiation, HHWebhookDelivery
 
 router = APIRouter(prefix="/api/hh-integration", tags=["hh-integration"])
 AsyncSessionDep = Depends(get_async_session)
@@ -113,6 +115,14 @@ async def receive_hh_webhook(
     vacancy_id = _extract_webhook_vacancy_id(payload.payload)
     negotiation_id = _extract_webhook_negotiation_id(payload.payload)
     if vacancy_id or negotiation_id:
+        if vacancy_id is None and negotiation_id:
+            negotiation = (
+                await session.execute(
+                    select(HHNegotiation).where(HHNegotiation.external_negotiation_id == negotiation_id).limit(1)
+                )
+            ).scalar_one_or_none()
+            if negotiation is not None:
+                vacancy_id = _string(negotiation.external_vacancy_id)
         if vacancy_id:
             await enqueue_hh_sync_job(
                 session,
@@ -132,6 +142,17 @@ async def receive_hh_webhook(
                     "negotiation_id": negotiation_id,
                 },
             )
+            await enqueue_hh_sync_job(
+                session,
+                connection=connection,
+                job_type="import_negotiations",
+                entity_type="employer",
+                entity_external_id=connection.employer_id,
+                payload_json={"fetch_resume_details": False},
+            )
+
+    delivery.status = HHWebhookDeliveryStatus.PROCESSED
+    delivery.processed_at = datetime.now(UTC)
 
     await session.commit()
     return JSONResponse({"ok": True, "duplicate": False}, status_code=status.HTTP_202_ACCEPTED)

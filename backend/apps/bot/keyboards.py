@@ -238,6 +238,44 @@ def kb_slot_assignment_reschedule_options(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def kb_slot_assignment_active(
+    assignment_id: int,
+    *,
+    portal_url: str | None = None,
+    reschedule_token: str | None = None,
+    decline_token: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="🗓 Детали встречи",
+                callback_data=sign_callback_data(f"slotasg:details:{assignment_id}"),
+            )
+        ]
+    ]
+    action_row: List[InlineKeyboardButton] = []
+    if reschedule_token:
+        action_row.append(
+            InlineKeyboardButton(
+                text="🔁 Перенести",
+                callback_data=_slot_assignment_payload("reschedule", assignment_id, reschedule_token),
+            )
+        )
+    if decline_token:
+        action_row.append(
+            InlineKeyboardButton(
+                text="⛔️ Отменить",
+                callback_data=_slot_assignment_payload("decline", assignment_id, decline_token),
+            )
+        )
+    if action_row:
+        rows.append(action_row)
+    if portal_url:
+        rows.append([InlineKeyboardButton(text="🏢 Компания и этап", web_app=WebAppInfo(url=portal_url))])
+        rows.append([InlineKeyboardButton(text="🌐 Открыть в браузере", url=portal_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _webapp_candidate_url(crm_url: str, candidate_id: int) -> Optional[str]:
     """Build Mini App URL for candidate profile, deriving base from CRM URL."""
     if not crm_url:
@@ -352,6 +390,7 @@ __all__ = [
     "kb_recruiter_dashboard",
     "kb_recruiters",
     "kb_slots_for_recruiter",
+    "kb_slot_assignment_active",
     "kb_slot_assignment_offer",
     "kb_slot_assignment_reschedule_options",
     "kb_start",

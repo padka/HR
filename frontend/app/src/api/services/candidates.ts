@@ -218,6 +218,265 @@ export type TestSection = {
   history?: TestAttempt[]
 }
 
+export type CandidateLifecycleStage =
+  | 'lead'
+  | 'screening'
+  | 'waiting_interview_slot'
+  | 'interview'
+  | 'test2'
+  | 'waiting_intro_day'
+  | 'intro_day'
+  | 'closed'
+
+export type CandidateRecordState = 'active' | 'closed'
+
+export type CandidateContractFinalOutcome = 'hired' | 'not_hired' | 'not_counted'
+
+export type CandidateContractIssue = {
+  code?: string | null
+  severity?: 'warning' | 'error' | 'critical' | string
+  message?: string | null
+}
+
+export type CandidateLifecycleSummary = {
+  stage?: CandidateLifecycleStage | null
+  stage_label?: string | null
+  record_state?: CandidateRecordState | null
+  final_outcome?: CandidateContractFinalOutcome | null
+  final_outcome_label?: string | null
+  archive_reason?: string | null
+  legacy_status_slug?: string | null
+  updated_at?: string | null
+}
+
+export type CandidateSchedulingSummary = {
+  source?: 'slot_assignment' | 'legacy_slot' | 'none' | string
+  stage?: 'interview' | 'intro_day' | null
+  status?: 'offered' | 'selected' | 'scheduled' | 'confirmed' | 'reschedule_requested' | 'cancelled' | 'completed' | 'no_show' | null
+  status_label?: string | null
+  active?: boolean
+  requested_reschedule?: boolean
+  slot_id?: number | null
+  slot_assignment_id?: number | null
+  slot_status?: string | null
+  slot_assignment_status?: string | null
+  start_utc?: string | null
+  candidate_tz?: string | null
+  issues?: CandidateContractIssue[]
+}
+
+export type CandidateNextActionPrimary = {
+  type?: string | null
+  label?: string | null
+  enabled?: boolean
+  owner_role?: string | null
+  blocking_reasons?: string[]
+  deadline_at?: string | null
+  source_ref?: { kind?: string | null; id?: number | string | null } | null
+  ui_action?: 'open_schedule_slot_modal' | 'open_schedule_intro_day_modal' | 'open_chat' | 'invoke_candidate_action' | null
+  legacy_action_key?: string | null
+}
+
+export type CandidateNextAction = {
+  version?: number
+  candidate_id?: string | null
+  lifecycle_stage?: CandidateLifecycleStage | null
+  record_state?: CandidateRecordState | null
+  worklist_bucket?: 'incoming' | 'today' | 'awaiting_candidate' | 'awaiting_recruiter' | 'blocked' | 'closed' | string
+  worklist_bucket_label?: string | null
+  urgency?: 'normal' | 'attention' | 'urgent' | 'blocked' | string
+  stale_since?: string | null
+  primary_action?: CandidateNextActionPrimary | null
+  secondary_actions?: CandidateNextActionPrimary[]
+  blocking_reasons?: string[]
+  explanation?: string | null
+}
+
+export type CandidateStateReconciliation = {
+  issues?: CandidateContractIssue[]
+  has_blockers?: boolean
+}
+
+export type CandidateBlockingState = {
+  code?: string | null
+  category?: string | null
+  severity?: 'info' | 'warning' | 'error' | 'critical' | string
+  retryable?: boolean
+  recoverable?: boolean
+  manual_resolution_required?: boolean
+  issue_codes?: string[]
+}
+
+export type CandidateOperationalSummary = {
+  worklist_bucket?: 'incoming' | 'today' | 'awaiting_candidate' | 'awaiting_recruiter' | 'blocked' | 'closed' | string
+  worklist_bucket_label?: string | null
+  kanban_column?: string | null
+  kanban_column_label?: string | null
+  kanban_column_icon?: string | null
+  kanban_target_status?: string | null
+  queue_state?: string | null
+  queue_state_label?: string | null
+  dominant_signal?: string | null
+  dominant_signal_label?: string | null
+  requested_reschedule?: boolean
+  pending_approval?: boolean
+  stalled?: boolean
+  has_reconciliation_issues?: boolean
+  has_scheduling_conflict?: boolean
+}
+
+export type CandidateStateFilterOption = {
+  value: string
+  label: string
+  kind?: 'all' | 'kanban' | 'lifecycle' | 'worklist' | string
+  icon?: string | null
+  target_status?: string | null
+}
+
+export type CandidateStatusView = {
+  slug?: string | null
+  label?: string | null
+  tone?: string | null
+  icon?: string | null
+  rank?: number | null
+}
+
+export type CandidateListCard = {
+  id: number
+  candidate_id?: string | null
+  fio?: string | null
+  city?: string | null
+  telegram_id?: number | string | null
+  telegram_user_id?: number | string | null
+  telegram_username?: string | null
+  telegram_linked_at?: string | null
+  status?: CandidateStatusView | null
+  journey?: CandidateJourney | null
+  archive?: CandidateArchive | null
+  final_outcome?: CandidateFinalOutcome | null
+  final_outcome_reason?: string | null
+  pending_slot_request?: CandidatePendingSlotRequest | null
+  manual_mode?: boolean
+  state_contract_version?: number
+  lifecycle_summary?: CandidateLifecycleSummary | null
+  scheduling_summary?: CandidateSchedulingSummary | null
+  candidate_next_action?: CandidateNextAction | null
+  operational_summary?: CandidateOperationalSummary | null
+  state_reconciliation?: CandidateStateReconciliation | null
+  tests?: {
+    test1?: { status?: string | null; label?: string | null; icon?: string | null } | null
+    test2?: { status?: string | null; label?: string | null; icon?: string | null } | null
+  } | null
+  stage?: string | null
+  upcoming_slot?: { start_utc?: string | null } | null
+  latest_slot?: { start_utc?: string | null } | null
+  slots?: CandidateSlot[]
+  messages_total?: number | null
+  primary_event_at?: string | null
+  group?: { key?: string | null; label?: string | null } | null
+  average_score?: number | null
+  avg_score?: number | null
+  recruiter_id?: number | null
+  recruiter_name?: string | null
+  recruiter?: { id?: number | null; name?: string | null } | null
+}
+
+export type CandidateListItem = {
+  id: number
+  fio?: string | null
+  city?: string | null
+  status?: CandidateStatusView | null
+  telegram_id?: number | string | null
+  recruiter_id?: number | null
+  recruiter_name?: string | null
+  recruiter?: { id?: number | null; name?: string | null } | null
+  average_score?: number | null
+  tests_total?: number | null
+  primary_event_at?: string | null
+  latest_message?: { created_at?: string | null } | null
+  latest_slot?: { start_utc?: string | null } | null
+  upcoming_slot?: { start_utc?: string | null } | null
+}
+
+export type CandidateCalendarDay = {
+  date: string
+  label: string
+  events: Array<{
+    candidate?: CandidateListCard
+    slot?: { start_utc?: string | null }
+    status?: CandidateStatusView
+  }>
+  totals?: Record<string, number>
+}
+
+export type CandidateListPayload = {
+  items: CandidateListItem[]
+  total: number
+  page: number
+  pages_total: number
+  filters?: Record<string, unknown> & {
+    state?: string[]
+    state_options?: CandidateStateFilterOption[]
+  }
+  pipeline?: string
+  pipeline_options?: Array<{ slug: string; label: string }>
+  views?: {
+    kanban?: {
+      columns: Array<{
+        slug: string
+        label: string
+        icon?: string | null
+        tone?: string | null
+        target_status?: string | null
+        total?: number
+        droppable?: boolean
+        candidates: CandidateListCard[]
+      }>
+      status_totals?: Record<string, number>
+    }
+    calendar?: { days: CandidateCalendarDay[] }
+    candidates?: CandidateListCard[]
+  }
+}
+
+export type CandidateActionState = {
+  id?: number | null
+  candidate_status_slug?: string | null
+  candidate_status_display?: string | null
+  candidate_status_color?: string | null
+  lifecycle_summary?: CandidateLifecycleSummary | null
+  scheduling_summary?: CandidateSchedulingSummary | null
+  candidate_next_action?: CandidateNextAction | null
+  operational_summary?: CandidateOperationalSummary | null
+  state_reconciliation?: CandidateStateReconciliation | null
+  candidate_actions?: CandidateAction[]
+  allowed_next_statuses?: Array<{ slug: string; label: string; color?: string; is_terminal?: boolean }>
+  status_is_terminal?: boolean
+}
+
+export type CandidateActionErrorCode =
+  | 'action_not_allowed'
+  | 'invalid_transition'
+  | 'scheduling_conflict'
+  | 'missing_interview_scheduling'
+  | 'missing_interview_slot'
+  | 'test2_not_passed'
+  | 'partial_transition_requires_repair'
+  | 'candidate_not_found'
+  | string
+
+export type CandidateActionResponse = {
+  ok: boolean
+  message?: string | null
+  status?: string | null
+  action?: string | null
+  candidate_id?: number | null
+  error?: CandidateActionErrorCode | null
+  intent?: Record<string, unknown> | null
+  candidate_state?: CandidateActionState | null
+  blocking_state?: CandidateBlockingState | null
+}
+
 export type CandidateDetail = {
   id: number
   created_at?: string | null
@@ -271,6 +530,12 @@ export type CandidateDetail = {
   final_outcome_reason?: string | null
   pending_slot_request?: CandidatePendingSlotRequest | null
   manual_mode?: boolean
+  state_contract_version?: number
+  lifecycle_summary?: CandidateLifecycleSummary | null
+  scheduling_summary?: CandidateSchedulingSummary | null
+  candidate_next_action?: CandidateNextAction | null
+  operational_summary?: CandidateOperationalSummary | null
+  state_reconciliation?: CandidateStateReconciliation | null
   test_sections?: TestSection[]
   test_results?: Record<string, TestSection>
   timeline?: CandidateTimelineEntry[]
@@ -837,7 +1102,7 @@ export function scheduleCandidateIntroDay(
 }
 
 export function applyCandidateAction(candidateId: number, actionKey: string, payload?: unknown) {
-  return apiFetch(`/candidates/${candidateId}/actions/${actionKey}`, {
+  return apiFetch<CandidateActionResponse>(`/candidates/${candidateId}/actions/${actionKey}`, {
     method: 'POST',
     body: payload ? JSON.stringify(payload) : undefined,
   })

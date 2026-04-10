@@ -10,7 +10,7 @@ Platform Engineering
 Canonical
 
 ## Last Reviewed
-2026-03-27
+2026-04-03
 
 ## Source Paths
 - `backend/apps/admin_ui/routers/candidate_portal.py`
@@ -57,7 +57,7 @@ sequenceDiagram
     UIAPI->>DOM: build_candidate_portal_journey() / validate header recovery
     DOM->>DB: read profile / screening / active slot / messages
     DOM-->>UIAPI: full journey state
-    UI-->>C: Render cabinet dashboard, next action, slot state and inbox
+    UI-->>C: Render current stage, messenger handoff, slot state and candidate-facing updates
     C->>UI: Save profile / screening / message
     UI->>UIAPI: POST /profile | /screening/save | /messages
     UIAPI->>DOM: save_candidate_profile / save_screening_draft / create_candidate_portal_message
@@ -71,13 +71,13 @@ sequenceDiagram
 - Browser entry uses the signed portal token directly. MAX mini-app entry uses a separate URL-safe launch token that resolves to the same candidate journey contract.
 - The portal token remains the source of truth for browser recovery; native app entry only changes the launch surface, not the journey/session invariants.
 - The selected HH entry channel is stored in `CandidateJourneySession.payload_json` as `entry_source`, `last_entry_channel`, `last_entry_channel_selected_at` and `entry_channel_history`. This does not create a second journey or change slot/status invariants.
-- The same persistence contract is used when the candidate switches launcher from inside `/candidate/journey`: the cabinet records the new `last_entry_channel` before redirecting to the selected Web/MAX/Telegram launcher.
+- The same persistence contract is used when the candidate switches launcher from inside `/candidate/journey`: the journey records the new `last_entry_channel` before redirecting to the selected MAX/Telegram launcher.
 
 ### Product Contract
-- The web cabinet is the primary candidate UX and state surface. MAX, Telegram and future channels only deliver entry packages, reminders and mirrored notifications.
-- `/candidate/journey` is a persistent cabinet with dashboard, workflow, tests, schedule, inbox, company materials and candidate-visible feedback. It is no longer framed as a messenger-first stepper.
-- Recruiter CRM and candidate cabinet share the same conversation history. Messages written from CRM must appear in the candidate web inbox even if the candidate has no active messenger binding.
-- Recruiters can send a unified HH entry package from CRM. If HH does not expose a message-capable negotiation action, the system must return an explicit blocked reason and still expose fallback web/MAX/Telegram launch options.
+- MAX and Telegram are the primary candidate UX surfaces. Test delivery, slot negotiation and candidate-facing feedback are expected to happen in the active messenger channel.
+- `/candidate/start` and `/candidate/journey` are messenger-entry surfaces. They may recover state, explain the current stage and hand off into MAX or Telegram, but they must not be presented as a standalone web workspace for the candidate.
+- Recruiter CRM and messenger conversations share the same conversation history. Messages written from CRM must appear in the candidate's active messenger thread as soon as delivery succeeds.
+- HH entry may still act as the public bootstrap surface, but the candidate continuation flow should prefer MAX or Telegram and return explicit blocked reasons when a messenger launch path is unavailable.
 
 ### State
 ```mermaid
@@ -105,7 +105,7 @@ stateDiagram-v2
 - Frontend bootstrap order is fixed: route token -> query `token/start/startapp` -> `window.WebApp.initDataUnsafe.start_param` from MAX Bridge -> stored session token.
 - If no bootstrap source is available, the candidate portal returns structured recovery states (`recoverable`, `needs_new_link`, `blocked`) so the UI can explain the next step instead of showing a dead-end 401.
 - Invite rotation, relink and explicit security recovery bump `session_version`; stale browser/header tokens must fail closed and emit audit trail.
-- External channel delivery failure must not block cabinet access. A fresh browser link remains a valid recovery path whenever the portal public URL is healthy.
+- External channel delivery failure must not block candidate recovery. A fresh signed link remains a valid bootstrap path whenever the public URL is healthy.
 
 ## 2. Slot Booking And Reschedule
 ### Sequence

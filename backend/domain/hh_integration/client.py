@@ -20,6 +20,15 @@ class HHApiError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class HHNormalizedError:
+    code: str
+    message: str
+    retryable: bool
+    status_code: int | None = None
+    payload: Any = None
+
+
+@dataclass(frozen=True)
 class HHOAuthTokens:
     access_token: str
     refresh_token: str
@@ -282,3 +291,29 @@ class HHApiClient:
             manager_account_id=manager_account_id,
             json_body=arguments or None,
         )
+
+
+def normalize_hh_api_error(error: HHApiError) -> HHNormalizedError:
+    if error.status_code == 401:
+        return HHNormalizedError(
+            code="token_refresh_required",
+            message=str(error),
+            retryable=True,
+            status_code=error.status_code,
+            payload=error.payload,
+        )
+    if error.status_code is not None:
+        return HHNormalizedError(
+            code="provider_http_error",
+            message=str(error),
+            retryable=True,
+            status_code=error.status_code,
+            payload=error.payload,
+        )
+    return HHNormalizedError(
+        code="transport_error",
+        message=str(error),
+        retryable=True,
+        status_code=error.status_code,
+        payload=error.payload,
+    )

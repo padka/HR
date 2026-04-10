@@ -241,6 +241,25 @@ make test
 
 Add targeted commands when changing migrations, broker flows, or integration modules.
 
+For candidate portal continuity / candidate-facing bot resume changes, add:
+
+```bash
+DB=$(mktemp -t rs-candidate-portal) && DATABASE_URL=sqlite+aiosqlite:///$DB .venv/bin/python -m pytest tests/test_candidate_portal_api.py tests/test_bot_test1_validation.py -q
+```
+
+For production-like PostgreSQL stateful proof on the isolated `rs_test` contour:
+
+```bash
+make test-postgres-proof
+```
+
+Notes:
+
+- `make test` still runs the broad backend suite through the default fast test harness.
+- `make test-postgres-proof` is the narrow PostgreSQL-backed tranche for critical stateful flows.
+- current PostgreSQL proof covers clean migrations, scheduling propose/confirm/reschedule/manual-repair/blocker paths, MAX duplicate-owner runtime plus preflight classification, portal restart/re-entry/recovery boundaries, and single-consumer outbox claim semantics.
+- override `PG_PROOF_DATABASE_URL` if your local isolated PostgreSQL proof DB uses a different DDL-capable role or DSN.
+
 ## Known Caveats
 
 - `make install` installs Python dependencies only; it does not install frontend npm packages

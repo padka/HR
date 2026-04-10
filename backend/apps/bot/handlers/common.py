@@ -273,6 +273,11 @@ async def free_text(message: Message) -> None:
         if handled:
             return
 
+    if state.get("awaiting_slot_assignment_decline_reason"):
+        handled = await slot_assignment_flow.capture_slot_assignment_decline_reason(message, state)
+        if handled:
+            return
+
     if state.get("slot_assignment_state") == slot_assignment_flow.STATE_WAITING_DATETIME:
         handled = await slot_assignment_flow.handle_datetime_input(message, state)
         if handled:

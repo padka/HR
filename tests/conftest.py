@@ -53,16 +53,32 @@ def event_loop():
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_backend(tmp_path_factory):
-    # Stable defaults for tests: force local sqlite unless TEST_DATABASE_URL is explicitly set
+    # Stable defaults for tests: default to isolated SQLite, but allow an explicit
+    # PostgreSQL-backed proof run for critical stateful scenarios.
     os.environ["ENVIRONMENT"] = "test"
-    # Force sqlite per test session to avoid asyncpg/uvloop issues
-    db_dir = tmp_path_factory.mktemp("data")
-    db_path = db_dir / "bot.db"
-    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
-    os.environ["DATA_DIR"] = str(db_dir)
-    # Force integration tests to use the same SQLite URL; this skips Postgres-only
-    # migration checks when a local Postgres instance is unavailable.
-    os.environ["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
+    use_postgres = str(os.getenv("TEST_USE_POSTGRES", "")).strip().lower() in {"1", "true", "yes"}
+    if use_postgres:
+        database_url = (
+            str(os.getenv("TEST_DATABASE_URL", "")).strip()
+            or str(os.getenv("DATABASE_URL", "")).strip()
+        )
+        if not database_url.startswith("postgresql+asyncpg://"):
+            raise RuntimeError(
+                "TEST_USE_POSTGRES=1 requires TEST_DATABASE_URL or DATABASE_URL "
+                "to use postgresql+asyncpg://"
+            )
+        os.environ["DATABASE_URL"] = database_url
+        os.environ["TEST_DATABASE_URL"] = database_url
+        os.environ["DATA_DIR"] = str(tmp_path_factory.mktemp("pg-data"))
+    else:
+        # Force sqlite per test session to avoid asyncpg/uvloop issues
+        db_dir = tmp_path_factory.mktemp("data")
+        db_path = db_dir / "bot.db"
+        os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+        os.environ["DATA_DIR"] = str(db_dir)
+        # Force integration tests to use the same SQLite URL; this skips Postgres-only
+        # migration checks when a local Postgres instance is unavailable.
+        os.environ["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
     os.environ.pop("SQL_ECHO", None)
     # Allow legacy Basic auth and auto-admin in test runs for compatibility
     os.environ["ALLOW_LEGACY_BASIC"] = "1"
@@ -120,7 +136,11 @@ def reset_settings_cache():
 
 
 @pytest.fixture(autouse=True)
-def clean_database():
+def clean_database(request):
+    if request.node.get_closest_marker("no_db_cleanup") is not None:
+        yield
+        return
+
     from backend.domain.base import Base
     from backend.core.db import async_engine, sync_engine
 

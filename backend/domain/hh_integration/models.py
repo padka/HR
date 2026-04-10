@@ -165,10 +165,12 @@ class HHSyncJob(Base):
         UniqueConstraint("idempotency_key", name="uq_hh_sync_jobs_idempotency"),
         Index("ix_hh_sync_jobs_status", "status", "next_retry_at"),
         Index("ix_hh_sync_jobs_entity", "entity_type", "entity_external_id"),
+        Index("ix_hh_sync_jobs_candidate", "candidate_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     connection_id: Mapped[int | None] = mapped_column(ForeignKey("hh_connections.id", ondelete="SET NULL"), nullable=True)
+    candidate_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     job_type: Mapped[str] = mapped_column(String(48), nullable=False)
     direction: Mapped[str] = mapped_column(String(16), nullable=False, default=HHSyncDirection.INBOUND)
     entity_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -177,13 +179,16 @@ class HHSyncJob(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     connection = relationship("HHConnection", back_populates="sync_jobs")
+    candidate = relationship("User")
 
 
 class HHWebhookDelivery(Base):

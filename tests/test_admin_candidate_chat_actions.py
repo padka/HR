@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 import backend.core.messenger.registry as registry_mod
 from backend.apps.admin_ui.security import Principal
+from backend.apps.admin_ui.services.candidates.helpers import get_candidate_detail
 from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.core.messenger.protocol import MessengerPlatform, SendResult
 from backend.core.messenger.registry import MessengerRegistry
@@ -23,7 +24,16 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.models import AuditLog, CalendarTask, City, Recruiter, Slot, SlotStatus
+from backend.domain.models import (
+    AuditLog,
+    CalendarTask,
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    SlotStatus,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -832,10 +842,283 @@ async def test_candidate_action_updates_status(admin_app) -> None:
     data = action_response.json()
     assert data["ok"] is True
     assert data["status"] == CandidateStatus.INTERVIEW_DECLINED.value
+    assert data["intent"]["action_key"] == "reject"
+    assert data["intent"]["intent_key"] == "reject_candidate"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.INTERVIEW_DECLINED.value
+    assert data["candidate_state"]["lifecycle_summary"]["stage"] == "closed"
+    assert data["candidate_state"]["operational_summary"]["has_reconciliation_issues"] is not None
 
     async with async_session() as session:
         refreshed = await session.get(User, candidate.id)
         assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+
+@pytest.mark.asyncio
+async def test_candidate_action_send_to_test2_uses_dedicated_use_case(admin_app, monkeypatch) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90113,
+        fio="Action Send Test2",
+        city="Москва",
+        username="action_send_test2",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        city = City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Action Send Test2 Recruiter", tg_chat_id=9011301, tz="Europe/Moscow")
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+
+    async def _legacy_should_not_run(*_args, **_kwargs):
+        raise AssertionError("legacy update_candidate_status should not be used")
+
+    async def _fake_set_slot_outcome(*_args, **_kwargs):
+        return True, "Исход сохранён.", "success", None
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.write_intents.update_candidate_status",
+        _legacy_should_not_run,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases.set_slot_outcome",
+        _fake_set_slot_outcome,
+    )
+
+    action_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/actions/interview_outcome_passed",
+    )
+
+    assert action_response.status_code == 200
+    data = action_response.json()
+    assert data["ok"] is True
+    assert data["status"] == CandidateStatus.TEST2_SENT.value
+    assert data["intent"]["action_key"] == "interview_outcome_passed"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.TEST2_SENT.value
+
+
+@pytest.mark.asyncio
+async def test_candidate_action_send_to_test2_surfaces_scheduling_conflict(admin_app, monkeypatch) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90114,
+        fio="Action Send Test2 Conflict",
+        city="Москва",
+        username="action_send_test2_conflict",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        city = City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Action Send Test2 Conflict Recruiter", tg_chat_id=9011401, tz="Europe/Moscow")
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id)
+    assert detail is not None
+
+    async def _conflicted_detail(*args, **kwargs):
+        if args and args[0] == candidate.id:
+            payload = dict(detail)
+            operational = dict(payload.get("operational_summary") or {})
+            operational["has_scheduling_conflict"] = True
+            payload["operational_summary"] = operational
+            reconciliation = dict(payload.get("state_reconciliation") or {})
+            issues = list(reconciliation.get("issues") or [])
+            issues.append(
+                {
+                    "code": "scheduling_split_brain",
+                    "severity": "warning",
+                    "message": "Synthetic scheduling conflict for endpoint test.",
+                }
+            )
+            reconciliation["issues"] = issues
+            payload["state_reconciliation"] = reconciliation
+            return payload
+        return await get_candidate_detail(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases.get_candidate_detail",
+        _conflicted_detail,
+    )
+
+    action_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/actions/interview_outcome_passed",
+    )
+
+    assert action_response.status_code == 409
+    data = action_response.json()
+    assert data["ok"] is False
+    assert data["error"] == "scheduling_conflict"
+    assert data["intent"]["action_key"] == "interview_outcome_passed"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.INTERVIEW_SCHEDULED.value
+    assert data["candidate_state"]["operational_summary"]["has_scheduling_conflict"] is True
+    assert data["blocking_state"] == {
+        "code": "scheduling_conflict",
+        "category": "scheduling",
+        "severity": "warning",
+        "retryable": False,
+        "recoverable": True,
+        "manual_resolution_required": True,
+        "issue_codes": ["scheduling_split_brain"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_candidate_action_send_to_test2_blocks_on_persisted_scheduling_conflict(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=901141,
+        fio="Persisted Action Conflict Candidate",
+        city="Москва",
+        username="persisted_action_conflict",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        city = City(name="Москва", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(name="Persisted Action Conflict Recruiter", tg_chat_id=90114101, tz="Europe/Moscow")
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        stale_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz=city.tz,
+            candidate_city_id=city.id,
+        )
+        target_slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            duration_min=60,
+            status=SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add_all([stale_slot, target_slot])
+        await session.commit()
+        await session.refresh(target_slot)
+
+        session.add(
+            SlotAssignment(
+                slot_id=target_slot.id,
+                recruiter_id=recruiter.id,
+                candidate_id=candidate.candidate_id,
+                candidate_tg_id=candidate.telegram_id,
+                candidate_tz=city.tz,
+                status=SlotAssignmentStatus.CONFIRMED,
+                confirmed_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+
+    action_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/actions/interview_outcome_passed",
+    )
+
+    assert action_response.status_code == 409
+    data = action_response.json()
+    assert data["ok"] is False
+    assert data["error"] == "scheduling_conflict"
+    assert data["intent"]["action_key"] == "interview_outcome_passed"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.INTERVIEW_SCHEDULED.value
+    assert data["candidate_state"]["operational_summary"]["has_scheduling_conflict"] is True
+    assert data["blocking_state"] == {
+        "code": "scheduling_conflict",
+        "category": "scheduling",
+        "severity": "warning",
+        "retryable": False,
+        "recoverable": True,
+        "manual_resolution_required": True,
+        "issue_codes": ["scheduling_split_brain"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_candidate_action_action_not_allowed_returns_blocking_state(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90115,
+        fio="Action Not Allowed Candidate",
+        city="Москва",
+        username="action_not_allowed_candidate",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+
+    action_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/actions/approve_upcoming_slot",
+    )
+
+    assert action_response.status_code == 400
+    data = action_response.json()
+    assert data["ok"] is False
+    assert data["error"] == "action_not_allowed"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.WAITING_SLOT.value
+    assert data["blocking_state"] == {
+        "code": "action_not_allowed",
+        "category": "invariant",
+        "severity": "error",
+        "retryable": False,
+        "recoverable": True,
+        "manual_resolution_required": False,
+        "issue_codes": [],
+    }
 
 
 @pytest.mark.asyncio

@@ -1,57 +1,201 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  cancelCandidatePortalSlot,
-  completeCandidatePortalScreening,
-  confirmCandidatePortalSlot,
-  parseCandidatePortalError,
   fetchCandidatePortalJourney,
-  logoutCandidatePortalSession,
-  reserveCandidatePortalSlot,
-  rescheduleCandidatePortalSlot,
-  saveCandidatePortalProfile,
-  saveCandidatePortalScreeningDraft,
-  sendCandidatePortalMessage,
-  switchCandidateEntryChannel,
+  parseCandidatePortalError,
   type CandidateEntryChannel,
+  type CandidateEntryGatewayOption,
   type CandidatePortalJourneyResponse,
-  type CandidatePortalQuestion,
-  type CandidatePortalSlot,
 } from '@/api/candidate'
 import {
-  clearCandidatePortalAccessToken,
   persistCandidatePortalEntryTokenFromUrl,
   readCandidatePortalEntryToken,
 } from '@/shared/candidate-portal-session'
 import { ensureCandidateWebAppBridge, markCandidateWebAppReady } from './webapp'
-import { navigateToCandidateLaunch } from './launch'
 import '../candidate-portal.css'
 
 const JOURNEY_QUERY_KEY = ['candidate-portal-journey']
 
-type CandidateCabinetTab =
-  | 'home'
-  | 'workflow'
-  | 'tests'
-  | 'schedule'
-  | 'messages'
-  | 'company'
-  | 'feedback'
+const MESSENGER_SURFACE_STYLES = `
+  .candidate-portal__messenger-grid,
+  .candidate-portal__messenger-steps,
+  .candidate-portal__messenger-channels,
+  .candidate-portal__messenger-facts {
+    display: grid;
+    gap: 14px;
+  }
 
-const CABINET_TABS: Array<{ key: CandidateCabinetTab; label: string }> = [
-  { key: 'home', label: 'Главная' },
-  { key: 'workflow', label: 'Мой путь' },
-  { key: 'tests', label: 'Тесты и анкеты' },
-  { key: 'schedule', label: 'Собеседования' },
-  { key: 'messages', label: 'Сообщения' },
-  { key: 'company', label: 'О компании' },
-  { key: 'feedback', label: 'Обратная связь' },
-]
+  .candidate-portal__messenger-grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  }
+
+  .candidate-portal__messenger-steps {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .candidate-portal__messenger-channels {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .candidate-portal__messenger-card {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  }
+
+  .candidate-portal__messenger-card--accent {
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 12%, var(--surface-elevated)),
+      color-mix(in srgb, var(--surface-elevated) 90%, transparent)
+    );
+  }
+
+  .candidate-portal__messenger-channel {
+    display: grid;
+    gap: 12px;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+  }
+
+  .candidate-portal__messenger-channel.is-disabled {
+    opacity: 0.72;
+  }
+
+  .candidate-portal__messenger-channel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .candidate-portal__messenger-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    background: color-mix(in srgb, var(--surface) 90%, white);
+    color: var(--muted);
+  }
+
+  .candidate-portal__messenger-status.is-ready {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    color: color-mix(in srgb, var(--success) 72%, var(--text));
+  }
+
+  .candidate-portal__messenger-status.is-blocked {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: color-mix(in srgb, var(--danger) 72%, var(--text));
+  }
+
+  .candidate-portal__messenger-note-list {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .candidate-portal__messenger-note-list li {
+    position: relative;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+
+  .candidate-portal__messenger-note-list li::before {
+    content: '';
+    position: absolute;
+    top: 0.55rem;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 76%, white);
+  }
+
+  @media (max-width: 959px) {
+    .candidate-portal__messenger-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+`
+
+type JourneyViewStep = {
+  key: string
+  label: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+type JourneyViewChannel = {
+  channel: 'max' | 'telegram'
+  label: string
+  description: string
+  launchUrl: string | null
+  enabled: boolean
+  reason: string | null
+  requiresBotStart: boolean
+}
+
+type JourneyViewBrowserFallback = {
+  label: string
+  description: string
+  launchUrl: string | null
+  enabled: boolean
+  reason: string | null
+}
+
+type JourneyViewModel = {
+  mode: 'live' | 'preview'
+  badge: string
+  title: string
+  subtitle: string
+  candidateName: string
+  city: string
+  vacancy: string
+  company: string
+  currentStepLabel: string
+  currentStatusLabel: string
+  nextAction: string
+  nextUpdate: string
+  currentChannel: string
+  highlights: string[]
+  notes: string[]
+  steps: JourneyViewStep[]
+  channels: JourneyViewChannel[]
+  browserFallback: JourneyViewBrowserFallback | null
+  alerts: Array<{
+    level: 'info' | 'success' | 'warning' | 'danger'
+    title: string
+    body: string
+  }>
+  history: Array<{
+    kind: string
+    title: string
+    body: string
+    createdAt: string
+    statusLabel: string | null
+  }>
+}
+
+type PreviewScenarioKey = 'waiting' | 'scheduled' | 'action_needed'
+
+const CHANNEL_ORDER: Array<'max' | 'telegram'> = ['max', 'telegram']
 
 const formatDateTime = (value?: string | null, timeZone?: string | null) => {
-  if (!value) return 'Дата уточняется'
+  if (!value) return 'Время уточняется'
   const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('ru-RU', {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -59,118 +203,585 @@ const formatDateTime = (value?: string | null, timeZone?: string | null) => {
   }).format(date)
 }
 
-const slotStatusLabel = (status?: string | null) => {
-  switch ((status || '').toLowerCase()) {
-    case 'pending':
-      return 'На подтверждении'
-    case 'booked':
-      return 'Подтвержден рекрутером'
-    case 'confirmed':
-    case 'confirmed_by_candidate':
-      return 'Подтверждено'
+const channelMeta = (channel: 'max' | 'telegram') => (
+  channel === 'max'
+    ? {
+      label: 'MAX',
+      description: 'Здесь кандидат проходит Test 1, получает слот и видит ответы рекрутера.',
+    }
+    : {
+      label: 'Telegram',
+      description: 'Тот же flow: Test 1, подтверждение слота и обратная связь в одном messenger channel.',
+    }
+)
+
+const stepNarrative = (
+  currentStep: string,
+  activeSlot?: CandidatePortalJourneyResponse['journey']['slots']['active'] | null,
+) => {
+  switch (currentStep) {
+    case 'profile':
+      return 'Подтвердите базовые данные в мессенджере. После этого CRM закрепит профиль кандидата и откроет следующий этап.'
+    case 'screening':
+      return 'Кандидату приходит Test 1 в MAX или Telegram. После завершения ответы и детали анкеты сразу появляются у рекрутера в системе.'
+    case 'slot_selection':
+      return 'Если кандидат проходит по критериям, рекрутер назначает слот. Предложение времени и подтверждение прилетают в мессенджер сразу.'
+    case 'status':
+      if (activeSlot?.start_utc) {
+        return `Слот уже назначен на ${formatDateTime(activeSlot.start_utc, activeSlot.tz_name || activeSlot.candidate_tz)}. Любое изменение по встрече или статусу придёт в мессенджер в том же канале общения.`
+      }
+      return 'Рекрутер продолжает вести кандидата через MAX или Telegram: статусы, уточнения и следующая обратная связь приходят туда же.'
     default:
-      return 'Ожидает действия'
+      return 'Весь путь кандидата ведётся через MAX или Telegram: Test 1, назначение слота и следующая обратная связь.'
   }
 }
 
-const isSlotConfirmable = (slot?: CandidatePortalSlot | null) =>
-  ['pending', 'booked'].includes(String(slot?.status || '').toLowerCase())
-
-const isSlotAlreadyConfirmed = (slot?: CandidatePortalSlot | null) =>
-  ['confirmed', 'confirmed_by_candidate'].includes(String(slot?.status || '').toLowerCase())
-
-const resolveCabinetTab = (value?: string | null): CandidateCabinetTab => {
-  if (!value) return 'home'
-  if (CABINET_TABS.some((tab) => tab.key === value)) return value as CandidateCabinetTab
-  return 'home'
+const normalizeAlertLevel = (value?: string | null): 'info' | 'success' | 'warning' | 'danger' => {
+  if (value === 'success' || value === 'warning' || value === 'danger') return value
+  return 'info'
 }
 
-function SlotCard({
-  slot,
-  actionLabel,
-  busy,
-  onAction,
-}: {
-  slot: CandidatePortalSlot
-  actionLabel: string
-  busy?: boolean
-  onAction: () => void
-}) {
-  return (
-    <div className="candidate-portal__slot-card">
-      <div>
-        <strong>{formatDateTime(slot.start_utc, slot.tz_name || slot.candidate_tz)}</strong>
-      </div>
-      <div className="candidate-portal__slot-meta">
-        {slot.city_name ? <span className="candidate-portal__chip">{slot.city_name}</span> : null}
-        {slot.recruiter_name ? <span className="candidate-portal__chip">Рекрутер: {slot.recruiter_name}</span> : null}
-        {slot.duration_min ? <span className="candidate-portal__chip">{slot.duration_min} мин</span> : null}
-      </div>
-      <div className="candidate-portal__slot-actions">
-        <button className="ui-btn ui-btn--primary" onClick={onAction} disabled={busy}>
-          {busy ? 'Сохраняю…' : actionLabel}
-        </button>
-      </div>
-    </div>
-  )
+const toJourneyChannels = (
+  options?: Partial<Record<CandidateEntryChannel, CandidateEntryGatewayOption>>,
+) => CHANNEL_ORDER.map((channel) => {
+  const option = options?.[channel]
+  const meta = channelMeta(channel)
+  return {
+    channel,
+    label: meta.label,
+    description: meta.description,
+    launchUrl: String(option?.launch_url || '').trim() || null,
+    enabled: Boolean(option?.enabled),
+    reason: option?.reason_if_blocked || null,
+    requiresBotStart: Boolean(option?.requires_bot_start),
+  }
+})
+
+const toBrowserFallback = (
+  options?: Partial<Record<CandidateEntryChannel, CandidateEntryGatewayOption>>,
+): JourneyViewBrowserFallback | null => {
+  const option = options?.web
+  if (!option) return null
+  return {
+    label: 'Браузер',
+    description: 'Резервный путь на том же shared candidate flow. Используйте его, если MAX или Telegram не открываются на этом устройстве.',
+    launchUrl: String(option.launch_url || '').trim() || null,
+    enabled: Boolean(option.enabled),
+    reason: option.reason_if_blocked || null,
+  }
 }
 
-function ScreeningQuestion({
-  question,
-  value,
-  onChange,
+function createLiveJourneyViewModel(payload: CandidatePortalJourneyResponse): JourneyViewModel {
+  const activeSlot = payload.journey.slots.active || null
+  const hasActiveStage = payload.journey.current_step === 'slot_selection' || payload.journey.current_step === 'status'
+  const highlights = [
+    payload.journey.current_step_label,
+    payload.candidate.status_label || 'Статус обновляется',
+    payload.journey.entry_channel === 'max' ? 'MAX' : payload.journey.entry_channel === 'telegram' ? 'Telegram' : 'Messenger',
+  ].filter(Boolean)
+
+  const alerts = [
+    ...(payload.dashboard?.alerts || []).map((item) => ({
+      level: normalizeAlertLevel(item.level),
+      title: item.title || 'Обновление',
+      body: item.body || '',
+    })),
+  ]
+
+  if (alerts.length === 0) {
+    alerts.push({
+      level: 'info',
+      title: 'Как работает путь кандидата',
+      body: stepNarrative(payload.journey.current_step, activeSlot),
+    })
+  }
+
+  const notes = [
+    'Test 1 приходит кандидату в MAX или Telegram и сохраняется в CRM без ручного переноса.',
+    'После прохождения по критериям рекрутер назначает слот в системе, а уведомление уходит в мессенджер сразу.',
+    'Чат и следующая обратная связь остаются в том же мессенджере, где кандидат уже ведёт диалог.',
+  ]
+
+  if (activeSlot?.start_utc) {
+    notes.unshift(`Ближайший слот: ${formatDateTime(activeSlot.start_utc, activeSlot.tz_name || activeSlot.candidate_tz)}.`)
+  }
+
+  const history = (payload.history?.items || []).map((item) => ({
+    kind: item.kind || 'journey',
+    title: item.title || 'Обновление',
+    body: item.body || '',
+    createdAt: formatDateTime(item.created_at, payload.journey.next_step_timezone || activeSlot?.tz_name || activeSlot?.candidate_tz),
+    statusLabel: item.status_label || null,
+  }))
+
+  return {
+    mode: 'live',
+    badge: payload.journey.entry_channel === 'max' ? 'MAX flow' : payload.journey.entry_channel === 'telegram' ? 'Telegram flow' : 'Messenger flow',
+    title: hasActiveStage ? 'У вас уже есть активный этап' : 'Путь кандидата в мессенджере',
+    subtitle: hasActiveStage
+      ? payload.journey.next_action || stepNarrative(payload.journey.current_step, activeSlot)
+      : stepNarrative(payload.journey.current_step, activeSlot),
+    candidateName: payload.candidate.fio || 'Кандидат',
+    city: payload.candidate.city || payload.journey.profile.city_name || 'Город уточняется',
+    vacancy: payload.candidate.vacancy_label || payload.candidate.vacancy_position || 'Вакансия уточняется',
+    company: payload.company?.name || 'Команда подбора',
+    currentStepLabel: payload.journey.current_step_label || 'В работе',
+    currentStatusLabel: payload.candidate.status_label || 'Статус обновляется',
+    nextAction: payload.journey.next_action || 'Следующее действие придёт в мессенджер.',
+    nextUpdate: activeSlot?.start_utc
+      ? formatDateTime(activeSlot.start_utc, activeSlot.tz_name || activeSlot.candidate_tz)
+      : formatDateTime(payload.journey.next_step_at, payload.journey.next_step_timezone),
+    currentChannel: payload.journey.entry_channel === 'max'
+      ? 'MAX'
+      : payload.journey.entry_channel === 'telegram'
+        ? 'Telegram'
+        : 'Messenger',
+    highlights,
+    notes,
+    steps: (payload.journey.steps || []).map((step) => ({
+      key: step.key,
+      label: step.label,
+      status: step.status === 'completed' ? 'completed' : step.status === 'in_progress' ? 'in_progress' : 'pending',
+    })),
+    channels: toJourneyChannels(payload.journey.channel_options),
+    browserFallback: toBrowserFallback(payload.journey.channel_options),
+    alerts,
+    history,
+  }
+}
+
+function createPreviewJourneyViewModel(scenario: PreviewScenarioKey): JourneyViewModel {
+  const scenarios: Record<PreviewScenarioKey, JourneyViewModel> = {
+    waiting: {
+      mode: 'preview',
+      badge: 'Preview',
+      title: 'Messenger-first candidate flow',
+      subtitle: 'Кандидат проходит Test 1 в MAX. После завершения детали анкеты сразу появляются в CRM и остаются частью одного messenger flow.',
+      candidateName: 'Иван Петров',
+      city: 'Москва',
+      vacancy: 'Менеджер по работе с клиентами',
+      company: 'SMART SERVICE',
+      currentStepLabel: 'Тест 1',
+      currentStatusLabel: 'Ожидаем завершение',
+      nextAction: 'Пройти Test 1 в MAX и отправить ответы.',
+      nextUpdate: 'После завершения рекрутер увидит анкету в CRM.',
+      currentChannel: 'MAX',
+      highlights: ['MAX', 'Test 1', 'CRM sync'],
+      notes: [
+        'Кандидат отвечает в MAX, а профиль и результаты теста появляются в карточке кандидата.',
+        'Telegram работает по той же схеме: сообщения и статусы зеркалятся в CRM.',
+        'MAX и Telegram остаются основными поверхностями для кандидата.',
+      ],
+      steps: [
+        { key: 'screening', label: 'Test 1', status: 'in_progress' },
+        { key: 'profile', label: 'Профиль в CRM', status: 'pending' },
+        { key: 'slot', label: 'Назначение слота', status: 'pending' },
+        { key: 'feedback', label: 'Обратная связь', status: 'pending' },
+      ],
+      channels: [
+        {
+          channel: 'max',
+          label: 'MAX',
+          description: 'Кандидат уже в диалоге с ботом и проходит текущий этап здесь.',
+          launchUrl: 'https://max.ru/id1_bot?startapp=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: false,
+        },
+        {
+          channel: 'telegram',
+          label: 'Telegram',
+          description: 'Тот же сценарий можно продолжить через Telegram, если этот канал уже связан.',
+          launchUrl: 'https://t.me/test_bot?start=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: true,
+        },
+      ],
+      browserFallback: {
+        label: 'Браузер',
+        description: 'Резервный путь на том же candidate flow, если MAX недоступен на устройстве кандидата.',
+        launchUrl: '/candidate/start?entry=preview',
+        enabled: true,
+        reason: null,
+      },
+      alerts: [
+        {
+          level: 'info',
+          title: 'Синхронизация с CRM',
+          body: 'После завершения Test 1 анкета кандидата и ответы сразу видны рекрутеру в системе.',
+        },
+      ],
+      history: [],
+    },
+    scheduled: {
+      mode: 'preview',
+      badge: 'Preview',
+      title: 'Messenger-first candidate flow',
+      subtitle: 'Кандидат прошёл отбор по критериям. Рекрутер назначил слот, а уведомление прилетело в MAX сразу.',
+      candidateName: 'Иван Петров',
+      city: 'Москва',
+      vacancy: 'Менеджер по работе с клиентами',
+      company: 'SMART SERVICE',
+      currentStepLabel: 'Слот назначен',
+      currentStatusLabel: 'Ждём подтверждение',
+      nextAction: 'Подтвердить участие во встрече 05 апреля в 11:00.',
+      nextUpdate: '05 апр. 2026 г., 11:00',
+      currentChannel: 'MAX',
+      highlights: ['MAX', 'slot pending', 'instant feedback'],
+      notes: [
+        'Рекрутер назначает слот в CRM, а уведомление мгновенно уходит в мессенджер.',
+        'Подтверждение, перенос или отказ также возвращаются в CRM без ручной синхронизации.',
+        'Telegram использует тот же outbox и тот же статусный контур.',
+      ],
+      steps: [
+        { key: 'screening', label: 'Test 1', status: 'completed' },
+        { key: 'profile', label: 'Профиль в CRM', status: 'completed' },
+        { key: 'slot', label: 'Назначение слота', status: 'in_progress' },
+        { key: 'feedback', label: 'Обратная связь', status: 'pending' },
+      ],
+      channels: [
+        {
+          channel: 'max',
+          label: 'MAX',
+          description: 'Подтверждение встречи и следующий статус приходят прямо в MAX.',
+          launchUrl: 'https://max.ru/id1_bot?startapp=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: false,
+        },
+        {
+          channel: 'telegram',
+          label: 'Telegram',
+          description: 'Если кандидат связан с Telegram, событие уйдёт туда тем же каналом уведомлений.',
+          launchUrl: 'https://t.me/test_bot?start=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: true,
+        },
+      ],
+      browserFallback: {
+        label: 'Браузер',
+        description: 'Открывает тот же этап в browser fallback без сброса прогресса.',
+        launchUrl: '/candidate/start?entry=preview',
+        enabled: true,
+        reason: null,
+      },
+      alerts: [
+        {
+          level: 'success',
+          title: 'Слот назначен',
+          body: 'Кандидат получил сообщение о встрече, а CRM ждёт ответ на подтверждение.',
+        },
+      ],
+      history: [],
+    },
+    action_needed: {
+      mode: 'preview',
+      badge: 'Preview',
+      title: 'Messenger-first candidate flow',
+      subtitle: 'Рекрутер вернул кандидату следующий шаг. Весь диалог и дальнейшая обратная связь остаются в том же мессенджере.',
+      candidateName: 'Иван Петров',
+      city: 'Москва',
+      vacancy: 'Менеджер по работе с клиентами',
+      company: 'SMART SERVICE',
+      currentStepLabel: 'Нужно действие кандидата',
+      currentStatusLabel: 'Ожидаем ответ',
+      nextAction: 'Ответить рекрутеру и подтвердить готовность к следующему этапу.',
+      nextUpdate: 'Сообщение уже отправлено в мессенджер.',
+      currentChannel: 'Telegram',
+      highlights: ['Telegram', 'feedback', 'CRM synced'],
+      notes: [
+        'Рекрутер пишет из CRM, а кандидат получает сообщение в своём мессенджере сразу.',
+        'Ответ кандидата возвращается в recruiter inbox в том же messenger flow.',
+        'MAX работает по той же схеме, если канал кандидата привязан там.',
+      ],
+      steps: [
+        { key: 'screening', label: 'Test 1', status: 'completed' },
+        { key: 'profile', label: 'Профиль в CRM', status: 'completed' },
+        { key: 'slot', label: 'Назначение слота', status: 'completed' },
+        { key: 'feedback', label: 'Обратная связь', status: 'in_progress' },
+      ],
+      channels: [
+        {
+          channel: 'max',
+          label: 'MAX',
+          description: 'Канал доступен как резервный messenger entry, если кандидат уже связан с MAX.',
+          launchUrl: 'https://max.ru/id1_bot?startapp=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: false,
+        },
+        {
+          channel: 'telegram',
+          label: 'Telegram',
+          description: 'Кандидат уже ведёт диалог в Telegram и получает новую обратную связь без задержки.',
+          launchUrl: 'https://t.me/test_bot?start=preview',
+          enabled: true,
+          reason: null,
+          requiresBotStart: false,
+        },
+      ],
+      browserFallback: {
+        label: 'Браузер',
+        description: 'Резервный путь, если Telegram или MAX не открываются на этом устройстве.',
+        launchUrl: '/candidate/start?entry=preview',
+        enabled: true,
+        reason: null,
+      },
+      alerts: [
+        {
+          level: 'warning',
+          title: 'Ждём ответ кандидата',
+          body: 'Следующее сообщение уже ушло в Telegram и одновременно осталось в CRM для рекрутера.',
+        },
+      ],
+      history: [],
+    },
+  }
+
+  return scenarios[scenario]
+}
+
+function readPreviewMode() {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('preview') === '1'
+}
+
+function readPreviewScenario(): PreviewScenarioKey {
+  if (typeof window === 'undefined') return 'waiting'
+  const value = new URLSearchParams(window.location.search).get('scenario')
+  return value === 'scheduled' || value === 'action_needed' ? value : 'waiting'
+}
+
+function CandidateJourneyStatusScreen({
+  title,
+  subtitle,
+  recoveryHref,
 }: {
-  question: CandidatePortalQuestion
-  value: string
-  onChange: (next: string) => void
+  title: string
+  subtitle: string
+  recoveryHref: string
 }) {
   return (
-    <div className="candidate-portal__question">
-      <label className="candidate-portal__label">{question.prompt}</label>
-      {question.helper ? <p className="candidate-portal__helper">{question.helper}</p> : null}
-      {question.options && question.options.length > 0 ? (
-        <div className="candidate-portal__question-options">
-          {question.options.map((option) => (
-            <label key={option} className="candidate-portal__option">
-              <input
-                type="radio"
-                name={question.id}
-                checked={value === option}
-                onChange={() => onChange(option)}
-              />
-              <span>{option}</span>
-            </label>
-          ))}
+    <div className="candidate-portal">
+      <style>{MESSENGER_SURFACE_STYLES}</style>
+      <div className="candidate-portal__loader">
+        <div className="glass glass--elevated candidate-portal__card">
+          <div className="candidate-portal__eyebrow">Candidate Messaging</div>
+          <h1 className="candidate-portal__title">{title}</h1>
+          <p className="candidate-portal__subtitle">{subtitle}</p>
+          <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>
+            <button className="ui-btn ui-btn--primary" onClick={() => window.location.reload()}>
+              Повторить
+            </button>
+            <a className="ui-btn ui-btn--ghost" href={recoveryHref}>
+              Вернуться на старт
+            </a>
+          </div>
         </div>
-      ) : question.input_type === 'number' ? (
-        <input
-          className="candidate-portal__input"
-          inputMode="numeric"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={question.placeholder || ''}
-        />
-      ) : (
-        <textarea
-          className="candidate-portal__textarea"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={question.placeholder || ''}
-        />
-      )}
+      </div>
     </div>
   )
 }
 
-function applyJourneyPayload(
-  queryClient: ReturnType<typeof useQueryClient>,
-  payload: CandidatePortalJourneyResponse,
-) {
-  queryClient.setQueryData(JOURNEY_QUERY_KEY, payload)
+function CandidateJourneySurface({ viewModel }: { viewModel: JourneyViewModel }) {
+  return (
+    <div className="candidate-portal">
+      <style>{MESSENGER_SURFACE_STYLES}</style>
+      <div className="candidate-portal__shell">
+        <section className="candidate-portal__hero glass glass--elevated">
+          <div className="candidate-portal__eyebrow">Candidate Messaging</div>
+          <div className="candidate-portal__summary-tags">
+            <span className="candidate-portal__summary-tag">{viewModel.badge}</span>
+            {viewModel.highlights.map((item) => (
+              <span key={item} className="candidate-portal__summary-tag">{item}</span>
+            ))}
+          </div>
+          <h1 className="candidate-portal__title">{viewModel.title}</h1>
+          <p className="candidate-portal__subtitle">{viewModel.subtitle}</p>
+          <div className="candidate-portal__summary-grid">
+            <article className="candidate-portal__summary-card candidate-portal__summary-card--company">
+              <div className="candidate-portal__summary-label">Кандидат</div>
+              <div className="candidate-portal__summary-value">{viewModel.candidateName}</div>
+              <div className="candidate-portal__summary-meta">{viewModel.city}</div>
+            </article>
+            <article className="candidate-portal__summary-card">
+              <div className="candidate-portal__summary-label">Вакансия</div>
+              <div className="candidate-portal__summary-value">{viewModel.vacancy}</div>
+              <div className="candidate-portal__summary-meta">{viewModel.company}</div>
+            </article>
+            <article className="candidate-portal__summary-card">
+              <div className="candidate-portal__summary-label">Текущий этап</div>
+              <div className="candidate-portal__summary-value">{viewModel.currentStepLabel}</div>
+              <div className="candidate-portal__summary-meta">{viewModel.currentStatusLabel}</div>
+            </article>
+            <article className="candidate-portal__summary-card">
+              <div className="candidate-portal__summary-label">Активный канал</div>
+              <div className="candidate-portal__summary-value">{viewModel.currentChannel}</div>
+              <div className="candidate-portal__summary-meta">{viewModel.nextUpdate}</div>
+            </article>
+          </div>
+        </section>
+
+        <div className="candidate-portal__messenger-grid">
+          <div className="candidate-portal__section-stack">
+            <article className="candidate-portal__messenger-card candidate-portal__messenger-card--accent">
+              <div className="candidate-portal__card-head">
+                <span className="candidate-portal__summary-label">Что происходит дальше</span>
+                <strong>{viewModel.currentStepLabel}</strong>
+              </div>
+              <p className="candidate-portal__card-copy">{viewModel.nextAction}</p>
+              <ul className="candidate-portal__messenger-note-list">
+                {viewModel.notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </article>
+
+            <article className="candidate-portal__card glass glass--elevated">
+              <div className="candidate-portal__card-head">
+                <span className="candidate-portal__summary-label">Этапы</span>
+                <strong>CRM ↔ Messenger</strong>
+              </div>
+              <div className="candidate-portal__messenger-steps">
+                {viewModel.steps.map((step) => (
+                  <div key={step.key} className="candidate-portal__step" data-state={step.status}>
+                    <div className="candidate-portal__summary-label">{step.status === 'completed' ? 'Завершено' : step.status === 'in_progress' ? 'Текущий этап' : 'Далее'}</div>
+                    <div className="candidate-portal__step-label">{step.label}</div>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="candidate-portal__card">
+              <div className="candidate-portal__card-head">
+                <span className="candidate-portal__summary-label">Обновления</span>
+                <strong>Сигналы для кандидата</strong>
+              </div>
+              <div className="candidate-portal__section-stack">
+                {viewModel.alerts.map((alert) => (
+                  <div key={`${alert.level}-${alert.title}`} className="candidate-portal__alert-card" data-level={alert.level}>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.body}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="candidate-portal__card glass glass--elevated">
+              <div className="candidate-portal__card-head">
+                <span className="candidate-portal__summary-label">История пути</span>
+                <strong>Что уже произошло</strong>
+              </div>
+              <div className="candidate-portal__section-stack">
+                {viewModel.history.length > 0 ? viewModel.history.map((item, index) => (
+                  <div key={`${item.kind}-${item.title}-${index}`} className="candidate-portal__messenger-card">
+                    <div className="candidate-portal__card-head">
+                      <span className="candidate-portal__summary-label">{item.createdAt}</span>
+                      {item.statusLabel ? <strong>{item.statusLabel}</strong> : null}
+                    </div>
+                    <strong>{item.title}</strong>
+                    <p className="candidate-portal__card-copy">{item.body}</p>
+                  </div>
+                )) : (
+                  <p className="candidate-portal__helper">История обновится автоматически, как только появятся новые действия по вашему этапу.</p>
+                )}
+              </div>
+            </article>
+          </div>
+
+          <aside className="candidate-portal__section-stack">
+            <article className="candidate-portal__card">
+              <div className="candidate-portal__card-head">
+                <span className="candidate-portal__summary-label">Продолжить в мессенджере</span>
+                <strong>MAX и Telegram</strong>
+              </div>
+              <div className="candidate-portal__messenger-channels">
+                {viewModel.channels.map((channel) => (
+                  <div
+                    key={channel.channel}
+                    className={`candidate-portal__messenger-channel ${channel.enabled ? '' : 'is-disabled'}`}
+                  >
+                    <div className="candidate-portal__messenger-channel-head">
+                      <div>
+                        <div className="candidate-portal__summary-label">{channel.label}</div>
+                        <strong>{channel.description}</strong>
+                      </div>
+                      <span className={`candidate-portal__messenger-status ${channel.enabled ? 'is-ready' : 'is-blocked'}`}>
+                        {channel.enabled ? 'Готово' : 'Недоступно'}
+                      </span>
+                    </div>
+                    {channel.reason ? <p className="candidate-portal__helper">{channel.reason}</p> : null}
+                    {channel.requiresBotStart ? (
+                      <p className="candidate-portal__helper">Если бот ещё не активирован, сначала откройте диалог в мессенджере.</p>
+                    ) : null}
+                    <div className="candidate-portal__actions">
+                      {channel.launchUrl ? (
+                        <a
+                          className={`ui-btn ${channel.enabled ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                          href={channel.launchUrl}
+                          aria-disabled={!channel.enabled}
+                          onClick={(event) => {
+                            if (!channel.enabled) event.preventDefault()
+                          }}
+                        >
+                          Открыть {channel.label}
+                        </a>
+                      ) : (
+                        <button type="button" className="ui-btn ui-btn--ghost" disabled>
+                          Ссылка не готова
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            {viewModel.browserFallback ? (
+              <article className="candidate-portal__resource-card">
+                <strong>Резервный вход в браузере</strong>
+                <p>{viewModel.browserFallback.description}</p>
+                {viewModel.browserFallback.reason ? (
+                  <p className="candidate-portal__helper">{viewModel.browserFallback.reason}</p>
+                ) : null}
+                <div className="candidate-portal__actions">
+                  {viewModel.browserFallback.launchUrl ? (
+                    <a
+                      className={`ui-btn ${viewModel.browserFallback.enabled ? 'ui-btn--ghost' : 'ui-btn--ghost'}`}
+                      href={viewModel.browserFallback.launchUrl}
+                      aria-disabled={!viewModel.browserFallback.enabled}
+                      onClick={(event) => {
+                        if (!viewModel.browserFallback?.enabled) event.preventDefault()
+                      }}
+                    >
+                      Открыть в браузере
+                    </a>
+                  ) : (
+                    <button type="button" className="ui-btn ui-btn--ghost" disabled>
+                      Браузерный вход не готов
+                    </button>
+                  )}
+                </div>
+              </article>
+            ) : null}
+
+            <article className="candidate-portal__resource-card">
+              <strong>Как это работает с Telegram</strong>
+              <p>
+                Telegram использует тот же контур, что и MAX: кандидат получает Test 1, завершает его в чате, CRM сохраняет профиль и результаты,
+                а назначение слота и обратная связь отправляются через тот же outbox в том же канале общения.
+              </p>
+            </article>
+          </aside>
+        </div>
+      </div>
+    </div>
+  )
 }
 
-export function CandidateJourneyPage() {
-  const queryClient = useQueryClient()
+function CandidateJourneyLivePage() {
   const journeyQuery = useQuery<CandidatePortalJourneyResponse>({
     queryKey: JOURNEY_QUERY_KEY,
     queryFn: () => fetchCandidatePortalJourney(),
@@ -179,34 +790,73 @@ export function CandidateJourneyPage() {
     refetchOnReconnect: false,
   })
 
-  const payload = journeyQuery.data
-  const currentStep = payload?.journey.current_step
-  const activeSlot = payload?.journey.slots.active
-  const availableSlots = payload?.journey.slots.available || []
-
-  const [activeTab, setActiveTab] = useState<CandidateCabinetTab>('home')
-  const [profileForm, setProfileForm] = useState({
-    fio: '',
-    phone: '',
-    city_id: '',
-  })
-  const [screeningAnswers, setScreeningAnswers] = useState<Record<string, string>>({})
-  const [messageText, setMessageText] = useState('')
-  const [localError, setLocalError] = useState<string | null>(null)
-  const [pendingSlotId, setPendingSlotId] = useState<number | null>(null)
-  const [pendingChannel, setPendingChannel] = useState<CandidateEntryChannel | null>(null)
-
   useEffect(() => {
-    if (!payload) return
-    setProfileForm({
-      fio: payload.journey.profile.fio || '',
-      phone: payload.journey.profile.phone || '',
-      city_id: payload.journey.profile.city_id ? String(payload.journey.profile.city_id) : '',
-    })
-    setScreeningAnswers(payload.journey.screening.draft_answers || {})
-    persistCandidatePortalEntryTokenFromUrl(payload.candidate.entry_url)
-  }, [payload])
+    if (!journeyQuery.data) return
+    persistCandidatePortalEntryTokenFromUrl(journeyQuery.data.candidate.entry_url)
+  }, [journeyQuery.data])
 
+  if (journeyQuery.isLoading) {
+    return (
+      <CandidateJourneyStatusScreen
+        title="Подтягиваю состояние кандидата"
+        subtitle="Проверяю этап подбора и доступные мессенджеры."
+        recoveryHref="/candidate/start"
+      />
+    )
+  }
+
+  if (journeyQuery.isError || !journeyQuery.data) {
+    const info = parseCandidatePortalError(journeyQuery.error)
+    const entryToken = readCandidatePortalEntryToken()
+    const recoveryHref = entryToken
+      ? `/candidate/start?entry=${encodeURIComponent(entryToken)}`
+      : '/candidate/start'
+
+    return (
+      <CandidateJourneyStatusScreen
+        title={info?.state === 'needs_new_link' ? 'Нужно открыть новую ссылку' : 'Не удалось восстановить путь кандидата'}
+        subtitle={info?.message || 'Текущий вход недоступен. Вернитесь на старт и продолжите через MAX или Telegram.'}
+        recoveryHref={recoveryHref}
+      />
+    )
+  }
+
+  return <CandidateJourneySurface viewModel={createLiveJourneyViewModel(journeyQuery.data)} />
+}
+
+function CandidateJourneyPreviewPage() {
+  const [scenario, setScenario] = useState<PreviewScenarioKey>(readPreviewScenario())
+  const viewModel = useMemo(() => createPreviewJourneyViewModel(scenario), [scenario])
+
+  return (
+    <>
+      <CandidateJourneySurface viewModel={viewModel} />
+      <div
+        style={{
+          position: 'fixed',
+          right: 16,
+          bottom: 16,
+          display: 'flex',
+          gap: 8,
+          flexWrap: 'wrap',
+          zIndex: 20,
+        }}
+      >
+        <button type="button" className={`ui-btn ui-btn--sm ${scenario === 'waiting' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setScenario('waiting')}>
+          Test 1
+        </button>
+        <button type="button" className={`ui-btn ui-btn--sm ${scenario === 'scheduled' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setScenario('scheduled')}>
+          Слот назначен
+        </button>
+        <button type="button" className={`ui-btn ui-btn--sm ${scenario === 'action_needed' ? 'ui-btn--primary' : 'ui-btn--ghost'}`} onClick={() => setScenario('action_needed')}>
+          Обратная связь
+        </button>
+      </div>
+    </>
+  )
+}
+
+export function CandidateJourneyPage() {
   useEffect(() => {
     markCandidateWebAppReady()
     void ensureCandidateWebAppBridge().finally(() => {
@@ -214,972 +864,9 @@ export function CandidateJourneyPage() {
     })
   }, [])
 
-  useEffect(() => {
-    if (!payload?.dashboard?.primary_action?.target) return
-    if (activeTab !== 'home') return
-    setActiveTab('home')
-  }, [activeTab, payload?.dashboard?.primary_action?.target])
-
-  const setMutationError = (error: unknown) => {
-    setLocalError(error instanceof Error ? error.message : 'Не удалось выполнить действие.')
+  if (readPreviewMode()) {
+    return <CandidateJourneyPreviewPage />
   }
 
-  const profileMutation = useMutation({
-    mutationFn: saveCandidatePortalProfile,
-    onSuccess: (nextPayload) => {
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('workflow')
-    },
-    onError: setMutationError,
-  })
-
-  const saveDraftMutation = useMutation({
-    mutationFn: saveCandidatePortalScreeningDraft,
-    onSuccess: (nextPayload) => {
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('tests')
-    },
-    onError: setMutationError,
-  })
-
-  const completeScreeningMutation = useMutation({
-    mutationFn: completeCandidatePortalScreening,
-    onSuccess: (nextPayload) => {
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('schedule')
-    },
-    onError: setMutationError,
-  })
-
-  const reserveSlotMutation = useMutation({
-    mutationFn: reserveCandidatePortalSlot,
-    onSuccess: (nextPayload) => {
-      setPendingSlotId(null)
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('schedule')
-    },
-    onError: (error) => {
-      setPendingSlotId(null)
-      setMutationError(error)
-    },
-  })
-
-  const confirmSlotMutation = useMutation({
-    mutationFn: confirmCandidatePortalSlot,
-    onSuccess: (nextPayload) => {
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('feedback')
-    },
-    onError: setMutationError,
-  })
-
-  const cancelSlotMutation = useMutation({
-    mutationFn: cancelCandidatePortalSlot,
-    onSuccess: (nextPayload) => {
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('schedule')
-    },
-    onError: setMutationError,
-  })
-
-  const rescheduleSlotMutation = useMutation({
-    mutationFn: rescheduleCandidatePortalSlot,
-    onSuccess: (nextPayload) => {
-      setPendingSlotId(null)
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('schedule')
-    },
-    onError: (error) => {
-      setPendingSlotId(null)
-      setMutationError(error)
-    },
-  })
-
-  const sendMessageMutation = useMutation({
-    mutationFn: sendCandidatePortalMessage,
-    onSuccess: (nextPayload) => {
-      setMessageText('')
-      setLocalError(null)
-      applyJourneyPayload(queryClient, nextPayload)
-      setActiveTab('messages')
-    },
-    onError: setMutationError,
-  })
-
-  const switchChannelMutation = useMutation({
-    mutationFn: switchCandidateEntryChannel,
-    onSuccess: (_, channel) => {
-      setLocalError(null)
-      queryClient.setQueryData(
-        JOURNEY_QUERY_KEY,
-        (current: CandidatePortalJourneyResponse | undefined) =>
-          current
-            ? {
-                ...current,
-                journey: {
-                  ...current.journey,
-                  entry_channel: channel,
-                  last_entry_channel: channel,
-                },
-              }
-            : current,
-      )
-    },
-    onError: setMutationError,
-  })
-
-  const logoutMutation = useMutation({
-    mutationFn: logoutCandidatePortalSession,
-    onSuccess: async () => {
-      clearCandidatePortalAccessToken()
-      queryClient.removeQueries({ queryKey: JOURNEY_QUERY_KEY })
-      window.location.reload()
-    },
-  })
-
-  const screeningQuestions = payload?.journey.screening.questions || []
-  const screeningCompleted = Boolean(payload?.journey.screening.completed)
-  const messages = payload?.journey.messages || []
-  const companyName = payload?.company?.name || 'SMART SERVICE'
-  const companySummary =
-    payload?.company?.summary
-    || `Вы проходите отбор в ${companyName}. В кабинете доступны анкета, текущий этап и запись на следующий шаг.`
-  const companyHighlights =
-    payload?.company?.highlights?.length
-      ? payload.company.highlights
-      : [
-          'Анкета и прогресс сохраняются автоматически',
-          'Статус и следующий шаг видны в одном месте',
-          'Запись на собеседование доступна из кабинета',
-        ]
-  const faqItems = payload?.resources?.faq || payload?.company?.faq || []
-  const resourceDocuments = payload?.resources?.documents || payload?.company?.documents || []
-  const contactItems = payload?.resources?.contacts || payload?.company?.contacts || []
-  const feedbackItems = payload?.feedback?.items || []
-  const testsItems = payload?.tests?.items || []
-  const inboxMeta = payload?.journey.inbox || null
-  const latestInboxMessage = inboxMeta?.latest_message || null
-  const cabinetAlerts = payload?.dashboard?.alerts || []
-  const primaryAction = payload?.dashboard?.primary_action || null
-  const dashboardUpcoming = payload?.dashboard?.upcoming_items || []
-  const channelOptions = payload?.journey.channel_options || {}
-
-  const canReschedule = Boolean(activeSlot) && availableSlots.length > 0
-  const canConfirm = isSlotConfirmable(activeSlot)
-
-  const statusSummary = useMemo(() => {
-    if (!payload) return ''
-    if (activeSlot) {
-      return slotStatusLabel(activeSlot.status)
-    }
-    if (payload.candidate.status_label) return payload.candidate.status_label
-    return 'В обработке'
-  }, [activeSlot, payload])
-
-  const vacancyLabel = payload?.candidate.vacancy_label || 'Вакансия уточняется'
-  const vacancyMeta =
-    payload?.candidate.vacancy_position || payload?.candidate.vacancy_reference || 'Информация о вакансии подтянется из CRM'
-  const nextStepLabel = payload?.journey.next_step_at
-    ? formatDateTime(payload.journey.next_step_at, payload.journey.next_step_timezone)
-    : 'Следующий шаг пока не назначен'
-  const nextStepMeta = payload?.journey.next_step_timezone
-    ? `Часовой пояс: ${payload.journey.next_step_timezone}`
-    : 'Данные обновляются автоматически'
-  const portalError = parseCandidatePortalError(journeyQuery.error)
-  const recoveryEntryToken = readCandidatePortalEntryToken()
-  const recoveryEntryUrl = recoveryEntryToken
-    ? `/candidate/start?entry=${encodeURIComponent(recoveryEntryToken)}`
-    : '/candidate/start'
-
-  const openPrimaryActionTarget = () => {
-    setActiveTab(resolveCabinetTab(primaryAction?.target))
-  }
-
-  const handleOpenChannel = async (channel: CandidateEntryChannel) => {
-    const option = channelOptions[channel]
-    const launchUrl = String(option?.launch_url || '').trim()
-    if (!launchUrl) {
-      setLocalError(option?.reason_if_blocked || 'Новый канал пока недоступен. Продолжайте в веб-кабинете.')
-      return
-    }
-    setLocalError(null)
-    setPendingChannel(channel)
-    try {
-      const result = await switchChannelMutation.mutateAsync(channel)
-      const nextUrl = String(result?.launch?.url || launchUrl).trim()
-      if (!nextUrl) {
-        setLocalError('Не удалось открыть новый канал. Попробуйте ещё раз или продолжайте в веб-кабинете.')
-        return
-      }
-      navigateToCandidateLaunch(nextUrl)
-    } catch {
-      // Error is normalized in onError.
-    } finally {
-      setPendingChannel(null)
-    }
-  }
-
-  const renderProfileForm = () => (
-    <section className="glass glass--elevated candidate-portal__card">
-      <div className="candidate-portal__card-head">
-        <h2 className="candidate-portal__card-title">Профиль кандидата</h2>
-        <p className="candidate-portal__card-copy">Сохраняем контакты, чтобы кабинет и переписка оставались доступными без привязки к одному мессенджеру.</p>
-      </div>
-      <form
-        className="candidate-portal__form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          setLocalError(null)
-          profileMutation.mutate({
-            fio: profileForm.fio,
-            phone: profileForm.phone,
-            city_id: Number(profileForm.city_id),
-          })
-        }}
-      >
-        <div className="candidate-portal__form-grid">
-          <div className="candidate-portal__field">
-            <label className="candidate-portal__label">ФИО</label>
-            <input
-              className="candidate-portal__input"
-              value={profileForm.fio}
-              onChange={(event) => setProfileForm((current) => ({ ...current, fio: event.target.value }))}
-              placeholder="Иванов Иван Иванович"
-            />
-          </div>
-          <div className="candidate-portal__field">
-            <label className="candidate-portal__label">Телефон</label>
-            <input
-              className="candidate-portal__input"
-              value={profileForm.phone}
-              onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))}
-              placeholder="+7 999 123-45-67"
-            />
-          </div>
-          <div className="candidate-portal__field">
-            <label className="candidate-portal__label">Город</label>
-            <select
-              className="candidate-portal__select"
-              value={profileForm.city_id}
-              onChange={(event) => setProfileForm((current) => ({ ...current, city_id: event.target.value }))}
-            >
-              <option value="">Выберите город</option>
-              {payload?.journey.cities.map((city) => (
-                <option key={city.id} value={city.id}>{city.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="candidate-portal__actions">
-          <button className="ui-btn ui-btn--primary" type="submit" disabled={profileMutation.isPending}>
-            {profileMutation.isPending ? 'Сохраняю…' : 'Сохранить и продолжить'}
-          </button>
-        </div>
-      </form>
-    </section>
-  )
-
-  const renderScreeningForm = () => (
-    <section className="glass glass--elevated candidate-portal__card">
-      <div className="candidate-portal__card-head">
-        <h2 className="candidate-portal__card-title">Короткая анкета</h2>
-        <p className="candidate-portal__card-copy">Ответы сохраняются как черновик. Можно вернуться позже и продолжить с того же места.</p>
-      </div>
-      <div className="candidate-portal__form">
-        {screeningQuestions.map((question) => (
-          <ScreeningQuestion
-            key={question.id}
-            question={question}
-            value={screeningAnswers[question.id] || ''}
-            onChange={(nextValue) => setScreeningAnswers((current) => ({ ...current, [question.id]: nextValue }))}
-          />
-        ))}
-        <div className="candidate-portal__actions">
-          <button
-            className="ui-btn ui-btn--ghost"
-            type="button"
-            onClick={() => {
-              setLocalError(null)
-              saveDraftMutation.mutate(screeningAnswers)
-            }}
-            disabled={saveDraftMutation.isPending}
-          >
-            {saveDraftMutation.isPending ? 'Сохраняю…' : 'Сохранить черновик'}
-          </button>
-          <button
-            className="ui-btn ui-btn--primary"
-            type="button"
-            onClick={() => {
-              setLocalError(null)
-              completeScreeningMutation.mutate(screeningAnswers)
-            }}
-            disabled={completeScreeningMutation.isPending}
-          >
-            {completeScreeningMutation.isPending ? 'Отправляю…' : 'Завершить анкету'}
-          </button>
-        </div>
-      </div>
-    </section>
-  )
-
-  const renderSchedulePanel = () => (
-    <section className="glass glass--elevated candidate-portal__card">
-      <div className="candidate-portal__card-head">
-        <h2 className="candidate-portal__card-title">Собеседования и расписание</h2>
-        <p className="candidate-portal__card-copy">
-          {activeSlot
-            ? 'Вы можете подтвердить встречу, отменить её или сразу запросить перенос на другой слот.'
-            : 'Когда слот появится, кабинет покажет его здесь. Запись на собеседование всегда остается внутри кабинета.'}
-        </p>
-      </div>
-
-      {currentStep === 'slot_selection' ? (
-        <div className="candidate-portal__slots">
-          {availableSlots.length === 0 ? (
-            <p className="candidate-portal__empty">Свободных слотов пока нет. Мы сохранили ваш прогресс и покажем новый слот, как только он появится.</p>
-          ) : (
-            availableSlots.map((slot) => (
-              <SlotCard
-                key={slot.id}
-                slot={slot}
-                actionLabel="Выбрать слот"
-                busy={reserveSlotMutation.isPending && pendingSlotId === slot.id}
-                onAction={() => {
-                  setPendingSlotId(slot.id)
-                  setLocalError(null)
-                  reserveSlotMutation.mutate(slot.id)
-                }}
-              />
-            ))
-          )}
-        </div>
-      ) : null}
-
-      {activeSlot ? (
-        <div className="candidate-portal__status-card">
-          <strong>{formatDateTime(activeSlot.start_utc, activeSlot.tz_name || activeSlot.candidate_tz)}</strong>
-          <div className="candidate-portal__status-meta">
-            <span className="candidate-portal__chip">{slotStatusLabel(activeSlot.status)}</span>
-            {activeSlot.city_name ? <span className="candidate-portal__chip">{activeSlot.city_name}</span> : null}
-            {activeSlot.recruiter_name ? <span className="candidate-portal__chip">Рекрутер: {activeSlot.recruiter_name}</span> : null}
-          </div>
-          <div className="candidate-portal__status-actions">
-            {canConfirm ? (
-              <button
-                className="ui-btn ui-btn--primary"
-                type="button"
-                onClick={() => {
-                  setLocalError(null)
-                  confirmSlotMutation.mutate()
-                }}
-                disabled={confirmSlotMutation.isPending}
-              >
-                {confirmSlotMutation.isPending ? 'Подтверждаю…' : 'Подтвердить участие'}
-              </button>
-            ) : null}
-            {!isSlotAlreadyConfirmed(activeSlot) ? (
-              <button
-                className="ui-btn ui-btn--ghost"
-                type="button"
-                onClick={() => {
-                  setLocalError(null)
-                  cancelSlotMutation.mutate()
-                }}
-                disabled={cancelSlotMutation.isPending}
-              >
-                {cancelSlotMutation.isPending ? 'Отменяю…' : 'Отменить'}
-              </button>
-            ) : null}
-          </div>
-          {canReschedule ? (
-            <div className="candidate-portal__slots">
-              <p className="candidate-portal__helper">Нужно перенести? Выберите новый слот ниже.</p>
-              {availableSlots.map((slot) => (
-                <SlotCard
-                  key={slot.id}
-                  slot={slot}
-                  actionLabel="Перенести сюда"
-                  busy={rescheduleSlotMutation.isPending && pendingSlotId === slot.id}
-                  onAction={() => {
-                    setPendingSlotId(slot.id)
-                    setLocalError(null)
-                    rescheduleSlotMutation.mutate(slot.id)
-                  }}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : currentStep !== 'slot_selection' ? (
-        <div className="candidate-portal__status-card">
-          <strong>{screeningCompleted ? 'Анкета завершена' : 'Анкета в процессе'}</strong>
-          <div className="candidate-portal__status-meta">
-            {payload?.candidate.status_label ? (
-              <span className="candidate-portal__chip">{payload.candidate.status_label}</span>
-            ) : null}
-          </div>
-          <p className="candidate-portal__empty">
-            {screeningCompleted
-              ? availableSlots.length > 0
-                ? 'Свободные слоты уже доступны. Перейдите к выбору времени и завершите запись.'
-                : 'Слотов пока нет. Мы сохранили ваш прогресс и вернем вас в этот же статус.'
-              : 'Сначала завершите профиль и анкету, чтобы перейти к выбору слота.'}
-          </p>
-        </div>
-      ) : null}
-    </section>
-  )
-
-  const renderMessagesPanel = () => (
-    <section className="glass glass--elevated candidate-portal__card">
-      <div className="candidate-portal__card-head">
-        <h2 className="candidate-portal__card-title">Сообщения</h2>
-        <p className="candidate-portal__card-copy">
-          Это основной inbox кабинета. Ответы рекрутера появляются здесь вне зависимости от того, каким каналом было отправлено уведомление.
-        </p>
-      </div>
-      <div className="candidate-portal__status-meta">
-        <span className="candidate-portal__chip">Диалог: {inboxMeta?.conversation_id || 'candidate inbox'}</span>
-        {(inboxMeta?.available_channels || ['web']).map((channel) => (
-          <span key={channel} className="candidate-portal__chip">
-            {channel === 'web' ? 'Web cabinet' : channel.toUpperCase()}
-          </span>
-        ))}
-      </div>
-      <div className="candidate-portal__messages">
-        {messages.length === 0 ? (
-          <p className="candidate-portal__empty">Пока сообщений нет.</p>
-        ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className="candidate-portal__message"
-              data-direction={message.direction}
-            >
-              <div className="candidate-portal__message-head">
-                <strong>{message.author_label || (message.direction === 'outbound' ? 'Рекрутер' : 'Кандидат')}</strong>
-                <span className="candidate-portal__message-channel">
-                  {message.origin_channel || message.channel || 'web'}
-                </span>
-              </div>
-              <div>{message.text || 'Сообщение без текста'}</div>
-              <div className="candidate-portal__message-meta">
-                {message.created_at ? formatDateTime(message.created_at) : 'Время уточняется'}
-                {message.delivery_state ? ` • ${message.delivery_state}` : ''}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="candidate-portal__field">
-        <label className="candidate-portal__label">Новое сообщение</label>
-        <textarea
-          className="candidate-portal__textarea"
-          value={messageText}
-          onChange={(event) => setMessageText(event.target.value)}
-          placeholder="Например: мне нужен перенос на вечерний слот"
-        />
-      </div>
-      <div className="candidate-portal__actions">
-        <button
-          className="ui-btn ui-btn--primary"
-          type="button"
-          disabled={sendMessageMutation.isPending || !messageText.trim()}
-          onClick={() => {
-            setLocalError(null)
-            sendMessageMutation.mutate(messageText)
-          }}
-        >
-          {sendMessageMutation.isPending ? 'Отправляю…' : 'Отправить рекрутеру'}
-        </button>
-      </div>
-    </section>
-  )
-
-  const renderCompanyPanel = () => (
-    <section className="candidate-portal__section-stack">
-      <section className="glass glass--elevated candidate-portal__card">
-        <div className="candidate-portal__card-head">
-          <h2 className="candidate-portal__card-title">О компании</h2>
-          <p className="candidate-portal__card-copy">{companySummary}</p>
-        </div>
-        <div className="candidate-portal__summary-tags">
-          {companyHighlights.map((highlight) => (
-            <span key={highlight} className="candidate-portal__summary-tag">{highlight}</span>
-          ))}
-        </div>
-      </section>
-
-      <section className="candidate-portal__split">
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">FAQ</h2>
-          </div>
-          <div className="candidate-portal__resource-list">
-            {faqItems.length === 0 ? (
-              <p className="candidate-portal__empty">Ответы и подсказки появятся здесь по мере движения по воронке.</p>
-            ) : (
-              faqItems.map((item) => (
-                <div key={item.question} className="candidate-portal__resource-card">
-                  <strong>{item.question}</strong>
-                  <p>{item.answer}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </article>
-
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Материалы и контакты</h2>
-          </div>
-          <div className="candidate-portal__resource-list">
-            {resourceDocuments.map((item) => (
-              <div key={item.key} className="candidate-portal__resource-card">
-                <strong>{item.title}</strong>
-                <p>{item.summary}</p>
-              </div>
-            ))}
-            {contactItems.map((item) => (
-              <div key={`${item.label}-${item.value}`} className="candidate-portal__resource-card">
-                <strong>{item.label}</strong>
-                <p>{item.value}</p>
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
-    </section>
-  )
-
-  const renderFeedbackPanel = () => (
-    <section className="candidate-portal__section-stack">
-      <section className="glass glass--elevated candidate-portal__card">
-        <div className="candidate-portal__card-head">
-          <h2 className="candidate-portal__card-title">Обратная связь и обновления</h2>
-          <p className="candidate-portal__card-copy">Здесь собраны системные статусы, сообщения рекрутера и последние итоги по вашему пути.</p>
-        </div>
-        <div className="candidate-portal__resource-list">
-          {feedbackItems.length === 0 ? (
-            <p className="candidate-portal__empty">Обновления появятся здесь, как только рекрутер или система зафиксируют следующий шаг.</p>
-          ) : (
-            feedbackItems.map((item, index) => (
-              <div key={`${item.kind || 'feedback'}-${item.title || index}`} className="candidate-portal__resource-card">
-                <div className="candidate-portal__message-head">
-                  <strong>{item.title || 'Обновление'}</strong>
-                  <span className="candidate-portal__message-channel">{item.author_role || 'system'}</span>
-                </div>
-                <p>{item.body || 'Детали появятся позже.'}</p>
-                {item.created_at ? (
-                  <div className="candidate-portal__message-meta">{formatDateTime(item.created_at)}</div>
-                ) : null}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="candidate-portal__split">
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Текущий статус</h2>
-            <p className="candidate-portal__card-copy">{payload?.journey.next_action}</p>
-          </div>
-          <div className="candidate-portal__status-meta">
-            {payload?.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
-            {payload?.journey.current_step_label ? <span className="candidate-portal__chip">{payload.journey.current_step_label}</span> : null}
-            {payload?.feedback?.last_feedback_sent_at ? (
-              <span className="candidate-portal__chip">
-                Последнее обновление: {formatDateTime(payload.feedback.last_feedback_sent_at)}
-              </span>
-            ) : null}
-          </div>
-        </article>
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Следующий шаг</h2>
-          </div>
-          <div className="candidate-portal__summary-value">{nextStepLabel}</div>
-          <div className="candidate-portal__summary-meta">{nextStepMeta}</div>
-        </article>
-      </section>
-    </section>
-  )
-
-  const renderWorkflowPanel = () => (
-    <div className="candidate-portal__grid">
-      <aside className="candidate-portal__steps">
-        <div className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Мой путь</h2>
-            <p className="candidate-portal__card-copy">Кабинет запоминает ваше место в процессе и не требует заново проходить уже завершённые этапы.</p>
-          </div>
-          <div className="candidate-portal__steps-list">
-            {payload?.journey.steps.map((step) => (
-              <div key={step.key} className="candidate-portal__step" data-state={step.status}>
-                <small>{step.status === 'completed' ? 'Готово' : step.status === 'in_progress' ? 'Сейчас' : 'Далее'}</small>
-                <span className="candidate-portal__step-label">{step.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Контакты и вход</h2>
-          </div>
-          <div className="candidate-portal__section-stack">
-            <div className="candidate-portal__chip">{payload?.candidate.phone || 'Телефон не указан'}</div>
-            <div className="candidate-portal__chip">{payload?.candidate.city || 'Город не указан'}</div>
-            <div className="candidate-portal__chip">Вход: {payload?.journey.entry_channel || 'web'}</div>
-          </div>
-          <div className="candidate-portal__actions">
-            <button
-              type="button"
-              className="ui-btn ui-btn--ghost"
-              onClick={() => logoutMutation.mutate()}
-              disabled={logoutMutation.isPending}
-            >
-              {logoutMutation.isPending ? 'Закрываю…' : 'Выйти'}
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <main className="candidate-portal__section-stack">
-        {currentStep === 'profile' ? renderProfileForm() : null}
-        {currentStep === 'screening' ? renderScreeningForm() : null}
-        {currentStep === 'slot_selection' ? renderSchedulePanel() : null}
-        {currentStep === 'status' ? renderSchedulePanel() : null}
-      </main>
-    </div>
-  )
-
-  const renderTestsPanel = () => (
-    <section className="candidate-portal__section-stack">
-      <section className="candidate-portal__summary-grid" aria-label="Тесты и анкеты">
-        {testsItems.map((item) => (
-          <article key={item.key} className="glass candidate-portal__summary-card">
-            <div className="candidate-portal__summary-label">{item.title}</div>
-            <div className="candidate-portal__summary-value">{item.status_label || 'Статус уточняется'}</div>
-            <div className="candidate-portal__summary-meta">{item.summary || 'Данные обновляются автоматически.'}</div>
-            <div className="candidate-portal__summary-tags">
-              {item.question_count ? <span className="candidate-portal__summary-tag">Вопросов: {item.question_count}</span> : null}
-              {item.final_score != null ? <span className="candidate-portal__summary-tag">Скор: {item.final_score}</span> : null}
-              {item.completed_at ? <span className="candidate-portal__summary-tag">{formatDateTime(item.completed_at)}</span> : null}
-            </div>
-          </article>
-        ))}
-      </section>
-      {currentStep === 'screening' ? renderScreeningForm() : null}
-    </section>
-  )
-
-  const renderHomePanel = () => (
-    <section className="candidate-portal__section-stack">
-      <section className="candidate-portal__dashboard-grid" aria-label="Главная кабинета кандидата">
-        <article className="glass glass--elevated candidate-portal__dashboard-primary">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Что нужно сделать сейчас</h2>
-            <p className="candidate-portal__card-copy">{primaryAction?.description || payload?.journey.next_action}</p>
-          </div>
-          <div className="candidate-portal__summary-value">{primaryAction?.label || 'Открыть следующий шаг'}</div>
-          <div className="candidate-portal__actions">
-            <button type="button" className="ui-btn ui-btn--primary" onClick={openPrimaryActionTarget}>
-              {primaryAction?.label || 'Продолжить'}
-            </button>
-            <button type="button" className="ui-btn ui-btn--ghost" onClick={() => setActiveTab('messages')}>
-              Открыть inbox
-            </button>
-          </div>
-        </article>
-
-        <article className="glass candidate-portal__dashboard-card">
-          <div className="candidate-portal__summary-label">Где я нахожусь</div>
-          <div className="candidate-portal__summary-value">{payload?.journey.current_step_label}</div>
-          <div className="candidate-portal__summary-meta">{statusSummary}</div>
-        </article>
-
-        <article className="glass candidate-portal__dashboard-card">
-          <div className="candidate-portal__summary-label">Следующее событие</div>
-          <div className="candidate-portal__summary-value">{nextStepLabel}</div>
-          <div className="candidate-portal__summary-meta">{nextStepMeta}</div>
-        </article>
-
-        <article className="glass candidate-portal__dashboard-card">
-          <div className="candidate-portal__summary-label">Последнее сообщение</div>
-          <div className="candidate-portal__summary-value">
-            {latestInboxMessage?.author_label || 'Переписка ещё не началась'}
-          </div>
-          <div className="candidate-portal__summary-meta">
-            {latestInboxMessage?.text || 'Рекрутер сможет ответить вам прямо в этом кабинете.'}
-          </div>
-        </article>
-      </section>
-
-      {cabinetAlerts.length > 0 ? (
-        <section className="candidate-portal__alerts">
-          {cabinetAlerts.map((alert, index) => (
-            <article key={`${alert.title || 'alert'}-${index}`} className="glass candidate-portal__alert-card" data-level={alert.level || 'info'}>
-              <strong>{alert.title}</strong>
-              <p>{alert.body}</p>
-            </article>
-          ))}
-        </section>
-      ) : null}
-
-      <section className="candidate-portal__split">
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Запланированное</h2>
-            <p className="candidate-portal__card-copy">Все важные точки процесса видны в одном месте.</p>
-          </div>
-          <div className="candidate-portal__resource-list">
-            {dashboardUpcoming.length === 0 ? (
-              <p className="candidate-portal__empty">Следующее событие пока не назначено. Мы обновим кабинет автоматически.</p>
-            ) : (
-              dashboardUpcoming.map((item, index) => (
-                <div key={`${item.kind || 'item'}-${index}`} className="candidate-portal__resource-card">
-                  <strong>{item.title || 'Событие'}</strong>
-                  <p>{item.scheduled_at ? formatDateTime(item.scheduled_at, item.timezone) : 'Время уточняется'}</p>
-                  {item.state ? <span className="candidate-portal__chip">{item.state}</span> : null}
-                </div>
-              ))
-            )}
-          </div>
-        </article>
-
-        <article className="glass candidate-portal__card">
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Последние обновления</h2>
-            <p className="candidate-portal__card-copy">Важные изменения и решения публикуются прямо в кабинете.</p>
-          </div>
-          <div className="candidate-portal__resource-list">
-            {feedbackItems.length === 0 ? (
-              <p className="candidate-portal__empty">Обновления появятся здесь по мере прохождения отбора.</p>
-            ) : (
-              feedbackItems.slice(0, 3).map((item, index) => (
-                <div key={`${item.kind || 'update'}-${index}`} className="candidate-portal__resource-card">
-                  <strong>{item.title || 'Обновление'}</strong>
-                  <p>{item.body || 'Подробности появятся позже.'}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </article>
-      </section>
-    </section>
-  )
-
-  if (journeyQuery.isLoading) {
-    return (
-      <div className="candidate-portal">
-        <div className="candidate-portal__loader">
-          <div className="glass glass--elevated candidate-portal__card">
-            <div className="candidate-portal__eyebrow">Candidate Cabinet</div>
-            <h1 className="candidate-portal__title">Загружаю ваш кабинет</h1>
-            <p className="candidate-portal__subtitle">Подтягиваю прогресс, сообщения, расписание и материалы компании.</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (journeyQuery.isError || !payload) {
-    const recoveryState = portalError?.state || (portalError?.status === 401 ? 'recoverable' : null)
-    const errorTitle =
-      recoveryState === 'blocked'
-        ? 'Доступ к кабинету недоступен'
-        : recoveryState === 'needs_new_link'
-          ? 'Продолжим через выбор канала'
-          : recoveryState === 'recoverable'
-            ? 'Восстанавливаю доступ'
-            : 'Не удалось восстановить кабинет'
-    const errorSubtitle =
-      recoveryState === 'blocked'
-        ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
-        : recoveryState === 'needs_new_link'
-          ? 'Текущий вход устарел, поэтому безопасно вернёмся к выбору Web, MAX или Telegram.'
-          : 'Пробую вернуть вас в кабинет на этом устройстве без потери прогресса.'
-    return (
-      <div className="candidate-portal">
-        <div className="candidate-portal__loader">
-          <div className="glass glass--elevated candidate-portal__card">
-            <div className="candidate-portal__eyebrow">Candidate Cabinet</div>
-            <h1 className="candidate-portal__title">{errorTitle}</h1>
-            <p className="candidate-portal__subtitle">
-              {errorSubtitle}
-            </p>
-            {portalError?.message ? <p className="candidate-portal__error">{portalError.message}</p> : null}
-            <div className="candidate-portal__actions" style={{ justifyContent: 'center' }}>
-              <button className="ui-btn ui-btn--primary" onClick={() => journeyQuery.refetch()}>
-                Повторить
-              </button>
-              <a className="ui-btn ui-btn--ghost" href={recoveryEntryUrl}>
-                Вернуться к выбору способа входа
-              </a>
-            </div>
-            <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
-              {recoveryEntryToken
-                ? 'На этом устройстве сохранён безопасный вход, поэтому можно продолжить через выбор Web, MAX или Telegram без обращения к рекрутеру.'
-                : 'Если автоматическое восстановление не сработало, вернитесь на стартовую страницу и выберите удобный способ входа.'}
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="candidate-portal">
-      <div className="candidate-portal__shell">
-        <section className="glass glass--elevated candidate-portal__hero">
-          <div className="candidate-portal__split">
-            <div className="candidate-portal__section-stack">
-              <div className="candidate-portal__eyebrow">Candidate Cabinet</div>
-              <h1 className="candidate-portal__title">{payload.candidate.fio || 'Ваш кабинет кандидата'}</h1>
-              <p className="candidate-portal__subtitle">{payload.journey.next_action}</p>
-              <div className="candidate-portal__status-meta">
-                {payload.journey.current_step_label ? <span className="candidate-portal__chip">Этап: {payload.journey.current_step_label}</span> : null}
-                {payload.candidate.status_label ? <span className="candidate-portal__chip">{payload.candidate.status_label}</span> : null}
-                {payload.journey.entry_channel ? <span className="candidate-portal__chip">Вход: {payload.journey.entry_channel}</span> : null}
-                {statusSummary ? <span className="candidate-portal__chip">{statusSummary}</span> : null}
-              </div>
-            </div>
-            <div className="candidate-portal__section-stack">
-              <article className="candidate-portal__summary-card">
-                <span className="candidate-portal__summary-label">Что сейчас важно</span>
-                <strong className="candidate-portal__summary-value">{nextStepLabel}</strong>
-                <p className="candidate-portal__card-copy">{nextStepMeta}</p>
-              </article>
-              <div className="candidate-portal__summary-grid" aria-label="Ключевая сводка">
-                <article className="candidate-portal__summary-card">
-                  <span className="candidate-portal__summary-label">Компания</span>
-                  <strong className="candidate-portal__card-title">{companyName}</strong>
-                </article>
-                <article className="candidate-portal__summary-card">
-                  <span className="candidate-portal__summary-label">Собеседование</span>
-                  <strong className="candidate-portal__card-title">{statusSummary || 'Шаг готовится'}</strong>
-                </article>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="candidate-portal__summary-card" style={{ marginBottom: 20 }}>
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Кабинет работает как главный интерфейс кандидата</h2>
-            <p className="candidate-portal__card-copy">
-              Ссылки из MAX, Telegram или письма от рекрутера только открывают доступ. Весь прогресс, сообщения и запись на собеседование живут здесь.
-            </p>
-          </div>
-          <div className="candidate-portal__summary-tags" aria-label="Преимущества кабинета кандидата">
-            <span className="candidate-portal__summary-tag">Magic link + resume-cookie</span>
-            <span className="candidate-portal__summary-tag">Web inbox вместо привязки к одному мессенджеру</span>
-            <span className="candidate-portal__summary-tag">Следующий шаг и статус в одном месте</span>
-          </div>
-        </section>
-
-        <section className="candidate-portal__summary-card" style={{ marginBottom: 20 }}>
-          <div className="candidate-portal__card-head">
-            <h2 className="candidate-portal__card-title">Продолжить в другом канале</h2>
-            <p className="candidate-portal__card-copy">
-              Можно открыть тот же процесс в Web, MAX или Telegram. Прогресс, сообщения и запись на слот останутся общими.
-            </p>
-          </div>
-          <div className="candidate-portal__actions">
-            {(['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
-              const option = channelOptions[channel]
-              const label =
-                channel === 'web' ? 'Web cabinet' : channel === 'max' ? 'Открыть в MAX' : 'Открыть в Telegram'
-              return (
-                <button
-                  key={channel}
-                  type="button"
-                  className={`ui-btn ${channel === 'web' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
-                  disabled={!option?.enabled || Boolean(pendingChannel && pendingChannel !== channel)}
-                  onClick={() => {
-                    void handleOpenChannel(channel)
-                  }}
-                  title={option?.reason_if_blocked || undefined}
-                >
-                  {pendingChannel === channel ? 'Открываю…' : label}
-                </button>
-              )
-            })}
-          </div>
-          <div className="candidate-portal__summary-tags">
-            <span className="candidate-portal__summary-tag">
-              Текущий вход: {payload.journey.last_entry_channel || payload.journey.entry_channel || 'web'}
-            </span>
-            {(payload.journey.available_channels || []).map((channel) => (
-              <span key={channel} className="candidate-portal__summary-tag">
-                {channel === 'web' ? 'web ready' : `${channel} ready`}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <section className="candidate-portal__summary-grid" aria-label="Краткая сводка">
-          <article className="glass candidate-portal__summary-card">
-            <div className="candidate-portal__summary-label">Вакансия</div>
-            <div className="candidate-portal__summary-value">{vacancyLabel}</div>
-            <div className="candidate-portal__summary-meta">{vacancyMeta}</div>
-          </article>
-          <article className="glass candidate-portal__summary-card candidate-portal__summary-card--company">
-            <div className="candidate-portal__summary-label">Компания</div>
-            <div className="candidate-portal__summary-value">{companyName}</div>
-            <div className="candidate-portal__summary-meta">{companySummary}</div>
-            <div className="candidate-portal__summary-tags" aria-label="Преимущества кабинета">
-              {companyHighlights.map((highlight) => (
-                <span key={highlight} className="candidate-portal__summary-tag">
-                  {highlight}
-                </span>
-              ))}
-            </div>
-          </article>
-          <article className="glass candidate-portal__summary-card">
-            <div className="candidate-portal__summary-label">Текущий этап</div>
-            <div className="candidate-portal__summary-value">{payload.journey.current_step_label}</div>
-            <div className="candidate-portal__summary-meta">{payload.journey.next_action}</div>
-          </article>
-          <article className="glass candidate-portal__summary-card">
-            <div className="candidate-portal__summary-label">Следующий шаг</div>
-            <div className="candidate-portal__summary-value">{nextStepLabel}</div>
-            <div className="candidate-portal__summary-meta">{nextStepMeta}</div>
-          </article>
-        </section>
-
-        <nav className="candidate-portal__tabs" aria-label="Разделы кабинета кандидата">
-          {CABINET_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`candidate-portal__tab ${activeTab === tab.key ? 'is-active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-
-        {localError ? <p className="candidate-portal__error">{localError}</p> : null}
-
-        {activeTab === 'home' ? renderHomePanel() : null}
-        {activeTab === 'workflow' ? renderWorkflowPanel() : null}
-        {activeTab === 'tests' ? renderTestsPanel() : null}
-        {activeTab === 'schedule' ? renderSchedulePanel() : null}
-        {activeTab === 'messages' ? renderMessagesPanel() : null}
-        {activeTab === 'company' ? renderCompanyPanel() : null}
-        {activeTab === 'feedback' ? renderFeedbackPanel() : null}
-      </div>
-    </div>
-  )
+  return <CandidateJourneyLivePage />
 }

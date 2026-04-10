@@ -39,6 +39,127 @@ class StatusTransitionError(Exception):
 _status_service = CandidateStatusService()
 
 
+async def _apply_status_transition(
+    sess: AsyncSession,
+    user: User,
+    new_status: CandidateStatus,
+    *,
+    force: bool = False,
+    analytics_user_id: Optional[int] = None,
+    actor_type: Optional[str] = None,
+    actor_id: Optional[int] = None,
+    reason: Optional[str] = None,
+) -> bool:
+    old_status = user.candidate_status
+    candidate_ref = getattr(user, "id", None)
+
+    if old_status == new_status:
+        logger.info(
+            "Candidate %s already has status %s; skipping update",
+            candidate_ref,
+            new_status,
+        )
+        return True
+
+    if old_status and is_status_retreat(old_status, new_status):
+        if not force:
+            logger.info(
+                "Ignoring retrograde status transition for candidate %s: %s -> %s",
+                candidate_ref,
+                old_status,
+                new_status,
+            )
+            return True
+        logger.info(
+            "Forcing retrograde status transition for candidate %s: %s -> %s",
+            candidate_ref,
+            old_status,
+            new_status,
+        )
+
+    try:
+        if force:
+            changed = await _status_service.force(
+                user,
+                new_status,
+                reason=reason or "forced status update",
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        else:
+            changed = await _status_service.advance(
+                user,
+                new_status,
+                reason=reason,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+    except CandidateStatusTransitionError as exc:
+        raise StatusTransitionError(
+            f"Invalid status transition for candidate {candidate_ref}: "
+            f"{old_status} -> {new_status}"
+        ) from exc
+
+    if not changed:
+        return True
+
+    funnel_event = FUNNEL_STATUS_EVENTS.get(new_status)
+    if funnel_event:
+        resolved_user_id = int(
+            analytics_user_id
+            or getattr(user, "telegram_id", None)
+            or getattr(user, "telegram_user_id", None)
+            or getattr(user, "id", 0)
+        )
+        try:
+            await analytics.log_funnel_event(
+                funnel_event,
+                user_id=resolved_user_id,
+                candidate_id=user.id,
+                metadata={"status": new_status.value},
+                session=sess,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to log funnel event for candidate %s status %s",
+                candidate_ref,
+                new_status,
+            )
+
+    logger.info(
+        "Status updated for candidate %s: %s -> %s",
+        candidate_ref,
+        old_status,
+        new_status,
+    )
+    return True
+
+
+async def apply_candidate_status(
+    candidate: User,
+    new_status: CandidateStatus,
+    *,
+    session: AsyncSession,
+    force: bool = False,
+    analytics_user_id: Optional[int] = None,
+    actor_type: Optional[str] = None,
+    actor_id: Optional[int] = None,
+    reason: Optional[str] = None,
+) -> bool:
+    """Apply a status transition to a loaded candidate inside an existing session."""
+
+    return await _apply_status_transition(
+        session,
+        candidate,
+        new_status,
+        force=force,
+        analytics_user_id=analytics_user_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        reason=reason,
+    )
+
+
 async def update_candidate_status(
     telegram_id: int,
     new_status: CandidateStatus,
@@ -71,75 +192,13 @@ async def update_candidate_status(
         if not user:
             logger.warning(f"Candidate not found: telegram_id={telegram_id}")
             return False
-
-        old_status = user.candidate_status
-
-        if old_status == new_status:
-            logger.info(
-                "Candidate %s already has status %s; skipping update",
-                telegram_id,
-                new_status,
-            )
-            return True
-
-        if old_status and is_status_retreat(old_status, new_status):
-            if not force:
-                logger.info(
-                    "Ignoring retrograde status transition for user %s: %s -> %s",
-                    telegram_id,
-                    old_status,
-                    new_status,
-                )
-                return True
-            logger.info(
-                "Forcing retrograde status transition for user %s: %s -> %s",
-                telegram_id,
-                old_status,
-                new_status,
-            )
-
-        try:
-            if force:
-                changed = await _status_service.force(
-                    user, new_status, reason="forced status update"
-                )
-            else:
-                changed = await _status_service.advance(user, new_status)
-        except CandidateStatusTransitionError as exc:
-            raise StatusTransitionError(
-                f"Invalid status transition for user {telegram_id}: "
-                f"{old_status} -> {new_status}"
-            ) from exc
-
-        if not changed:
-            return True
-
-        funnel_event = FUNNEL_STATUS_EVENTS.get(new_status)
-        if funnel_event:
-            analytics_user_id = int(
-                getattr(user, "telegram_id", None)
-                or getattr(user, "telegram_user_id", None)
-                or telegram_id
-            )
-            try:
-                await analytics.log_funnel_event(
-                    funnel_event,
-                    user_id=analytics_user_id,
-                    candidate_id=user.id,
-                    metadata={"status": new_status.value},
-                    session=sess,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to log funnel event for user %s status %s",
-                    telegram_id,
-                    new_status,
-                )
-
-        logger.info(
-            f"Status updated for user {telegram_id}: {old_status} -> {new_status}"
+        return await _apply_status_transition(
+            sess,
+            user,
+            new_status,
+            force=force,
+            analytics_user_id=telegram_id,
         )
-        return True
 
     if session:
         return await _update(session)
@@ -366,6 +425,7 @@ async def set_status_not_hired(telegram_id: int, force: bool = False) -> bool:
 
 __all__ = [
     "StatusTransitionError",
+    "apply_candidate_status",
     "update_candidate_status",
     "get_candidate_status",
     "set_status_test1_completed",

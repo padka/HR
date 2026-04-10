@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import func, or_, select
 
+from backend.apps.admin_ui.services.candidate_shared_access import (
+    get_candidate_shared_access_health,
+)
+from backend.apps.max_bot.app import get_runtime_health_snapshot
 from backend.core.db import async_session
 from backend.core.messenger.channel_state import get_messenger_channel_health
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import get_registry
 from backend.core.settings import get_settings
-from backend.apps.admin_ui.services.candidate_shared_access import get_candidate_shared_access_health
 from backend.domain.candidates.models import (
     CandidateInviteToken,
     CandidateJourneySession,
@@ -21,13 +25,13 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import (
-    build_candidate_shared_portal_url,
     build_candidate_public_max_mini_app_url_async,
-    build_candidate_public_telegram_entry_url_async,
     build_candidate_public_portal_url,
+    build_candidate_public_telegram_entry_url_async,
+    build_candidate_shared_portal_url,
     get_candidate_active_slot,
-    get_candidate_portal_public_status,
     get_candidate_portal_max_entry_status_async,
+    get_candidate_portal_public_status,
     get_candidate_portal_telegram_entry_status_async,
     inspect_max_bot_profile_probe,
 )
@@ -38,7 +42,7 @@ def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     return value.isoformat()
 
 
@@ -63,6 +67,18 @@ def _is_public_https_url(value: str | None) -> bool:
 
 async def _inspect_max_webhook_status() -> dict[str, Any]:
     settings = get_settings()
+    environment = str(getattr(settings, "environment", "") or "").strip().lower()
+    webhook_secret = str(settings.max_webhook_secret or "").strip()
+    if not webhook_secret and environment not in {"development", "test"}:
+        return {
+            "webhook_public_ready": False,
+            "webhook_url": str(settings.max_webhook_url or "").strip() or None,
+            "webhook_error": "max_webhook_secret_missing",
+            "webhook_message": "MAX_WEBHOOK_SECRET должен быть задан вне development/test.",
+            "subscription_ready": False,
+            "subscription_error": "max_webhook_secret_missing",
+            "subscription_message": "MAX ingress заблокирован, пока не задан MAX_WEBHOOK_SECRET.",
+        }
     webhook_url = str(settings.max_webhook_url or "").strip()
     if not _is_public_https_url(webhook_url):
         return {
@@ -230,6 +246,9 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         config_errors.append(str(portal_status["message"]))
     if max_status.get("message") and str(max_status["message"]) not in config_errors:
         config_errors.append(str(max_status["message"]))
+    webhook_status = await _inspect_max_webhook_status()
+    if webhook_status.get("webhook_message") and str(webhook_status["webhook_message"]) not in config_errors:
+        config_errors.append(str(webhook_status["webhook_message"]))
     browser_link = None
     mini_app_link = None
     telegram_link = None
@@ -322,7 +341,7 @@ async def get_messenger_health(
     degraded_channels: dict[str, dict[str, Any]] | None = None,
     channels: Iterable[str] = ("telegram", "max"),
 ) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     channel_payloads: dict[str, dict[str, Any]] = {}
     degraded_channels = degraded_channels or {}
 
@@ -364,7 +383,7 @@ async def get_messenger_health(
             oldest_pending_age_seconds = None
             if oldest_pending is not None:
                 if oldest_pending.tzinfo is None:
-                    oldest_pending = oldest_pending.replace(tzinfo=timezone.utc)
+                    oldest_pending = oldest_pending.replace(tzinfo=UTC)
                 oldest_pending_age_seconds = max(0, int((now - oldest_pending).total_seconds()))
 
             degraded = degraded_channels.get(normalized_channel) or {}
@@ -382,6 +401,7 @@ async def get_messenger_health(
     max_status = await get_candidate_portal_max_entry_status_async()
     profile_probe = await inspect_max_bot_profile_probe()
     webhook_status = await _inspect_max_webhook_status()
+    runtime_status = await get_runtime_health_snapshot()
     shared_access = await get_candidate_shared_access_health()
 
     return {
@@ -400,6 +420,16 @@ async def get_messenger_health(
             "bot_profile_name": profile_probe.get("bot_profile_name"),
             "max_link_base_resolved": bool(profile_probe.get("max_link_base_resolved")),
             "max_link_base_source": profile_probe.get("max_link_base_source"),
+            "runtime_status": runtime_status.get("status"),
+            "runtime_ready": bool(runtime_status.get("runtime_ready")),
+            "adapter_ready": bool(runtime_status.get("adapter_ready")),
+            "public_entry_enabled": bool(runtime_status.get("public_entry_enabled")),
+            "webhook_url_public_ready": bool(runtime_status.get("webhook_url_public_ready")),
+            "dedupe_ready": bool(runtime_status.get("dedupe_ready")),
+            "dedupe_mode": runtime_status.get("dedupe_mode"),
+            "dedupe_requires_redis": bool(runtime_status.get("dedupe_requires_redis")),
+            "dedupe_error": runtime_status.get("dedupe_error"),
+            "dedupe_message": runtime_status.get("dedupe_message"),
             "webhook_public_ready": webhook_status.get("webhook_public_ready"),
             "webhook_url": webhook_status.get("webhook_url"),
             "webhook_error": webhook_status.get("webhook_error"),
@@ -407,6 +437,11 @@ async def get_messenger_health(
             "subscription_ready": webhook_status.get("subscription_ready"),
             "subscription_error": webhook_status.get("subscription_error"),
             "subscription_message": webhook_status.get("subscription_message"),
+            "subscription_status": runtime_status.get("subscription_status"),
+            "readiness_blockers": runtime_status.get("readiness_blockers") or [],
+            "browser_portal_fallback_allowed": bool(runtime_status.get("browser_portal_fallback_allowed")),
+            "telegram_business_fallback_allowed": bool(runtime_status.get("telegram_business_fallback_allowed")),
+            "shared_contract_mode": runtime_status.get("shared_contract_mode"),
             "shared_access": shared_access,
         },
     }

@@ -14,6 +14,10 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
+from backend.domain.candidates.scheduling_integrity import (
+    WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR,
+    build_scheduling_integrity_report,
+)
 from backend.domain.models import (
     ActionToken,
     AuditLog,
@@ -68,6 +72,242 @@ def _now() -> datetime:
 
 def _resolve_candidate_tg_id(candidate: User, preferred: Optional[int] = None) -> Optional[int]:
     return preferred or candidate.telegram_user_id or candidate.telegram_id
+
+
+async def _resolve_candidate_for_assignment(session, assignment: SlotAssignment) -> User | None:
+    candidate = None
+    if assignment.candidate_id:
+        candidate = await session.scalar(
+            select(User).where(User.candidate_id == assignment.candidate_id)
+        )
+    if candidate is None and assignment.candidate_tg_id is not None:
+        candidate = await session.scalar(
+            select(User).where(
+                or_(
+                    User.telegram_id == assignment.candidate_tg_id,
+                    User.telegram_user_id == assignment.candidate_tg_id,
+                )
+            )
+        )
+    return candidate
+
+
+def _known_candidate_tg_ids(
+    assignment: SlotAssignment,
+    candidate: User | None,
+    preferred: Optional[int] = None,
+) -> set[int]:
+    ids: set[int] = set()
+    for raw in (
+        preferred,
+        assignment.candidate_tg_id,
+        getattr(candidate, "telegram_id", None),
+        getattr(candidate, "telegram_user_id", None),
+    ):
+        if raw is None:
+            continue
+        try:
+            ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _slot_claimed_by_other_candidate(
+    slot: Slot,
+    *,
+    candidate_id: Optional[str],
+    candidate_tg_ids: set[int],
+) -> bool:
+    slot_candidate_id = getattr(slot, "candidate_id", None)
+    slot_candidate_tg_id = getattr(slot, "candidate_tg_id", None)
+    if slot_candidate_id is None and slot_candidate_tg_id is None:
+        return False
+    if candidate_id is not None and slot_candidate_id == candidate_id:
+        return False
+    if slot_candidate_tg_id is not None:
+        try:
+            if int(slot_candidate_tg_id) in candidate_tg_ids:
+                return False
+        except (TypeError, ValueError):
+            pass
+    return True
+
+
+def _clear_slot_binding(slot: Slot) -> None:
+    slot.status = SlotStatus.FREE
+    slot.candidate_id = None
+    slot.candidate_tg_id = None
+    slot.candidate_fio = None
+    slot.candidate_tz = None
+    slot.candidate_city_id = None
+
+
+def _bind_slot_to_assignment(
+    slot: Slot,
+    *,
+    assignment: SlotAssignment,
+    candidate: User | None,
+    slot_status: str,
+) -> None:
+    slot.status = slot_status
+    slot.candidate_id = assignment.candidate_id or slot.candidate_id
+    slot.candidate_tg_id = assignment.candidate_tg_id
+    if candidate is not None and getattr(candidate, "fio", None):
+        slot.candidate_fio = candidate.fio
+    slot.candidate_tz = assignment.candidate_tz or slot.candidate_tz or slot.tz_name
+    slot.candidate_city_id = slot.candidate_city_id or slot.city_id
+
+
+async def _load_assignment_integrity(
+    session,
+    *,
+    assignment: SlotAssignment,
+    candidate: User | None,
+) -> Optional[dict[str, Any]]:
+    candidate_tg_ids = _known_candidate_tg_ids(assignment, candidate)
+    slot_filters = []
+    if assignment.candidate_id:
+        slot_filters.append(Slot.candidate_id == assignment.candidate_id)
+    if candidate_tg_ids:
+        slot_filters.append(Slot.candidate_tg_id.in_(sorted(candidate_tg_ids)))
+    assignment_filters = []
+    if assignment.candidate_id:
+        assignment_filters.append(SlotAssignment.candidate_id == assignment.candidate_id)
+    if candidate_tg_ids:
+        assignment_filters.append(SlotAssignment.candidate_tg_id.in_(sorted(candidate_tg_ids)))
+    if not slot_filters and not assignment_filters:
+        return None
+
+    slots = []
+    if slot_filters:
+        slots = (
+            await session.execute(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(or_(*slot_filters))
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            )
+        ).scalars().all()
+
+    assignments = []
+    if assignment_filters:
+        assignments = (
+            await session.execute(
+                select(SlotAssignment)
+                .options(selectinload(SlotAssignment.slot))
+                .where(or_(*assignment_filters))
+                .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+            )
+        ).scalars().all()
+
+    report = build_scheduling_integrity_report(
+        slots=slots,
+        slot_assignments=assignments,
+    )
+    report["slots"] = list(slots)
+    report["slot_assignments"] = list(assignments)
+    return report
+
+
+async def _manual_repair_conflict(
+    session,
+    *,
+    assignment: SlotAssignment,
+    candidate: User | None,
+) -> Optional[ServiceResult]:
+    integrity = await _load_assignment_integrity(
+        session,
+        assignment=assignment,
+        candidate=candidate,
+    )
+    if integrity is None:
+        return None
+    if integrity.get("write_behavior") != WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR:
+        return None
+    return ServiceResult(
+        False,
+        "scheduling_conflict",
+        409,
+        "Найдены конфликты между Slot и SlotAssignment. Нужна ручная проверка scheduling.",
+    )
+
+
+async def _active_other_assignments_count(
+    session,
+    *,
+    slot_id: int,
+    current_assignment_id: int,
+) -> int:
+    count = await session.scalar(
+        select(func.count())
+        .select_from(SlotAssignment)
+        .where(
+            SlotAssignment.slot_id == slot_id,
+            SlotAssignment.id != current_assignment_id,
+            SlotAssignment.status.in_(ACTIVE_ASSIGNMENT_STATUSES),
+        )
+    )
+    return int(count or 0)
+
+
+async def _release_replaced_active_slots(
+    session,
+    *,
+    assignment: SlotAssignment,
+    candidate_tg_ids: set[int],
+    current_slot: Slot,
+) -> Optional[ServiceResult]:
+    slot_filters = []
+    if assignment.candidate_id:
+        slot_filters.append(Slot.candidate_id == assignment.candidate_id)
+    if candidate_tg_ids:
+        slot_filters.append(Slot.candidate_tg_id.in_(sorted(candidate_tg_ids)))
+    if not slot_filters:
+        return None
+
+    same_purpose = (current_slot.purpose or "interview").strip().lower()
+    existing_slots = (
+        await session.execute(
+            select(Slot)
+            .where(
+                Slot.id != current_slot.id,
+                or_(*slot_filters),
+                Slot.status.in_(ACTIVE_SLOT_STATUSES),
+                func.lower(func.coalesce(Slot.purpose, "interview")) == same_purpose,
+            )
+            .with_for_update()
+        )
+    ).scalars().all()
+
+    for existing_slot in existing_slots:
+        if existing_slot.recruiter_id != assignment.recruiter_id:
+            return ServiceResult(
+                False,
+                "scheduling_conflict",
+                409,
+                "У кандидата найден другой активный слот. Нужна ручная проверка scheduling.",
+            )
+        other_assignments = (
+            await session.execute(
+                select(SlotAssignment)
+                .where(
+                    SlotAssignment.slot_id == existing_slot.id,
+                    SlotAssignment.id != assignment.id,
+                    SlotAssignment.status.in_(ACTIVE_ASSIGNMENT_STATUSES),
+                )
+                .with_for_update()
+            )
+        ).scalars().all()
+        if other_assignments:
+            return ServiceResult(
+                False,
+                "scheduling_conflict",
+                409,
+                "У старого слота осталось активное назначение. Нужна ручная проверка scheduling.",
+            )
+        _clear_slot_binding(existing_slot)
+    return None
 
 
 async def cancel_active_interview_slots_for_candidate(
@@ -491,6 +731,7 @@ async def confirm_slot_assignment(
     assignment_id: int,
     action_token: str,
     candidate_tg_id: Optional[int],
+    token_actions: tuple[str, ...] = (ACTION_CONFIRM,),
 ) -> ServiceResult:
     async with async_session() as session:
         async with session.begin():
@@ -500,8 +741,29 @@ async def confirm_slot_assignment(
             if assignment is None:
                 return ServiceResult(False, "not_found", 404, "Назначение не найдено.")
 
-            if candidate_tg_id is not None and assignment.candidate_tg_id not in (None, candidate_tg_id):
+            candidate = await _resolve_candidate_for_assignment(session, assignment)
+            valid_tg_ids = _known_candidate_tg_ids(
+                assignment,
+                candidate,
+                preferred=candidate_tg_id,
+            )
+            if valid_tg_ids and candidate_tg_id is not None and int(candidate_tg_id) not in valid_tg_ids:
                 return ServiceResult(False, "forbidden", 403, "Доступ запрещён.")
+            if candidate_tg_id is not None and assignment.candidate_tg_id != candidate_tg_id:
+                assignment.candidate_tg_id = candidate_tg_id
+            if (
+                candidate is not None
+                and candidate.responsible_recruiter_id != assignment.recruiter_id
+            ):
+                candidate.responsible_recruiter_id = assignment.recruiter_id
+
+            integrity_conflict = await _manual_repair_conflict(
+                session,
+                assignment=assignment,
+                candidate=candidate,
+            )
+            if integrity_conflict is not None:
+                return integrity_conflict
 
             if assignment.status not in {
                 SlotAssignmentStatus.OFFERED,
@@ -510,9 +772,17 @@ async def confirm_slot_assignment(
             }:
                 return ServiceResult(False, "invalid_status", 409, "Нельзя подтвердить это назначение.")
 
-            token_ok, token_status = await _consume_action_token(
-                session, token=action_token, action=ACTION_CONFIRM, entity_id=assignment_id
-            )
+            token_ok = False
+            token_status = "not_found"
+            for action in token_actions:
+                token_ok, token_status = await _consume_action_token(
+                    session,
+                    token=action_token,
+                    action=action,
+                    entity_id=assignment_id,
+                )
+                if token_ok or token_status != "mismatch":
+                    break
             if not token_ok:
                 if assignment.status in CONFIRMED_ASSIGNMENT_STATUSES:
                     return ServiceResult(True, "already_confirmed", 200)
@@ -524,24 +794,52 @@ async def confirm_slot_assignment(
             if slot is None:
                 return ServiceResult(False, "slot_not_found", 404, "Слот не найден.")
 
-            confirmed_count = await session.scalar(
-                select(func.count())
-                .select_from(SlotAssignment)
-                .where(
-                    SlotAssignment.slot_id == slot.id,
-                    SlotAssignment.status.in_(CONFIRMED_ASSIGNMENT_STATUSES),
-                )
+            allowed_slot_statuses = {
+                SlotStatus.FREE,
+                SlotStatus.PENDING,
+                SlotStatus.BOOKED,
+                SlotStatus.CONFIRMED_BY_CANDIDATE,
+            }
+            slot_status = (slot.status or "").lower()
+            if slot_status not in allowed_slot_statuses:
+                return ServiceResult(False, "slot_not_available", 409, "Слот больше недоступен.")
+            if _slot_claimed_by_other_candidate(
+                slot,
+                candidate_id=assignment.candidate_id,
+                candidate_tg_ids=valid_tg_ids,
+            ):
+                return ServiceResult(False, "slot_not_available", 409, "Слот уже занят другим кандидатом.")
+
+            other_active_assignments = await _active_other_assignments_count(
+                session,
+                slot_id=slot.id,
+                current_assignment_id=assignment.id,
             )
             capacity = max(int(getattr(slot, "capacity", 1) or 1), 1)
-            if assignment.status not in CONFIRMED_ASSIGNMENT_STATUSES and (confirmed_count or 0) >= capacity:
+            if assignment.status not in CONFIRMED_ASSIGNMENT_STATUSES and other_active_assignments >= capacity:
                 return ServiceResult(False, "slot_full", 409, "Слот заполнен.")
 
             if assignment.status in CONFIRMED_ASSIGNMENT_STATUSES:
                 return ServiceResult(True, "already_confirmed", 200)
 
+            slot_release_conflict = await _release_replaced_active_slots(
+                session,
+                assignment=assignment,
+                candidate_tg_ids=valid_tg_ids,
+                current_slot=slot,
+            )
+            if slot_release_conflict is not None:
+                return slot_release_conflict
+
             assignment.status = SlotAssignmentStatus.CONFIRMED
             assignment.confirmed_at = _now()
             assignment.status_before_reschedule = None
+            _bind_slot_to_assignment(
+                slot,
+                assignment=assignment,
+                candidate=candidate,
+                slot_status=SlotStatus.BOOKED,
+            )
 
             session.add(
                 AuditLog(
@@ -583,8 +881,21 @@ async def request_reschedule(
             if assignment is None:
                 return ServiceResult(False, "not_found", 404, "Назначение не найдено.")
 
-            if candidate_tg_id is not None and assignment.candidate_tg_id not in (None, candidate_tg_id):
+            candidate = await _resolve_candidate_for_assignment(session, assignment)
+            valid_tg_ids = _known_candidate_tg_ids(
+                assignment,
+                candidate,
+                preferred=candidate_tg_id,
+            )
+            if valid_tg_ids and candidate_tg_id is not None and int(candidate_tg_id) not in valid_tg_ids:
                 return ServiceResult(False, "forbidden", 403, "Доступ запрещён.")
+            integrity_conflict = await _manual_repair_conflict(
+                session,
+                assignment=assignment,
+                candidate=candidate,
+            )
+            if integrity_conflict is not None:
+                return integrity_conflict
 
             if assignment.status not in {
                 SlotAssignmentStatus.OFFERED,
@@ -663,9 +974,6 @@ async def request_reschedule(
             assignment.reschedule_requested_at = assignment.reschedule_requested_at or _now()
 
             recruiter = await session.get(Recruiter, assignment.recruiter_id)
-            candidate = await session.scalar(
-                select(User).where(User.candidate_id == assignment.candidate_id)
-            )
             if candidate is not None and candidate.responsible_recruiter_id is None:
                 # Ensure the reschedule request is routed back to the same recruiter in CRM views
                 # that are scoped by responsible_recruiter_id.
@@ -740,8 +1048,21 @@ async def begin_reschedule_request(
             if assignment is None:
                 return ServiceResult(False, "not_found", 404, "Назначение не найдено.")
 
-            if candidate_tg_id is not None and assignment.candidate_tg_id not in (None, candidate_tg_id):
+            candidate = await _resolve_candidate_for_assignment(session, assignment)
+            valid_tg_ids = _known_candidate_tg_ids(
+                assignment,
+                candidate,
+                preferred=candidate_tg_id,
+            )
+            if valid_tg_ids and candidate_tg_id is not None and int(candidate_tg_id) not in valid_tg_ids:
                 return ServiceResult(False, "forbidden", 403, "Доступ запрещён.")
+            integrity_conflict = await _manual_repair_conflict(
+                session,
+                assignment=assignment,
+                candidate=candidate,
+            )
+            if integrity_conflict is not None:
+                return integrity_conflict
 
             if assignment.status == SlotAssignmentStatus.RESCHEDULE_REQUESTED:
                 return ServiceResult(True, "reschedule_pending_input", 200)
@@ -766,9 +1087,6 @@ async def begin_reschedule_request(
             assignment.status = SlotAssignmentStatus.RESCHEDULE_REQUESTED
             assignment.reschedule_requested_at = assignment.reschedule_requested_at or _now()
 
-            candidate = await session.scalar(
-                select(User).where(User.candidate_id == assignment.candidate_id)
-            )
             if candidate is not None and candidate.responsible_recruiter_id is None:
                 candidate.responsible_recruiter_id = assignment.recruiter_id
 
@@ -826,6 +1144,15 @@ async def approve_reschedule(
             )
             if slot is None:
                 return ServiceResult(False, "slot_not_found", 404, "Слот не найден.")
+            candidate = await _resolve_candidate_for_assignment(session, assignment)
+            integrity_conflict = await _manual_repair_conflict(
+                session,
+                assignment=assignment,
+                candidate=candidate,
+            )
+            if integrity_conflict is not None:
+                return integrity_conflict
+            candidate_tg_ids = _known_candidate_tg_ids(assignment, candidate)
 
             try:
                 ensure_slot_not_in_past(request.requested_start_utc, allow_past=False)
@@ -856,22 +1183,37 @@ async def approve_reschedule(
                 session.add(target_slot)
                 await session.flush()
 
-            confirmed_count = await session.scalar(
-                select(func.count())
-                .select_from(SlotAssignment)
-                .where(
-                    SlotAssignment.slot_id == target_slot.id,
-                    SlotAssignment.status.in_(CONFIRMED_ASSIGNMENT_STATUSES),
-                )
+            target_slot_status = (target_slot.status or "").lower()
+            if target_slot.id != slot.id and target_slot_status != SlotStatus.FREE:
+                return ServiceResult(False, "slot_not_available", 409, "Новый слот больше недоступен.")
+            if _slot_claimed_by_other_candidate(
+                target_slot,
+                candidate_id=assignment.candidate_id,
+                candidate_tg_ids=candidate_tg_ids,
+            ):
+                return ServiceResult(False, "slot_not_available", 409, "Новый слот уже занят другим кандидатом.")
+
+            other_active_assignments = await _active_other_assignments_count(
+                session,
+                slot_id=target_slot.id,
+                current_assignment_id=assignment.id,
             )
             capacity = max(int(getattr(target_slot, "capacity", 1) or 1), 1)
-            if assignment.status not in CONFIRMED_ASSIGNMENT_STATUSES and (confirmed_count or 0) >= capacity:
+            if other_active_assignments >= capacity:
                 return ServiceResult(False, "slot_full", 409, "Слот заполнен.")
 
+            if target_slot.id != slot.id:
+                _clear_slot_binding(slot)
             assignment.slot_id = target_slot.id
             assignment.status = SlotAssignmentStatus.RESCHEDULE_CONFIRMED
             assignment.confirmed_at = _now()
             assignment.status_before_reschedule = None
+            _bind_slot_to_assignment(
+                target_slot,
+                assignment=assignment,
+                candidate=candidate,
+                slot_status=SlotStatus.BOOKED,
+            )
 
             request.status = RescheduleRequestStatus.APPROVED
             request.decided_at = _now()
@@ -948,6 +1290,15 @@ async def propose_alternative(
             )
             if slot is None:
                 return ServiceResult(False, "slot_not_found", 404, "Слот не найден.")
+            candidate = await _resolve_candidate_for_assignment(session, assignment)
+            integrity_conflict = await _manual_repair_conflict(
+                session,
+                assignment=assignment,
+                candidate=candidate,
+            )
+            if integrity_conflict is not None:
+                return integrity_conflict
+            candidate_tg_ids = _known_candidate_tg_ids(assignment, candidate)
 
             try:
                 ensure_slot_not_in_past(new_start_utc, allow_past=False)
@@ -978,16 +1329,22 @@ async def propose_alternative(
                 session.add(target_slot)
                 await session.flush()
 
-            confirmed_count = await session.scalar(
-                select(func.count())
-                .select_from(SlotAssignment)
-                .where(
-                    SlotAssignment.slot_id == target_slot.id,
-                    SlotAssignment.status.in_(CONFIRMED_ASSIGNMENT_STATUSES),
-                )
+            if target_slot.id != slot.id and (target_slot.status or "").lower() != SlotStatus.FREE:
+                return ServiceResult(False, "slot_not_available", 409, "Новый слот больше недоступен.")
+            if _slot_claimed_by_other_candidate(
+                target_slot,
+                candidate_id=assignment.candidate_id,
+                candidate_tg_ids=candidate_tg_ids,
+            ):
+                return ServiceResult(False, "slot_not_available", 409, "Новый слот уже занят другим кандидатом.")
+
+            other_active_assignments = await _active_other_assignments_count(
+                session,
+                slot_id=target_slot.id,
+                current_assignment_id=assignment.id,
             )
             capacity = max(int(getattr(target_slot, "capacity", 1) or 1), 1)
-            if assignment.status not in CONFIRMED_ASSIGNMENT_STATUSES and (confirmed_count or 0) >= capacity:
+            if other_active_assignments >= capacity:
                 return ServiceResult(False, "slot_full", 409, "Слот заполнен.")
 
             assignment.slot_id = target_slot.id

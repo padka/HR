@@ -2,30 +2,38 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import html
 import logging
 import re
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.apps.bot.city_registry import find_candidate_city_by_name, list_candidate_cities
+import backend.core.messenger.registry as messenger_registry
+from backend.apps.bot.city_registry import (
+    find_candidate_city_by_name,
+    list_candidate_cities,
+)
 from backend.apps.bot.test1_validation import apply_partial_validation
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
+from backend.core.messenger.protocol import InlineButton, MessengerPlatform
 from backend.core.messenger.reliability import default_max_public_entry_enabled
 from backend.core.settings import get_settings
-import backend.core.messenger.registry as messenger_registry
-from backend.core.messenger.protocol import InlineButton, MessengerPlatform
 from backend.domain import analytics
 from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.candidates.max_owner_preflight import (
+    load_candidates_by_max_owner,
+    normalize_max_owner_value,
+)
 from backend.domain.candidates.models import (
     CandidateChatRead,
     CandidateInviteToken,
     CandidateJourneySession,
+    CandidateJourneySessionStatus,
     CandidateJourneyStepState,
     CandidateJourneyStepStatus,
     ChatMessage,
@@ -36,6 +44,9 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import (
+    PORTAL_JOURNEY_KEY,
+    _mark_journey_event_once,
+    CandidatePortalAccess,
     CandidatePortalError,
     build_candidate_portal_journey,
     build_candidate_public_max_mini_app_url_async,
@@ -44,10 +55,9 @@ from backend.domain.candidates.portal_service import (
     complete_screening,
     ensure_candidate_portal_session,
     get_candidate_portal_questions,
+    resolve_candidate_portal_access_token,
     save_candidate_profile,
     save_screening_draft,
-    resolve_candidate_portal_access_token,
-    resolve_candidate_portal_user,
     upsert_step_state,
 )
 from backend.domain.candidates.status import CandidateStatus
@@ -89,7 +99,7 @@ class CandidateResolution:
     status: str
     payload_linked: bool = False
     candidate_created: bool = False
-    audit_events: tuple["AuditEvent", ...] = ()
+    audit_events: tuple[AuditEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,7 +110,7 @@ class AuditEvent:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _max_numeric_id(value: str) -> int | None:
@@ -266,6 +276,61 @@ async def _merge_candidate_records(
     await session.delete(source)
 
 
+async def _candidate_from_portal_access(
+    session: AsyncSession,
+    *,
+    access: CandidatePortalAccess,
+) -> User | None:
+    if access.candidate_uuid:
+        return await session.scalar(
+            select(User).where(User.candidate_id == access.candidate_uuid).limit(1)
+        )
+    if access.telegram_id is not None:
+        return await session.scalar(
+            select(User)
+            .where(
+                or_(
+                    User.telegram_id == access.telegram_id,
+                    User.telegram_user_id == access.telegram_id,
+                )
+            )
+            .limit(1)
+        )
+    return None
+
+
+async def _load_active_portal_journey(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+) -> CandidateJourneySession | None:
+    return await session.scalar(
+        select(CandidateJourneySession)
+        .where(
+            CandidateJourneySession.candidate_id == candidate_id,
+            CandidateJourneySession.journey_key == PORTAL_JOURNEY_KEY,
+            CandidateJourneySession.status == CandidateJourneySessionStatus.ACTIVE.value,
+        )
+        .order_by(CandidateJourneySession.id.desc())
+        .limit(1)
+    )
+
+
+def _portal_access_mismatch(
+    access: CandidatePortalAccess,
+    journey: CandidateJourneySession | None,
+) -> bool:
+    if access.journey_session_id is None and access.session_version is None:
+        return False
+    if journey is None:
+        return True
+    if access.journey_session_id is not None and access.journey_session_id != int(journey.id):
+        return True
+    if access.session_version is not None and access.session_version != int(journey.session_version or 1):
+        return True
+    return False
+
+
 def _invite_required_message(status: str) -> OutboundMessage:
     if status == "invalid_invite":
         return OutboundMessage(
@@ -279,6 +344,20 @@ def _invite_required_message(status: str) -> OutboundMessage:
             text=(
                 "Эта ссылка уже привязана к другому аккаунту MAX.\n"
                 "Попросите рекрутера выпустить новую персональную ссылку."
+            )
+        )
+    if status == "portal_session_version_mismatch":
+        return OutboundMessage(
+            text=(
+                "Эта ссылка для входа в MAX устарела.\n"
+                "Попросите рекрутера отправить новую персональную ссылку."
+            )
+        )
+    if status == "ownership_ambiguous":
+        return OutboundMessage(
+            text=(
+                "Мы не можем продолжить в MAX из-за ошибки привязки аккаунта.\n"
+                "Попросите рекрутера проверить вашу ссылку и выпустить новую."
             )
         )
     return OutboundMessage(
@@ -309,15 +388,35 @@ async def _resolve_max_candidate(
 ) -> CandidateResolution:
     now = _utcnow()
     audit_events: list[AuditEvent] = []
-    existing_by_max = await session.scalar(
-        select(User)
-        .where(User.max_user_id == max_user_id)
-        .order_by(User.id.asc())
-        .limit(1)
+    normalized_max_user_id = normalize_max_owner_value(max_user_id)
+    if normalized_max_user_id is None:
+        return CandidateResolution(candidate=None, status="invite_required")
+    existing_by_max_matches = await load_candidates_by_max_owner(
+        session,
+        max_user_id=normalized_max_user_id,
     )
+    if len(existing_by_max_matches) > 1:
+        audit_events.append(
+            AuditEvent(
+                action="max_link_rejected",
+                entity_id=None,
+                changes={
+                    "channel": "max",
+                    "max_user_id": normalized_max_user_id,
+                    "reason": "ownership_ambiguous",
+                    "candidate_ids": [int(item.id) for item in existing_by_max_matches],
+                },
+            )
+        )
+        return CandidateResolution(
+            candidate=None,
+            status="ownership_ambiguous",
+            audit_events=tuple(audit_events),
+        )
+    max_user_id = normalized_max_user_id
     raw_payload = str(start_payload or "").strip()
 
-    candidate = existing_by_max
+    candidate = existing_by_max_matches[0] if existing_by_max_matches else None
     payload_linked = False
     linked_now = False
     candidate_created = False
@@ -330,17 +429,44 @@ async def _resolve_max_candidate(
                 access = None
 
             if access is not None:
-                try:
-                    candidate = await resolve_candidate_portal_user(session, access)
-                except CandidatePortalError:
+                candidate = await _candidate_from_portal_access(session, access=access)
+                if candidate is None:
                     return CandidateResolution(candidate=None, status="invalid_invite")
-                existing_link = await session.scalar(
-                    select(User)
-                    .where(User.max_user_id == max_user_id)
-                    .where(User.id != candidate.id)
-                    .limit(1)
+                active_journey = await _load_active_portal_journey(
+                    session,
+                    candidate_id=int(candidate.id),
                 )
-                if existing_link is not None:
+                if _portal_access_mismatch(access, active_journey):
+                    audit_events.append(
+                        AuditEvent(
+                            action="max_link_rejected",
+                            entity_id=int(candidate.id),
+                            changes={
+                                "channel": "max",
+                                "max_user_id": max_user_id,
+                                "reason": "portal_session_version_mismatch",
+                                "token_session_id": access.journey_session_id,
+                                "token_session_version": access.session_version,
+                                "actual_session_id": int(active_journey.id) if active_journey is not None else None,
+                                "actual_session_version": (
+                                    int(active_journey.session_version or 1)
+                                    if active_journey is not None
+                                    else None
+                                ),
+                            },
+                        )
+                    )
+                    return CandidateResolution(
+                        candidate=None,
+                        status="portal_session_version_mismatch",
+                        audit_events=tuple(audit_events),
+                    )
+                existing_links = [
+                    item
+                    for item in await load_candidates_by_max_owner(session, max_user_id=max_user_id)
+                    if item.id != candidate.id
+                ]
+                if existing_links:
                     audit_events.append(
                         AuditEvent(
                             action="invite_conflict",
@@ -354,14 +480,15 @@ async def _resolve_max_candidate(
                         audit_events=tuple(audit_events),
                     )
 
-                if candidate.max_user_id and candidate.max_user_id != max_user_id:
+                current_candidate_owner = normalize_max_owner_value(candidate.max_user_id)
+                if current_candidate_owner and current_candidate_owner != max_user_id:
                     audit_events.append(
                         AuditEvent(
                             action="max_relink_attempt",
                             entity_id=int(candidate.id),
                             changes={
                                 "channel": "max",
-                                "current_max_user_id": candidate.max_user_id,
+                                "current_max_user_id": current_candidate_owner,
                                 "incoming_max_user_id": max_user_id,
                             },
                         )
@@ -372,7 +499,7 @@ async def _resolve_max_candidate(
                         audit_events=tuple(audit_events),
                     )
 
-                linked_now = candidate.max_user_id in {None, "", max_user_id}
+                linked_now = current_candidate_owner in {None, max_user_id}
                 candidate.max_user_id = max_user_id
                 payload_linked = True
             else:
@@ -392,7 +519,7 @@ async def _resolve_max_candidate(
                 invite_ttl = timedelta(seconds=settings.candidate_portal_token_ttl_seconds)
                 created_at = invite.created_at
                 if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
+                    created_at = created_at.replace(tzinfo=UTC)
                 if now - created_at > invite_ttl:
                     return CandidateResolution(candidate=None, status="invalid_invite")
 
@@ -402,13 +529,12 @@ async def _resolve_max_candidate(
                 if candidate is None:
                     return CandidateResolution(candidate=None, status="invalid_invite")
 
-                existing_link = await session.scalar(
-                    select(User)
-                    .where(User.max_user_id == max_user_id)
-                    .where(User.id != candidate.id)
-                    .limit(1)
-                )
-                if existing_link is not None:
+                existing_links = [
+                    item
+                    for item in await load_candidates_by_max_owner(session, max_user_id=max_user_id)
+                    if item.id != candidate.id
+                ]
+                if existing_links:
                     audit_events.append(
                         AuditEvent(
                             action="invite_conflict",
@@ -422,14 +548,15 @@ async def _resolve_max_candidate(
                         audit_events=tuple(audit_events),
                     )
 
-                if candidate.max_user_id and candidate.max_user_id != max_user_id:
+                current_candidate_owner = normalize_max_owner_value(candidate.max_user_id)
+                if current_candidate_owner and current_candidate_owner != max_user_id:
                     audit_events.append(
                         AuditEvent(
                             action="max_relink_attempt",
                             entity_id=int(candidate.id),
                             changes={
                                 "channel": "max",
-                                "current_max_user_id": candidate.max_user_id,
+                                "current_max_user_id": current_candidate_owner,
                                 "incoming_max_user_id": max_user_id,
                             },
                         )
@@ -440,7 +567,8 @@ async def _resolve_max_candidate(
                         audit_events=tuple(audit_events),
                     )
 
-                if invite.used_at is not None and invite.used_by_external_id not in {None, "", max_user_id}:
+                invite_owner = normalize_max_owner_value(invite.used_by_external_id)
+                if invite.used_at is not None and invite_owner not in {None, max_user_id}:
                     audit_events.append(
                         AuditEvent(
                             action="invite_conflict",
@@ -458,7 +586,7 @@ async def _resolve_max_candidate(
                         audit_events=tuple(audit_events),
                     )
 
-                linked_now = invite.used_at is None and candidate.max_user_id in {None, "", max_user_id}
+                linked_now = invite.used_at is None and current_candidate_owner in {None, max_user_id}
                 if invite.used_at is None:
                     invite.used_at = now
                 invite.status = "used"
@@ -626,6 +754,15 @@ async def _ensure_screening_started(
         session=session,
     )
     journey.payload_json["max_screening_started_logged_at"] = _utcnow().isoformat()
+    _mark_journey_event_once(
+        candidate,
+        journey,
+        flag_key="screening_started_event_logged_at",
+        event_key="screening_started",
+        summary="Кандидат начал анкету в MAX.",
+        stage="testing",
+        payload={"source_channel": "max"},
+    )
     await session.flush()
 
 
@@ -663,19 +800,61 @@ async def _render_screening_prompt(
     return OutboundMessage(text=text, buttons=buttons)
 
 
+def _build_resume_message(payload: dict[str, Any]) -> OutboundMessage | None:
+    journey_payload = payload.get("journey") or {}
+    current_step = str(journey_payload.get("current_step") or "").strip()
+    current_step_label = str(journey_payload.get("current_step_label") or "текущему этапу").strip()
+    if current_step == "profile":
+        return OutboundMessage(
+            text="Возвращаю вас к заполнению профиля. Уже сохранённые данные не потеряются."
+        )
+    if current_step == "screening":
+        draft_answers = dict((journey_payload.get("screening") or {}).get("draft_answers") or {})
+        question = _screening_question(draft_answers)
+        total = len(get_candidate_portal_questions())
+        question_index = int(question.get("index") or 0) if question is not None else 0
+        if question_index > 0:
+            return OutboundMessage(
+                text=(
+                    f"Возвращаю вас к вопросу {question_index} из {total}. "
+                    "Уже сохранённые ответы останутся в анкете."
+                )
+            )
+        return OutboundMessage(
+            text="Возвращаю вас к текущей анкете. Уже сохранённые ответы не потеряются."
+        )
+    if current_step in {"slot_selection", "status"}:
+        return OutboundMessage(
+            text=(
+                f"Возвращаю вас к этапу «<b>{html.escape(current_step_label)}</b>». "
+                "Анкета уже сохранена, повторно начинать не нужно."
+            )
+        )
+    return None
+
+
 async def _render_next_step(
     session: AsyncSession,
     candidate: User,
     journey: CandidateJourneySession,
+    *,
+    resume: bool = False,
 ) -> list[OutboundMessage]:
     payload = await build_candidate_portal_journey(session, candidate, entry_channel="max")
     current_step = str(payload["journey"].get("current_step") or "")
+    resume_message = _build_resume_message(payload) if resume else None
     if current_step == "profile":
-        return [await _render_profile_prompt(session, candidate, journey)]
+        messages: list[OutboundMessage] = []
+        if resume_message is not None:
+            messages.append(resume_message)
+        messages.append(await _render_profile_prompt(session, candidate, journey))
+        return messages
     if current_step == "screening":
         messages: list[OutboundMessage] = []
         screening_payload = payload["journey"].get("screening") or {}
-        if not (screening_payload.get("draft_answers") or {}):
+        if resume_message is not None:
+            messages.append(resume_message)
+        elif not (screening_payload.get("draft_answers") or {}):
             messages.append(
                 OutboundMessage(
                     text="Контакты сохранены. Осталось ответить на короткую анкету.",
@@ -684,13 +863,22 @@ async def _render_next_step(
         messages.append(await _render_screening_prompt(session, candidate, journey))
         return messages
     if current_step in {"slot_selection", "status"}:
-        return [
-            OutboundMessage(
+        entry_message = (
+            resume_message
+            if resume_message is not None
+            else OutboundMessage(
                 text="Анкета сохранена. Следующий шаг доступен в кабинете кандидата.",
-            ),
+            )
+        )
+        return [
+            entry_message,
             await _render_status_message(session, candidate, journey),
         ]
-    return [await _render_status_message(session, candidate, journey)]
+    messages: list[OutboundMessage] = []
+    if resume_message is not None:
+        messages.append(resume_message)
+    messages.append(await _render_status_message(session, candidate, journey))
+    return messages
 
 
 async def _send_outbound(
@@ -927,7 +1115,7 @@ async def process_start_or_resume(
             else:
                 candidate = resolution.candidate
                 journey = await ensure_candidate_portal_session(session, candidate, entry_channel="max")
-                messages = await _render_next_step(session, candidate, journey)
+                messages = await _render_next_step(session, candidate, journey, resume=True)
     await _emit_audit_events(audit_events)
     return messages
 
@@ -964,7 +1152,7 @@ async def process_text_message(
                 current_step = str(payload["journey"].get("current_step") or "")
 
                 if clean_text.lower() in {"/start", "start", "начать", "resume", "продолжить"}:
-                    messages = await _render_next_step(session, candidate, journey)
+                    messages = await _render_next_step(session, candidate, journey, resume=True)
                 elif current_step == "profile":
                     messages = await _profile_answer(
                         session,

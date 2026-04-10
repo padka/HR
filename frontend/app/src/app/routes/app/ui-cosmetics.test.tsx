@@ -113,6 +113,32 @@ const candidateDetailData = {
   candidate_actions: [],
   needs_intro_day: true,
   can_schedule_intro_day: true,
+  lifecycle_summary: {
+    stage: 'lead',
+    stage_label: 'Лид',
+    record_state: 'active',
+  },
+  candidate_next_action: {
+    version: 1,
+    lifecycle_stage: 'lead',
+    record_state: 'active',
+    worklist_bucket: 'incoming',
+    urgency: 'attention',
+    primary_action: {
+      type: 'offer_interview_slot',
+      label: 'Предложить время',
+      enabled: true,
+      owner_role: 'recruiter',
+      ui_action: 'open_schedule_slot_modal',
+      legacy_action_key: 'schedule_interview',
+      blocking_reasons: [],
+    },
+    explanation: 'Кандидат готов к назначению интервью.',
+  },
+  state_reconciliation: {
+    issues: [],
+    has_blockers: false,
+  },
   journey: {
     state: 'intro_preconfirmed',
     state_label: 'Предварительно подтвердился',
@@ -401,6 +427,39 @@ const incomingData = {
       ai_relevance_level: 'medium',
       ai_recommendation: 'clarify_before_od',
       ai_risk_hint: 'Нужно отдельно подтвердить готовность к разъездному формату.',
+      lifecycle_summary: {
+        stage: 'waiting_interview_slot',
+        stage_label: 'Ожидает слот на интервью',
+        record_state: 'active',
+      },
+      scheduling_summary: {
+        source: 'slot_assignment',
+        stage: 'interview',
+        status: 'reschedule_requested',
+        status_label: 'Запрошен перенос',
+        active: true,
+        requested_reschedule: true,
+      },
+      candidate_next_action: {
+        version: 1,
+        lifecycle_stage: 'interview',
+        record_state: 'active',
+        worklist_bucket: 'awaiting_recruiter',
+        urgency: 'attention',
+        primary_action: {
+          type: 'resolve_reschedule',
+          label: 'Обработать перенос',
+          enabled: true,
+          owner_role: 'recruiter',
+          ui_action: 'open_schedule_slot_modal',
+          blocking_reasons: [],
+        },
+        explanation: 'Кандидат запросил перенос времени. Требуется новый слот.',
+      },
+      state_reconciliation: {
+        issues: [{ code: 'workflow_status_drift', severity: 'warning', message: 'workflow_status расходится.' }],
+        has_blockers: true,
+      },
     },
   ],
 }
@@ -675,10 +734,15 @@ describe('UI cosmetics smoke', () => {
     expect(filterBar).toBeInTheDocument()
     expect(filterBar).toHaveClass('filter-bar')
 
+    expect(screen.getByTestId('incoming-lanes')).toBeInTheDocument()
+    expect(screen.getByText('Требует разбора')).toBeInTheDocument()
     const cards = screen.getAllByTestId('incoming-card')
     expect(cards.length).toBeGreaterThan(0)
     expect(cards[0]).toHaveClass('incoming-card')
-    expect(document.querySelector('.status-pill')).toBeTruthy()
+    expect(screen.getByText('Ожидает слот на интервью')).toBeInTheDocument()
+    expect(screen.getAllByText('Обработать перенос').length).toBeGreaterThan(0)
+    expect(screen.getByText('Есть рассинхрон состояния')).toBeInTheDocument()
+    expect(screen.getByText('Кандидат запросил перенос времени. Требуется новый слот.')).toBeInTheDocument()
 
     const advancedToggle = screen.getByTestId('incoming-advanced-filters-toggle')
     fireEvent.click(advancedToggle)
@@ -687,6 +751,7 @@ describe('UI cosmetics smoke', () => {
     const moreToggle = screen.getByTestId('incoming-card-more-toggle')
     fireEvent.click(moreToggle)
     expect(moreToggle).toHaveTextContent('Скрыть детали')
+    expect(screen.getByText(/workflow_status расходится/)).toBeInTheDocument()
     expect(screen.getByText(/Хочет окно:/)).toBeInTheDocument()
     expect(screen.getByText(/AI: Нужно отдельно подтвердить готовность к разъездному формату/)).toBeInTheDocument()
   })
@@ -901,7 +966,33 @@ describe('UI cosmetics smoke', () => {
 
     const incomingCard = screen.getByTestId('incoming-card')
     expect(incomingCard).toBeInTheDocument()
-    expect(screen.getAllByText(/Уточнить/).length).toBeGreaterThan(0)
+    expect(screen.getByText('Требует разбора')).toBeInTheDocument()
+    expect(screen.getAllByText(/Обработать перенос/).length).toBeGreaterThan(0)
+  })
+
+  it('renders admin dashboard as triage-first control tower with quiet KPI sections', () => {
+    useProfileMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        principal: { type: 'admin', id: 1 },
+        recruiter: { id: 7, tz: 'Europe/Moscow', cities: [{ id: 1, name: 'Москва' }] },
+        profile: {
+          city_options: [{ id: 1, name: 'Москва', tz: 'Europe/Moscow' }],
+        },
+      },
+    })
+
+    render(<DashboardPage />)
+
+    expect(screen.getByTestId('dashboard-triage-console')).toBeInTheDocument()
+    expect(screen.getByTestId('dashboard-triage-lanes')).toBeInTheDocument()
+    expect(screen.getByText('Control Tower')).toBeInTheDocument()
+    expect(screen.getByText('Требует действия сейчас')).toBeInTheDocument()
+    expect(screen.getByText('Ждет кандидата / внешнего ответа')).toBeInTheDocument()
+    expect(screen.getByText('Требует разбора / есть конфликт')).toBeInTheDocument()
+    expect(screen.getByText('Общая сводка')).toBeInTheDocument()
+    expect(screen.getByText('Лидерборд эффективности')).toBeInTheDocument()
   })
 
   it('renders slots filter/table test ids', () => {
@@ -920,9 +1011,21 @@ describe('UI cosmetics smoke', () => {
     render(<CandidateDetailPage />)
     const header = screen.getByTestId('candidate-header')
     expect(header).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-action-center')).toBeInTheDocument()
     expect(screen.getByTestId('candidate-actions')).toBeInTheDocument()
     expect(header).toHaveTextContent('Лид')
     expect(header.querySelector('.status-pill')).toBeNull()
+    expect(screen.getAllByText('Предложить время').length).toBeGreaterThan(0)
+    expect(screen.getByText('Кандидат готов к назначению интервью.')).toBeInTheDocument()
+    expect(screen.getByText('Контекст назначения')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-detail-lifecycle')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-detail-scheduling')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-detail-risks')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-detail-context')).toBeInTheDocument()
+    expect(screen.getByText('Lifecycle')).toBeInTheDocument()
+    expect(screen.getByText('Scheduling')).toBeInTheDocument()
+    expect(screen.getByText('Risks & blockers')).toBeInTheDocument()
+    expect(screen.getByText('Context & history')).toBeInTheDocument()
     expect(screen.getByLabelText('Релевантность 82')).toBeInTheDocument()
     expect(within(header).getByText('82')).toBeInTheDocument()
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
@@ -1064,30 +1167,18 @@ describe('UI cosmetics smoke', () => {
     })
   })
 
-  it('renders candidate detail channel health card', async () => {
+  it('keeps candidate detail profile free from delivery diagnostics cards', async () => {
     render(<CandidateDetailPage />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('candidate-channel-health')).toBeInTheDocument()
-      expect(screen.getByTestId('candidate-hh-entry-health')).toBeInTheDocument()
-      expect(screen.getByText(/Primary workspace: web cabinet/)).toBeInTheDocument()
-      expect(screen.getByText(/Telegram linked/)).toBeInTheDocument()
-      expect(screen.getByText(/MAX linked/)).toBeInTheDocument()
-      expect(screen.getByText(/cabinet: ready/)).toBeInTheDocument()
-      expect(screen.getByText(/inbox: available/)).toBeInTheDocument()
-      expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
-      expect(screen.getByText(/portal package: failed/)).toBeInTheDocument()
-      expect(screen.getByText(/delivery: blocked/)).toBeInTheDocument()
-      expect(screen.getByText(/shared portal: ready/)).toBeInTheDocument()
-      expect(screen.getByText(/MAX delivery: MAX токен отклонён провайдером/)).toBeInTheDocument()
-      expect(screen.getByText(/HH block: HH не даёт action на отправку сообщения кандидату/)).toBeInTheDocument()
-      expect(screen.getByText(/portal package error: HTTP 404/)).toBeInTheDocument()
-      expect(screen.getByText(/journey: #401 · session v3/)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Отправить shared portal в HH' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Подготовить browser link' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Открыть MAX launcher' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Открыть browser fallback' })).toBeInTheDocument()
+      expect(screen.queryByTestId('candidate-channel-health')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('candidate-hh-entry-health')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Candidate Cabinet/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Entry \/ Delivery/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Открыть кабинет' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Отправить shared portal в HH' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Открыть MAX launcher' })).not.toBeInTheDocument()
+      expect(screen.getByTestId('candidate-channels')).toBeInTheDocument()
     })
   })
 

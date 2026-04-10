@@ -60,6 +60,15 @@ export type CandidatePortalMessage = {
   created_at?: string | null
 }
 
+export type CandidatePortalHistoryItem = {
+  kind?: 'journey' | 'slot' | 'test' | 'message' | string
+  title?: string | null
+  body?: string | null
+  created_at?: string | null
+  stage?: string | null
+  status_label?: string | null
+}
+
 export type CandidatePortalJourneyResponse = {
   candidate: {
     id: number
@@ -139,6 +148,9 @@ export type CandidatePortalJourneyResponse = {
       author_role?: 'candidate' | 'recruiter' | 'system' | 'bot' | null
     }>
     last_feedback_sent_at?: string | null
+  }
+  history?: {
+    items?: CandidatePortalHistoryItem[]
   }
   resources?: {
     faq?: Array<{
@@ -271,6 +283,7 @@ export type CandidatePortalErrorInfo = {
   message: string
   canResume?: boolean
   requiresFreshLink?: boolean
+  meta?: Record<string, unknown>
 }
 
 export async function candidateFetch<T>(path: string, init?: CandidateFetchInit): Promise<T> {
@@ -312,6 +325,7 @@ export function parseCandidatePortalError(error: unknown): CandidatePortalErrorI
   let state: CandidatePortalRecoveryState | undefined
   let canResume: boolean | undefined
   let requiresFreshLink: boolean | undefined
+  let meta: Record<string, unknown> | undefined
 
   if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
     const payload = detail as Record<string, unknown>
@@ -325,6 +339,9 @@ export function parseCandidatePortalError(error: unknown): CandidatePortalErrorI
     }
     if (typeof payload.can_resume === 'boolean') canResume = payload.can_resume
     if (typeof payload.requires_fresh_link === 'boolean') requiresFreshLink = payload.requires_fresh_link
+    if (payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)) {
+      meta = payload.meta as Record<string, unknown>
+    }
   } else if (typeof detail === 'string' && !message) {
     message = detail
   }
@@ -341,13 +358,20 @@ export function parseCandidatePortalError(error: unknown): CandidatePortalErrorI
     message,
     canResume,
     requiresFreshLink,
+    meta,
   }
 }
 
-export const exchangeCandidatePortalToken = async (token: string) =>
+export const exchangeCandidatePortalToken = async (
+  token: string,
+  options?: { maxWebAppData?: string },
+) =>
   await candidateFetch<CandidatePortalJourneyResponse>('/session/exchange', {
     method: 'POST',
-    json: { token },
+    json: {
+      token,
+      ...(options?.maxWebAppData ? { max_webapp_data: options.maxWebAppData } : {}),
+    },
     skipStoredPortalToken: true,
   })
 

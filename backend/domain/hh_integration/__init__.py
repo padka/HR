@@ -1,10 +1,17 @@
 """Direct HeadHunter integration domain."""
 
-from .client import HHApiClient, HHApiError, HHOAuthTokens
+from .client import HHApiClient, HHApiError, HHNormalizedError, HHOAuthTokens, normalize_hh_api_error
 from .importer import (
     import_hh_negotiations,
     import_hh_vacancies,
     serialize_import_result,
+)
+from .outbound import (
+    HHSyncIntent,
+    enqueue_candidate_status_sync,
+    load_candidate_hh_link_context,
+    resolve_hh_sync_intent,
+    should_sync_candidate_status,
 )
 from .oauth import build_hh_authorize_url, parse_hh_oauth_state, sign_hh_oauth_state
 from .service import (
@@ -21,10 +28,17 @@ from .service import (
 __all__ = [
     "HHApiClient",
     "HHApiError",
+    "HHNormalizedError",
     "HHOAuthTokens",
+    "normalize_hh_api_error",
     "import_hh_vacancies",
     "import_hh_negotiations",
     "serialize_import_result",
+    "HHSyncIntent",
+    "enqueue_candidate_status_sync",
+    "load_candidate_hh_link_context",
+    "resolve_hh_sync_intent",
+    "should_sync_candidate_status",
     "build_hh_authorize_url",
     "sign_hh_oauth_state",
     "parse_hh_oauth_state",

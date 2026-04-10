@@ -1,4 +1,11 @@
 import { apiFetch } from '@/api/client'
+import type {
+  CandidateLifecycleSummary,
+  CandidateNextAction,
+  CandidateOperationalSummary,
+  CandidateSchedulingSummary,
+  CandidateStateReconciliation,
+} from '@/api/services/candidates'
 
 export type SummaryPayload = {
   recruiters: number
@@ -90,6 +97,11 @@ export type IncomingCandidate = {
   requested_another_time_from?: string | null
   requested_another_time_to?: string | null
   incoming_substatus?: string | null
+  lifecycle_summary?: CandidateLifecycleSummary | null
+  scheduling_summary?: CandidateSchedulingSummary | null
+  candidate_next_action?: CandidateNextAction | null
+  operational_summary?: CandidateOperationalSummary | null
+  state_reconciliation?: CandidateStateReconciliation | null
 }
 
 export type IncomingPayload = {

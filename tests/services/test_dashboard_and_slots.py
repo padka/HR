@@ -135,6 +135,12 @@ async def test_waiting_candidates_marks_requested_another_time(monkeypatch):
     assert row["requested_another_time_comment"] == "Подходит только вечер"
     assert row["requested_another_time_from"] is not None
     assert row["requested_another_time_to"] is not None
+    assert row["lifecycle_summary"]["stage"] in {"waiting_interview_slot", "interview"}
+    assert row["scheduling_summary"]["source"] == "slot_assignment"
+    assert row["scheduling_summary"]["status"] == "reschedule_requested"
+    assert row["candidate_next_action"]["primary_action"]["type"] == "resolve_reschedule"
+    assert row["operational_summary"]["queue_state"] == "requested_other_time"
+    assert row["operational_summary"]["requested_reschedule"] is True
 
 
 @pytest.mark.asyncio
@@ -219,6 +225,7 @@ async def test_waiting_candidates_uses_bot_state_for_reschedule_intent(monkeypat
     assert row["status_color"] == "warning"
     assert row["requested_another_time_from"] is None
     assert row["requested_another_time_to"] is None
+    assert row["operational_summary"]["queue_state"] == "requested_other_time"
 
 
 @pytest.mark.asyncio

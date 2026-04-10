@@ -10,23 +10,25 @@ Covers:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from fastapi.testclient import TestClient
-
 import backend.core.messenger.registry as registry_mod
+import pytest
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import MessengerRegistry
+from fastapi.testclient import TestClient
 
 
 def _make_settings(**overrides):
     """Create a mock Settings object with Max bot fields."""
     defaults = {
         "max_bot_enabled": True,
+        "max_bot_allow_public_entry": False,
         "max_bot_token": "test_max_token",
         "max_webhook_url": "",
         "max_webhook_secret": "test_secret",
+        "redis_url": "",
         "environment": "test",
     }
     defaults.update(overrides)
@@ -34,6 +36,11 @@ def _make_settings(**overrides):
     for k, v in defaults.items():
         setattr(mock, k, v)
     return mock
+
+
+@asynccontextmanager
+async def _noop_lifespan(_app):
+    yield
 
 
 @pytest.fixture
@@ -108,13 +115,13 @@ def _isolated_max_registry():
 @pytest.fixture
 def client(mock_settings):
     """Create a test client for the Max bot app (skip lifespan)."""
-    from backend.apps.max_bot.app import create_app
     import backend.apps.max_bot.app as max_app
+    from backend.apps.max_bot.app import create_app
 
     app = create_app()
     # Disable lifespan for unit tests
-    app.router.lifespan_context = None  # type: ignore
-    max_app._webhook_dedupe_fallback.clear()
+    app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+    max_app._reset_dedupe_state()
     max_app._set_subscription_status(status="not_configured", action="pending")
     return TestClient(app, raise_server_exceptions=False)
 
@@ -129,6 +136,90 @@ class TestHealthCheck:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["service"] == "max_bot"
+        assert data["public_entry_enabled"] is False
+        assert data["browser_portal_fallback_allowed"] is True
+        assert data["telegram_business_fallback_allowed"] is False
+        assert data["dedupe_ready"] is True
+        assert data["dedupe_mode"] == "memory"
+        assert data["readiness_blockers"] == []
+
+    def test_health_reports_public_entry_flag(self):
+        settings = _make_settings(max_bot_allow_public_entry=True)
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.get("/health")
+
+        assert resp.status_code == 200
+        assert resp.json()["public_entry_enabled"] is True
+
+    def test_health_disabled_when_feature_flag_off(self):
+        settings = _make_settings(max_bot_enabled=False, environment="production", max_webhook_secret="", redis_url="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.get("/health")
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "disabled"
+        assert payload["runtime_ready"] is True
+        assert payload["readiness_blockers"] == []
+        assert payload["dedupe_mode"] == "disabled"
+
+    def test_health_reports_webhook_url_blocker_outside_dev_test(self):
+        settings = _make_settings(environment="staging", max_webhook_url="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.get("/health")
+
+        assert resp.status_code == 503
+        payload = resp.json()
+        assert payload["status"] == "blocked"
+        assert "max_webhook_url_missing" in payload["readiness_blockers"]
+
+    def test_health_blocked_when_secret_missing_outside_dev_test(self):
+        settings = _make_settings(environment="staging", max_webhook_secret="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.get("/health")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["status"] == "blocked"
+        assert data["webhook_secret_error"] == "max_webhook_secret_missing"
+
+    def test_health_blocked_when_dedupe_unavailable_outside_dev_test(self):
+        settings = _make_settings(environment="staging", redis_url="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.get("/health")
+
+        assert resp.status_code == 503
+        payload = resp.json()
+        assert payload["status"] == "blocked"
+        assert payload["dedupe_ready"] is False
+        assert payload["dedupe_mode"] == "unavailable"
+        assert payload["dedupe_error"] == "max_webhook_dedupe_redis_missing"
+        assert "max_webhook_dedupe_redis_missing" in payload["readiness_blockers"]
 
 
 # ── Webhook Security ─────────────────────────────────────────────────────
@@ -160,20 +251,36 @@ class TestWebhookSecurity:
         )
         assert resp.status_code == 403
 
-    def test_no_secret_configured(self):
-        """When no secret is configured, all requests are accepted."""
+    def test_no_secret_configured_allowed_in_test(self):
+        """Development/test may bypass webhook secret when explicitly unset."""
         settings = _make_settings(max_webhook_secret="")
         with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
             from backend.apps.max_bot.app import create_app
 
             app = create_app()
-            app.router.lifespan_context = None  # type: ignore
-            no_secret_client = TestClient(app, raise_server_exceptions=False)
-            resp = no_secret_client.post(
-                "/webhook",
-                json={"update_type": "bot_started", "chat_id": 1, "user": {"user_id": 1}},
-            )
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as no_secret_client:
+                resp = no_secret_client.post(
+                    "/webhook",
+                    json={"update_type": "bot_started", "chat_id": 1, "user": {"user_id": 1}},
+                )
             assert resp.status_code == 200
+
+    def test_no_secret_configured_rejected_outside_dev_test(self):
+        settings = _make_settings(environment="staging", max_webhook_secret="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            with TestClient(app, raise_server_exceptions=False) as no_secret_client:
+                resp = no_secret_client.post(
+                    "/webhook",
+                    json={"update_type": "bot_started", "chat_id": 1, "user": {"user_id": 1}},
+                )
+
+        assert resp.status_code == 503
+        assert resp.json()["error"] == "max_webhook_secret_missing"
 
     def test_invalid_json(self, client):
         resp = client.post(
@@ -199,6 +306,34 @@ class TestEventRouting:
         )
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+    def test_duplicate_message_created_with_message_id_is_deduped(self, client):
+        payload = {
+            "update_type": "message_created",
+            "message": {
+                "message_id": "mx-mid-1",
+                "sender": {"user_id": 456, "name": "Тест Кандидат"},
+                "body": {"text": "resume"},
+            },
+        }
+        with patch("backend.apps.max_bot.app.process_text_message", new_callable=AsyncMock) as mock_process:
+            mock_process.return_value = []
+
+            first = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+            second = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["duplicate"] is True
+        mock_process.assert_awaited_once()
 
 
 # ── Subscription Reconciliation ───────────────────────────────────────────
@@ -364,11 +499,17 @@ class TestVerifySecret:
 
         assert _verify_secret("wrong", "abc") is False
 
-    def test_no_configured_secret(self):
+    def test_no_configured_secret_allowed_explicitly(self):
         from backend.apps.max_bot.app import _verify_secret
 
-        assert _verify_secret(None, "") is True
-        assert _verify_secret("anything", "") is True
+        assert _verify_secret(None, "", allow_unset=True) is True
+        assert _verify_secret("anything", "", allow_unset=True) is True
+
+    def test_no_configured_secret_rejected_by_default(self):
+        from backend.apps.max_bot.app import _verify_secret
+
+        assert _verify_secret(None, "") is False
+        assert _verify_secret("anything", "") is False
 
     def test_none_request_secret(self):
         from backend.apps.max_bot.app import _verify_secret
@@ -391,6 +532,82 @@ class TestWebhookDedupe:
         assert second.status_code == 200
         assert first.json().get("duplicate") is None
         assert second.json()["duplicate"] is True
+
+    def test_duplicate_message_created_without_message_id_is_deduped(self, client):
+        payload = {
+            "update_type": "message_created",
+            "timestamp": 1712345678,
+            "message": {
+                "body": {"text": "resume"},
+                "sender": {"user_id": "mx-user-1", "name": "Max Candidate"},
+            },
+        }
+        with patch("backend.apps.max_bot.app.process_text_message", new_callable=AsyncMock) as mock_process:
+            mock_process.return_value = []
+
+            first = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+            second = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["duplicate"] is True
+        mock_process.assert_awaited_once()
+
+    def test_transportless_message_created_without_message_id_is_not_deduped(self, client):
+        payload = {
+            "update_type": "message_created",
+            "message": {
+                "body": {"text": "resume"},
+                "sender": {"user_id": "mx-user-1", "name": "Max Candidate"},
+            },
+        }
+        with patch("backend.apps.max_bot.app.process_text_message", new_callable=AsyncMock) as mock_process:
+            mock_process.return_value = []
+
+            first = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+            second = client.post(
+                "/webhook",
+                json=payload,
+                headers={"X-Max-Bot-Api-Secret": "test_secret"},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["ok"] is True
+        assert second.json()["ok"] is True
+        assert second.json().get("duplicate") is None
+        assert mock_process.await_count == 2
+
+    def test_webhook_rejected_when_dedupe_unavailable_outside_dev_test(self):
+        settings = _make_settings(environment="staging", redis_url="")
+        with patch("backend.apps.max_bot.app.get_settings", return_value=settings):
+            import backend.apps.max_bot.app as max_app
+            from backend.apps.max_bot.app import create_app
+
+            app = create_app()
+            app.router.lifespan_context = _noop_lifespan  # type: ignore[assignment]
+            max_app._reset_dedupe_state()
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/webhook",
+                    json={"update_type": "bot_started", "chat_id": 1, "user": {"user_id": 1}},
+                    headers={"X-Max-Bot-Api-Secret": "test_secret"},
+                )
+
+        assert response.status_code == 503
+        assert response.json()["error"] == "dedupe_unavailable"
 
 
 class TestWebhookFailureSemantics:

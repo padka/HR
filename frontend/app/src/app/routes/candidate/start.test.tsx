@@ -174,7 +174,7 @@ describe('CandidateStartPage', () => {
       },
       company: {
         name: 'SMART SERVICE',
-        summary: 'Выберите, где продолжить общение.',
+        summary: 'Выберите мессенджер.',
         highlights: ['Test 1', 'Слот'],
       },
       journey: {
@@ -211,8 +211,73 @@ describe('CandidateStartPage', () => {
 
     await waitFor(() => {
       expect(verifyCandidateSharedAccessCodeMock).toHaveBeenCalledWith('challenge-token', '123456')
-      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
+      expect(screen.getByText('Выберите мессенджер')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть MAX' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть Telegram' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть в браузере' })).toBeInTheDocument()
+    })
+  })
+
+  it('shows active-stage copy when candidate already has progress in the system', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    startCandidateSharedAccessChallengeMock.mockResolvedValue({
+      ok: true,
+      challenge_token: 'challenge-token',
+      expires_in_seconds: 600,
+      retry_after_seconds: 60,
+      message: 'Если номер найден, мы отправили код в связанный канал кандидата.',
+    })
+    verifyCandidateSharedAccessCodeMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        status: 'interview_scheduled',
+        status_label: 'Назначено собеседование',
+      },
+      company: {
+        name: 'SMART SERVICE',
+        summary: 'Откройте текущий этап в нужном мессенджере.',
+        highlights: ['Собеседование', 'История'],
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'status',
+        current_step_label: 'Статус',
+        next_action: 'У вас уже есть назначенное собеседование. Откройте текущий путь кандидата.',
+        last_entry_channel: 'telegram',
+        available_channels: ['web', 'max', 'telegram'],
+        channel_options: {
+          web: { channel: 'web', enabled: true, launch_url: '/candidate/journey', type: 'cabinet' },
+          max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+          telegram: { channel: 'telegram', enabled: true, launch_url: 'https://t.me/test_bot?start=token', type: 'external' },
+        },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    fireEvent.change(await screen.findByPlaceholderText('+7 900 000 00 00'), {
+      target: { value: '+7 999 000 00 00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Получить код входа' }))
+
+    await waitFor(() => {
+      expect(startCandidateSharedAccessChallengeMock).toHaveBeenCalled()
+    })
+
+    fireEvent.change(screen.getByPlaceholderText('123456'), {
+      target: { value: '123456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Подтвердить код' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'У вас уже есть активный этап' })).toBeInTheDocument()
+      expect(screen.getByText('Текущая активность')).toBeInTheDocument()
+      expect(screen.getByText(/не запустит процесс заново/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть в браузере' })).toBeInTheDocument()
     })
   })
 
@@ -237,7 +302,8 @@ describe('CandidateStartPage', () => {
     window.sessionStorage.clear()
     window.history.pushState({}, '', '/candidate/start')
     const readyMock = vi.fn()
-    ;(window as typeof window & { WebApp?: { initDataUnsafe?: { start_param?: string }; ready?: () => void } }).WebApp = {
+    ;(window as typeof window & { WebApp?: { initData?: string; initDataUnsafe?: { start_param?: string }; ready?: () => void } }).WebApp = {
+      initData: 'auth_date=123&user=%7B%22id%22%3A%22mx-user%22%7D&hash=test',
       initDataUnsafe: { start_param: 'max-invite-token' },
       ready: readyMock,
     }
@@ -250,7 +316,9 @@ describe('CandidateStartPage', () => {
 
     await waitFor(() => {
       expect(readyMock).toHaveBeenCalled()
-      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('max-invite-token')
+      expect(exchangeCandidatePortalTokenMock).toHaveBeenCalledWith('max-invite-token', {
+        maxWebAppData: 'auth_date=123&user=%7B%22id%22%3A%22mx-user%22%7D&hash=test',
+      })
       expect(navigateMock).toHaveBeenCalledWith({ to: '/candidate/journey' })
     })
   })
@@ -342,10 +410,10 @@ describe('CandidateStartPage', () => {
         next_action: 'Выберите удобный канал, чтобы пройти анкету.',
       },
       company_preview: {
-        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        summary: 'Можно продолжить в MAX или Telegram.',
         highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
       },
-      suggested_channel: 'web',
+      suggested_channel: 'max',
       options: {
         web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
         max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
@@ -357,7 +425,7 @@ describe('CandidateStartPage', () => {
 
     await waitFor(() => {
       expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
-      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
+      expect(screen.getByText('Выберите мессенджер')).toBeInTheDocument()
     })
   })
 
@@ -374,7 +442,7 @@ describe('CandidateStartPage', () => {
     render(<CandidateStartPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+      expect(screen.getByText('Начните путь в мессенджере')).toBeInTheDocument()
       expect(screen.queryByText('Продолжить на этом устройстве')).not.toBeInTheDocument()
     })
   })
@@ -399,10 +467,10 @@ describe('CandidateStartPage', () => {
         next_action: 'Выберите удобный канал, чтобы продолжить.',
       },
       company_preview: {
-        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        summary: 'Можно продолжить в MAX или Telegram.',
         highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
       },
-      suggested_channel: 'web',
+      suggested_channel: 'max',
       options: {
         web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
         max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
@@ -413,13 +481,13 @@ describe('CandidateStartPage', () => {
     render(<CandidateStartPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Начните путь в компании')).toBeInTheDocument()
+      expect(screen.getByText('Начните путь в мессенджере')).toBeInTheDocument()
     })
     fireEvent.click(screen.getByRole('button', { name: 'Продолжить на этом устройстве' }))
 
     await waitFor(() => {
       expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
-      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
+      expect(screen.getByText('Выберите мессенджер')).toBeInTheDocument()
     })
   })
 
@@ -443,10 +511,10 @@ describe('CandidateStartPage', () => {
         next_action: 'Выберите удобный канал, чтобы пройти анкету.',
       },
       company_preview: {
-        summary: 'Можно продолжить в Web, MAX или Telegram.',
+        summary: 'Можно продолжить в MAX или Telegram.',
         highlights: ['Тест 1', 'Слот', 'Чат с рекрутером'],
       },
-      suggested_channel: 'web',
+      suggested_channel: 'max',
       options: {
         web: { channel: 'web', enabled: true, launch_url: 'https://crm.example.test/candidate/start?start=token', type: 'cabinet' },
         max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
@@ -458,11 +526,57 @@ describe('CandidateStartPage', () => {
 
     await waitFor(() => {
       expect(resolveCandidateEntryGatewayMock).toHaveBeenCalledWith('hh-entry-token')
-      expect(screen.getByText('Выберите, где продолжить общение')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Открыть кабинет' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Продолжить в MAX' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Продолжить в Telegram' })).toBeInTheDocument()
+      expect(screen.getByText('Выберите мессенджер')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Открыть кабинет' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть MAX' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть Telegram' })).toBeInTheDocument()
       expect(screen.getByText('telegram_entry_blocked')).toBeInTheDocument()
+    })
+  })
+
+  it('shows blocked browser fallback state without inventing a new recovery path', async () => {
+    useParamsMock.mockReturnValue({ token: '' })
+    window.history.pushState({}, '', '/candidate/start?entry=hh-entry-token')
+    resolveCandidateEntryGatewayMock.mockResolvedValue({
+      candidate: {
+        id: 1,
+        candidate_id: 'cid',
+        fio: 'Иван Петров',
+        city: 'Москва',
+        vacancy_label: 'Оператор склада',
+        company: 'SMART SERVICE',
+      },
+      journey: {
+        session_id: 7,
+        current_step: 'status',
+        current_step_label: 'Статус',
+        status_label: 'Ожидает подтверждение',
+        next_action: 'Продолжите текущий этап в доступном канале.',
+      },
+      company_preview: {
+        summary: 'Продолжите текущий этап.',
+        highlights: ['Статус', 'История'],
+      },
+      suggested_channel: 'max',
+      fallback_policy: 'messenger_first',
+      options: {
+        web: {
+          channel: 'web',
+          enabled: false,
+          launch_url: null,
+          reason_if_blocked: 'browser_portal_temporarily_blocked',
+          type: 'cabinet',
+        },
+        max: { channel: 'max', enabled: true, launch_url: 'https://max.ru/id1_bot?startapp=token', type: 'external' },
+        telegram: { channel: 'telegram', enabled: false, reason_if_blocked: 'telegram_entry_blocked', type: 'external' },
+      },
+    })
+
+    render(<CandidateStartPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('browser_portal_temporarily_blocked')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть в браузере' })).toBeDisabled()
     })
   })
 })

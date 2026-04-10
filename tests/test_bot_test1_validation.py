@@ -26,6 +26,7 @@ from backend.apps.bot.services import (
     _handle_test1_rejection,
     _resolve_test1_options,
 )
+from backend.domain.candidates.portal_service import CandidateActivityGuard
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 
 USER_ID = 555
@@ -674,3 +675,45 @@ async def test_handle_test1_answer_ignored_in_chat_mode(bot_context, monkeypatch
 
     assert message.reply.await_count == 0
     assert message.answer.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_begin_interview_blocks_existing_candidate_with_active_stage(bot_context, monkeypatch):
+    manager, dummy_bot = bot_context
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        async def get(self, _model, _pk):
+            return SimpleNamespace(id=1)
+
+    summary_mock = AsyncMock()
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.get_recruiter_by_chat_id", AsyncMock(return_value=None))
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.candidate_services.set_conversation_mode", AsyncMock())
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.candidate_services.get_user_by_telegram_id",
+        AsyncMock(return_value=SimpleNamespace(id=1)),
+    )
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.async_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.ensure_candidate_portal_session",
+        AsyncMock(return_value=SimpleNamespace(id=7, session_version=1)),
+    )
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.resolve_candidate_activity_guard",
+        AsyncMock(return_value=CandidateActivityGuard(blocked=True, code="candidate_screening_locked", state="blocked")),
+    )
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow._send_active_candidate_summary", summary_mock)
+
+    await begin_interview(USER_ID)
+
+    assert await manager.get(USER_ID) is None
+    summary_mock.assert_awaited_once()
+    dummy_bot.send_message.assert_not_called()

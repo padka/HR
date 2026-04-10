@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from backend.core.time_utils import ensure_aware_utc
+from sqlalchemy.ext.asyncio import AsyncSession
 from backend.domain.repositories import (
     ReservationResult,
     approve_slot as _approve_slot,
@@ -96,12 +97,30 @@ async def approve_slot(slot_id: int):
     return await _approve_slot(slot_id)
 
 
-async def reject_slot(slot_id: int):
-    return await _reject_slot(slot_id)
+async def reject_slot(
+    slot_id: int,
+    *,
+    session: Optional[AsyncSession] = None,
+    update_candidate_status: bool = True,
+):
+    return await _reject_slot(
+        slot_id,
+        session=session,
+        update_candidate_status=update_candidate_status,
+    )
 
 
-async def confirm_slot_by_candidate(slot_id: int):
-    return await _confirm_slot_by_candidate(slot_id)
+async def confirm_slot_by_candidate(
+    slot_id: int,
+    *,
+    session: Optional[AsyncSession] = None,
+    update_candidate_status: bool = True,
+):
+    return await _confirm_slot_by_candidate(
+        slot_id,
+        session=session,
+        update_candidate_status=update_candidate_status,
+    )
 
 
 async def get_slot(slot_id: int):

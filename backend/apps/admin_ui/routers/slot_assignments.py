@@ -22,6 +22,7 @@ from backend.domain.slot_assignment_service import (
     decline_reschedule,
     propose_alternative,
 )
+from backend.domain.scheduling_repair_service import repair_slot_assignment_scheduling_conflict
 
 router = APIRouter(prefix="/api", tags=["slot-assignments"])
 
@@ -42,12 +43,31 @@ class AlternativeProposalRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class SchedulingRepairRequest(BaseModel):
+    action: str = Field(..., min_length=1)
+    chosen_assignment_id: Optional[int] = Field(default=None, gt=0)
+    chosen_slot_id: Optional[int] = Field(default=None, gt=0)
+    confirmations: list[str] = Field(default_factory=list)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
 def _respond(result: ServiceResult) -> dict:
     payload = {"ok": result.ok, "status": result.status}
     if result.message:
         payload["message"] = result.message
     payload.update(result.payload or {})
     return payload
+
+
+def _raise_service_error(result: ServiceResult) -> None:
+    detail: dict | str = result.message or result.status
+    if result.payload:
+        detail = {
+            "error": result.status,
+            "message": result.message or result.status,
+            **result.payload,
+        }
+    raise HTTPException(status_code=result.status_code, detail=detail)
 
 
 async def _ensure_assignment_scope(
@@ -112,7 +132,7 @@ async def api_create_slot_assignment(
         created_by=f"{principal.type}:{principal.id}",
     )
     if not result.ok:
-        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
+        _raise_service_error(result)
     return _respond(result)
 
 
@@ -132,7 +152,7 @@ async def api_approve_reschedule(
         comment=payload.comment,
     )
     if not result.ok:
-        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
+        _raise_service_error(result)
     return _respond(result)
 
 
@@ -153,7 +173,7 @@ async def api_propose_alternative(
         comment=payload.comment,
     )
     if not result.ok:
-        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
+        _raise_service_error(result)
     return _respond(result)
 
 
@@ -173,5 +193,29 @@ async def api_decline_reschedule(
         comment=payload.comment,
     )
     if not result.ok:
-        raise HTTPException(status_code=result.status_code, detail=result.message or result.status)
+        _raise_service_error(result)
+    return _respond(result)
+
+
+@router.post("/slot-assignments/{assignment_id}/repair")
+async def api_repair_slot_assignment(
+    assignment_id: int,
+    payload: SchedulingRepairRequest,
+    request: Request,
+    principal: Principal = Depends(require_principal),
+):
+    await require_csrf_token(request)
+    await _ensure_assignment_scope(assignment_id, principal)
+    result = await repair_slot_assignment_scheduling_conflict(
+        assignment_id=assignment_id,
+        repair_action=payload.action,
+        performed_by_type=principal.type,
+        performed_by_id=principal.id,
+        chosen_assignment_id=payload.chosen_assignment_id,
+        chosen_slot_id=payload.chosen_slot_id,
+        confirmations=payload.confirmations,
+        note=payload.note,
+    )
+    if not result.ok:
+        _raise_service_error(result)
     return _respond(result)

@@ -113,9 +113,26 @@
   background: var(--bg-surface);
 }
 
+.candidate-row--selected td,
+.candidate-mobile-card--selected {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
+}
+
+.candidate-row__cell--select {
+  width: 44px;
+  padding-right: 0;
+}
+
 .candidate-row__identity {
   display: grid;
   gap: var(--space-1);
+}
+
+.candidate-row__meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 .candidate-row__name {
@@ -154,6 +171,14 @@
   justify-content: flex-end;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+.candidate-row__signals-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .candidates-status-pill {
@@ -217,6 +242,11 @@
   border: 1px solid var(--border-default);
   background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
+}
+
+.kanban-column--locked {
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--warning-muted));
+  border-color: color-mix(in srgb, var(--warning) 18%, var(--border-default));
 }
 
 .kanban-column-header {
@@ -324,6 +354,12 @@
   box-shadow: var(--shadow-xs);
 }
 
+.candidate-mobile-card__top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
 .candidate-mobile-card__meta {
   display: flex;
   align-items: center;
@@ -331,9 +367,55 @@
   gap: var(--space-2);
 }
 
+.candidates-selection-bar {
+  position: sticky;
+  top: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-default));
+}
+
+.candidates-selection-bar__summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.candidates-selection-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.candidate-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.candidate-select input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.candidates-kanban-feedback {
+  margin-top: var(--space-3);
+}
+
 @media (max-width: 900px) {
   .candidate-row__actions {
     justify-content: flex-start;
+  }
+
+  .candidate-row__signals-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
@@ -358,5 +440,10 @@
 
   .kanban {
     grid-auto-columns: minmax(260px, 88vw);
+  }
+
+  .candidates-selection-bar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

@@ -45,3 +45,12 @@ class HHIdentitySyncStatus:
     FAILED = "failed_sync"
     CONFLICTED = "conflicted"
     STALE = "stale"
+
+
+class HHSyncFailureCode:
+    TRANSPORT_ERROR = "transport_error"
+    PROVIDER_HTTP_ERROR = "provider_http_error"
+    TOKEN_REFRESH_REQUIRED = "token_refresh_required"
+    ACTION_UNAVAILABLE = "action_unavailable"
+    WRONG_STATE = "wrong_state"
+    IDENTITY_NOT_LINKED = "identity_not_linked"

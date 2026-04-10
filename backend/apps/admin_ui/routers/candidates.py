@@ -40,6 +40,7 @@ from backend.apps.admin_ui.services.candidates import (
     resolve_intro_day_template_source,
 )
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
+from backend.apps.admin_ui.services.candidates.write_intents import execute_candidate_action_intent
 from backend.apps.admin_ui.security import (
     Principal,
     get_principal_identifier,
@@ -1379,51 +1380,17 @@ async def api_candidate_action(
     reason = payload.get("reason") or payload.get("reject_reason")
     comment = payload.get("comment") or payload.get("reject_comment")
     
-    # 1. Get candidate and allowed actions
-    detail = await get_candidate_detail(candidate_id, principal=principal)
-    if not detail:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    
-    # 2. Find matching action definition
-    actions = detail.get("candidate_actions", [])
-    action_def = next((a for a in actions if a.key == action_key), None)
-    
-    if not action_def:
-        # Fallback: check if it's a legacy or special action not in the list but valid?
-        # For now, strict validation against allowed actions for current status
-        logger.warning(f"Action {action_key} not allowed for candidate {candidate_id}")
-        return JSONResponse(
-            {"ok": False, "message": "Действие недоступно в текущем статусе"}, 
-            status_code=400
-        )
-
-    target_status = action_def.target_status
-    
-    if not target_status:
-        # Action without status change (e.g. just logic)
-        # Currently not implemented for generic handler
-        return JSONResponse({"ok": True, "message": "Action executed"})
-
-    # 3. Execute status change
-    ok, message, stored_status, dispatch = await update_candidate_status(
+    result = await execute_candidate_action_intent(
         candidate_id,
-        target_status,
+        action_key,
         bot_service=bot_service,
         principal=principal,
         reason=reason,
         comment=comment,
     )
-    
-    if not ok:
-        return JSONResponse({"ok": False, "message": message}, status_code=400)
-        
-    # 4. Handle side effects (Bot)
+
+    dispatch = getattr(result, "dispatch", None)
     if dispatch and dispatch.plan:
-        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, stored_status or "", bot_service)
-        
-    return JSONResponse({
-        "ok": True, 
-        "message": message, 
-        "status": stored_status,
-        "action": action_key
-    })
+        background_tasks.add_task(execute_bot_dispatch, dispatch.plan, result.status or "", bot_service)
+
+    return JSONResponse(result.as_payload(), status_code=result.status_code)

@@ -169,6 +169,11 @@ export function markCandidateWebAppReady() {
   bridge?.ready?.()
 }
 
+export function readCandidateWebAppInitData(): string {
+  const bridge = getWebAppBridge()
+  return typeof bridge?.initData === 'string' ? bridge.initData.trim() : ''
+}
+
 export function resolveCandidatePortalToken(routeToken?: string): CandidatePortalTokenResolution {
   const locationToken = resolvePortalTokenFromLocation(routeToken)
   if (locationToken.token) return locationToken

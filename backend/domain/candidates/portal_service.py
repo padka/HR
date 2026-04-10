@@ -12,6 +12,7 @@ import re
 import time
 from urllib.parse import quote, urlparse
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, or_, select
@@ -26,11 +27,13 @@ from backend.core.messenger.registry import get_registry
 from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.candidates.journey import append_journey_event, journey_state_label
 from backend.domain.candidates.models import (
     CandidateJourneySession,
     CandidateJourneySessionStatus,
     CandidateJourneyStepState,
     CandidateJourneyStepStatus,
+    CandidateJourneyEvent,
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
@@ -39,6 +42,10 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.phones import format_candidate_phone_display, require_candidate_phone
+from backend.domain.candidates.scheduling_integrity import (
+    WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR,
+    load_candidate_scheduling_integrity,
+)
 from backend.domain.candidates.status import CandidateStatus, STATUS_LABELS
 from backend.domain.models import City, Slot, SlotStatus
 from backend.domain.repositories import find_city_by_plain_name
@@ -84,6 +91,20 @@ _status_service = CandidateStatusService()
 class CandidatePortalError(ValueError):
     """Base class for candidate portal validation errors."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        state: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = str(message)
+        self.code = str(code).strip() or None if code is not None else None
+        self.state = str(state).strip() or None if state is not None else None
+        self.meta = dict(meta) if isinstance(meta, dict) else None
+
 
 class CandidatePortalAuthError(CandidatePortalError):
     """Raised when a portal access token or session is invalid."""
@@ -97,6 +118,15 @@ class CandidatePortalAccess:
     source_channel: str
     journey_session_id: int | None = None
     session_version: int | None = None
+
+
+@dataclass(frozen=True)
+class CandidateActivityGuard:
+    blocked: bool
+    message: str | None = None
+    code: str | None = None
+    state: str | None = None
+    meta: dict[str, Any] | None = None
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -1640,6 +1670,101 @@ async def get_candidate_active_slot(session: AsyncSession, candidate: User) -> S
     )
 
 
+async def get_candidate_active_scheduling_slot(session: AsyncSession, candidate: User) -> Slot | None:
+    telegram_ids = {
+        int(value)
+        for value in (candidate.telegram_id, candidate.telegram_user_id)
+        if value is not None
+    }
+    conditions = [Slot.candidate_id == candidate.candidate_id]
+    if telegram_ids:
+        conditions.append(Slot.candidate_tg_id.in_(telegram_ids))
+
+    return await session.scalar(
+        select(Slot)
+        .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+        .where(
+            or_(*conditions),
+            func.lower(Slot.status).in_([status.lower() for status in PORTAL_ACTIVE_SLOT_STATUSES]),
+        )
+        .order_by(Slot.start_utc.asc(), Slot.id.asc())
+        .limit(1)
+    )
+
+
+def _journey_payload_meta(journey: CandidateJourneySession) -> dict[str, Any]:
+    return dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
+
+
+def _mark_journey_event_once(
+    candidate: User,
+    journey: CandidateJourneySession,
+    *,
+    flag_key: str,
+    event_key: str,
+    summary: str,
+    stage: str | None = None,
+    actor_type: str = "candidate",
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    meta = _journey_payload_meta(journey)
+    if meta.get(flag_key):
+        return False
+    now = _utcnow()
+    meta[flag_key] = now.isoformat()
+    journey.payload_json = meta
+    append_journey_event(
+        candidate,
+        event_key=event_key,
+        stage=stage,
+        status=getattr(candidate, "candidate_status", None),
+        actor_type=actor_type,
+        summary=summary,
+        payload=payload,
+        created_at=now,
+    )
+    return True
+
+
+async def _ensure_portal_slot_write_allowed(session: AsyncSession, candidate: User) -> None:
+    integrity = await load_candidate_scheduling_integrity(session, candidate)
+    if integrity.get("slot_only_writes_allowed"):
+        return
+    if integrity.get("write_behavior") == WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR:
+        raise CandidatePortalError(
+            "Не удалось изменить запись: Slot и SlotAssignment расходятся. Нужна ручная проверка рекрутера.",
+            code="candidate_schedule_manual_repair_required",
+            state="blocked",
+            meta={
+                "integrity_state": integrity.get("integrity_state"),
+                "write_behavior": integrity.get("write_behavior"),
+                "assignment_owned": bool(integrity.get("assignment_owned")),
+                "repair_workflow": dict(integrity.get("repair_workflow") or {}),
+            },
+        )
+    if integrity.get("assignment_owned"):
+        raise CandidatePortalError(
+            "Эта запись уже управляется через предложение времени от рекрутера. Измените её через рекрутера.",
+            code="candidate_schedule_assignment_owned",
+            state="blocked",
+            meta={
+                "integrity_state": integrity.get("integrity_state"),
+                "write_behavior": integrity.get("write_behavior"),
+                "assignment_owned": True,
+            },
+        )
+    raise CandidatePortalError(
+        "Не удалось изменить запись. Повторите позже или обратитесь к рекрутёру.",
+        code="candidate_schedule_write_blocked",
+        state="blocked",
+        meta={
+            "integrity_state": integrity.get("integrity_state"),
+            "write_behavior": integrity.get("write_behavior"),
+            "assignment_owned": bool(integrity.get("assignment_owned")),
+        },
+    )
+
+
 async def list_candidate_portal_slots(
     session: AsyncSession,
     *,
@@ -1734,6 +1859,7 @@ def _next_action_text(
     current_step: str,
     has_available_slots: bool,
     active_slot: Slot | None,
+    candidate_status: CandidateStatus | None = None,
 ) -> str:
     if current_step == "profile":
         return "Заполните профиль, чтобы сохранить контакт и продолжить анкету."
@@ -1748,6 +1874,21 @@ def _next_action_text(
         if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
             return "Собеседование подтверждено. Следите за напоминаниями и статусом."
         return "Проверьте детали собеседования и при необходимости подтвердите или перенесите слот."
+    if candidate_status in {
+        CandidateStatus.TEST1_COMPLETED,
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+        CandidateStatus.SLOT_PENDING,
+        CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_CONFIRMED,
+        CandidateStatus.TEST2_SENT,
+        CandidateStatus.TEST2_COMPLETED,
+        CandidateStatus.INTRO_DAY_SCHEDULED,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+        CandidateStatus.HIRED,
+    }:
+        return "У вас уже есть активность в системе на текущем этапе. Продолжайте отслеживать этот путь в кабинете и мессенджере."
     if has_available_slots:
         return "Выберите слот, чтобы завершить запись на собеседование."
     return "Слотов пока нет. Мы сохранили ваш прогресс и покажем следующий шаг здесь."
@@ -1988,6 +2129,184 @@ def _feedback_items(
     return items[:4]
 
 
+def _history_status_label(status_slug: str | None) -> str | None:
+    normalized = str(status_slug or "").strip().lower()
+    if not normalized:
+        return None
+    try:
+        return STATUS_LABELS.get(CandidateStatus(normalized))
+    except Exception:
+        return journey_state_label(normalized)
+
+
+def _history_event_title(event: CandidateJourneyEvent) -> str:
+    event_key = str(event.event_key or "").strip().lower()
+    titles = {
+        "portal_entered": "Открыт кабинет кандидата",
+        "shared_access_verified": "Подтверждён вход по коду",
+        "screening_started": "Анкета начата",
+        "screening_completed": "Анкета завершена",
+        "screening_reentry_blocked": "Повторное тестирование заблокировано",
+        "portal_restarted": "Путь кандидата перезапущен",
+        "status_changed": "Статус обновлён",
+    }
+    return titles.get(event_key, "Обновление по кандидату")
+
+
+def _history_event_body(event: CandidateJourneyEvent) -> str:
+    summary = str(event.summary or "").strip()
+    if summary:
+        return summary
+    status_label = _history_status_label(getattr(event, "status_slug", None))
+    return status_label or "Детали сохранены в истории кандидата."
+
+
+def _history_slot_title(slot: Slot) -> str:
+    return "Ознакомительный день" if str(slot.purpose or "").strip().lower() == "intro_day" else "Собеседование"
+
+
+def _history_slot_body(slot: Slot) -> str:
+    status_label = _portal_slot_status_label(getattr(slot, "status", None)) or "Статус обновляется"
+    city_name = getattr(getattr(slot, "city", None), "name_plain", None) or getattr(getattr(slot, "city", None), "name", None) or "город уточняется"
+    start_at = None
+    if slot.start_utc is not None:
+        start_at = format_datetime_for_candidate(slot.start_utc, slot.tz_name or slot.candidate_tz)
+    if start_at:
+        return f"{status_label} · {city_name} · {start_at}"
+    return f"{status_label} · {city_name}"
+
+
+def format_datetime_for_candidate(value: datetime, time_zone: str | None) -> str:
+    if value.tzinfo is None:
+        source = value.replace(tzinfo=timezone.utc)
+    else:
+        source = value
+    tz_name = str(time_zone or "").strip()
+    if tz_name:
+        try:
+            source = source.astimezone(timezone.utc if tz_name.upper() == "UTC" else ZoneInfo(tz_name))
+        except Exception:
+            pass
+    return source.strftime("%d.%m.%Y %H:%M")
+
+
+def _serialize_portal_history_item(
+    *,
+    kind: str,
+    created_at: datetime | None,
+    title: str,
+    body: str,
+    stage: str | None = None,
+    status_label: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "created_at": created_at.isoformat() if created_at else None,
+        "title": title,
+        "body": body,
+        "stage": stage,
+        "status_label": status_label,
+    }
+
+
+def _history_sort_dt(value: datetime | None) -> datetime:
+    if value is None:
+        return _utcnow()
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _build_candidate_portal_history(
+    *,
+    events: list[CandidateJourneyEvent],
+    slots: list[Slot],
+    test1_result: TestResult | None,
+    latest_test2_result: TestResult | None,
+    messages: list[ChatMessage],
+) -> list[dict[str, Any]]:
+    history: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        created_at = _history_sort_dt(getattr(event, "created_at", None))
+        history.append(
+            (
+                created_at,
+                _serialize_portal_history_item(
+                    kind="journey",
+                    created_at=getattr(event, "created_at", None),
+                    title=_history_event_title(event),
+                    body=_history_event_body(event),
+                    stage=getattr(event, "stage", None),
+                    status_label=_history_status_label(getattr(event, "status_slug", None)),
+                ),
+            )
+        )
+    if test1_result is not None:
+        history.append(
+            (
+                _history_sort_dt(getattr(test1_result, "created_at", None)),
+                _serialize_portal_history_item(
+                    kind="test",
+                    created_at=getattr(test1_result, "created_at", None),
+                    title="Тест 1 завершён",
+                    body="Результаты анкеты сохранены в CRM и доступны рекрутеру.",
+                    stage="testing",
+                    status_label="Анкета завершена",
+                ),
+            )
+        )
+    if latest_test2_result is not None:
+        history.append(
+            (
+                _history_sort_dt(getattr(latest_test2_result, "created_at", None)),
+                _serialize_portal_history_item(
+                    kind="test",
+                    created_at=getattr(latest_test2_result, "created_at", None),
+                    title="Тест 2 завершён",
+                    body="Результат второго теста сохранён в системе.",
+                    stage="testing",
+                    status_label="Тест 2 завершён",
+                ),
+            )
+        )
+    for slot in slots:
+        created_at = _history_sort_dt(getattr(slot, "start_utc", None))
+        history.append(
+            (
+                created_at,
+                _serialize_portal_history_item(
+                    kind="slot",
+                    created_at=getattr(slot, "start_utc", None),
+                    title=_history_slot_title(slot),
+                    body=_history_slot_body(slot),
+                    stage="intro_day" if str(slot.purpose or "").strip().lower() == "intro_day" else "interview",
+                    status_label=_portal_slot_status_label(getattr(slot, "status", None)),
+                ),
+            )
+        )
+    outbound_messages = [
+        message for message in messages
+        if message.direction == ChatMessageDirection.OUTBOUND.value and (message.text or "").strip()
+    ]
+    for message in outbound_messages[:5]:
+        created_at = _history_sort_dt(getattr(message, "created_at", None))
+        history.append(
+            (
+                created_at,
+                _serialize_portal_history_item(
+                    kind="message",
+                    created_at=getattr(message, "created_at", None),
+                    title="Сообщение от рекрутера",
+                    body=str(message.text or "").strip(),
+                    stage=None,
+                    status_label="Есть обновление",
+                ),
+            )
+        )
+    history.sort(key=lambda item: item[0], reverse=True)
+    return [item for _, item in history[:12]]
+
+
 async def build_candidate_portal_journey(
     session: AsyncSession,
     candidate: User,
@@ -2006,6 +2325,8 @@ async def build_candidate_portal_journey(
     step_map = {item.step_key: item for item in journey.step_states}
     profile_state = step_map.get("profile")
     screening_state = step_map.get("screening")
+    if "journey_events" not in candidate.__dict__:
+        await session.refresh(candidate, attribute_names=["journey_events"])
 
     test1_result = await get_latest_test1_result_for_journey(
         session,
@@ -2042,11 +2363,23 @@ async def build_candidate_portal_journey(
         )
     screening_complete = test1_result is not None
     has_available_slots = len(available_slots) > 0
+    unlocked_screening_statuses = {
+        None,
+        CandidateStatus.LEAD,
+        CandidateStatus.CONTACTED,
+        CandidateStatus.INVITED,
+    }
 
     if not profile_complete:
         current_step = "profile"
-    elif not screening_complete:
+    elif not screening_complete and candidate.candidate_status in unlocked_screening_statuses:
         current_step = "screening"
+    elif active_slot is None and has_available_slots and candidate.candidate_status in {
+        CandidateStatus.TEST1_COMPLETED,
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+    }:
+        current_step = "slot_selection"
     elif active_slot is None and has_available_slots:
         current_step = "slot_selection"
     else:
@@ -2150,10 +2483,33 @@ async def build_candidate_portal_journey(
         .order_by(TestResult.created_at.desc(), TestResult.id.desc())
         .limit(1)
     )
+    history_slot_conditions = [Slot.candidate_id == candidate.candidate_id]
+    history_slot_telegram_ids = [
+        int(value)
+        for value in (candidate.telegram_id, candidate.telegram_user_id)
+        if value is not None
+    ]
+    if history_slot_telegram_ids:
+        history_slot_conditions.append(Slot.candidate_tg_id.in_(history_slot_telegram_ids))
+    history_slots = list(
+        (
+            await session.scalars(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(
+                    or_(*history_slot_conditions),
+                    func.lower(Slot.status) != SlotStatus.FREE.lower(),
+                )
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                .limit(8)
+            )
+        ).all()
+    )
     next_action = _next_action_text(
         current_step=current_step,
         has_available_slots=has_available_slots,
         active_slot=active_slot,
+        candidate_status=candidate.candidate_status,
     )
     company_faq = _portal_company_faq()
     company_documents = _portal_company_documents(candidate)
@@ -2274,6 +2630,15 @@ async def build_candidate_portal_journey(
             ),
             "last_feedback_sent_at": latest_outbound_message.created_at.isoformat() if latest_outbound_message and latest_outbound_message.created_at else None,
         },
+        "history": {
+            "items": _build_candidate_portal_history(
+                events=list(getattr(candidate, "journey_events", []) or []),
+                slots=history_slots,
+                test1_result=test1_result,
+                latest_test2_result=latest_test2_result,
+                messages=messages,
+            ),
+        },
         "resources": {
             "faq": company_faq,
             "documents": company_documents,
@@ -2335,6 +2700,99 @@ async def build_candidate_portal_journey(
     }
 
 
+async def resolve_candidate_activity_guard(
+    session: AsyncSession,
+    candidate: User,
+    *,
+    journey: CandidateJourneySession | None = None,
+    entry_channel: str = PORTAL_DEFAULT_ENTRY_CHANNEL,
+) -> CandidateActivityGuard:
+    if journey is None:
+        journey = await ensure_candidate_portal_session(
+            session,
+            candidate,
+            entry_channel=entry_channel,
+        )
+
+    latest_test1_result = await get_latest_test1_result_for_journey(
+        session,
+        candidate_id=int(candidate.id),
+        journey=journey,
+    )
+    active_slot = await get_candidate_active_scheduling_slot(session, candidate)
+    candidate_status = getattr(candidate, "candidate_status", None)
+    blocked_statuses = {
+        CandidateStatus.TEST1_COMPLETED,
+        CandidateStatus.WAITING_SLOT,
+        CandidateStatus.STALLED_WAITING_SLOT,
+        CandidateStatus.SLOT_PENDING,
+        CandidateStatus.INTERVIEW_SCHEDULED,
+        CandidateStatus.INTERVIEW_CONFIRMED,
+        CandidateStatus.INTERVIEW_DECLINED,
+        CandidateStatus.TEST2_SENT,
+        CandidateStatus.TEST2_COMPLETED,
+        CandidateStatus.TEST2_FAILED,
+        CandidateStatus.INTRO_DAY_SCHEDULED,
+        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+        CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+        CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+        CandidateStatus.HIRED,
+        CandidateStatus.NOT_HIRED,
+    }
+    if latest_test1_result is None and active_slot is None and candidate_status not in blocked_statuses:
+        return CandidateActivityGuard(blocked=False)
+
+    payload = await build_candidate_portal_journey(
+        session,
+        candidate,
+        entry_channel=entry_channel,
+        journey=journey,
+    )
+    current_step_label = str(payload["journey"].get("current_step_label") or payload["candidate"].get("status_label") or "текущий этап").strip()
+    message = f"У вас уже есть активность в системе на этапе «{current_step_label}». Продолжите текущий путь кандидата."
+    meta = {
+        "current_step": payload["journey"].get("current_step"),
+        "current_step_label": payload["journey"].get("current_step_label"),
+        "status": payload["candidate"].get("status"),
+        "status_label": payload["candidate"].get("status_label"),
+        "next_action": payload["journey"].get("next_action"),
+        "active_slot_status": getattr(active_slot, "status", None) if active_slot is not None else None,
+        "active_slot_purpose": getattr(active_slot, "purpose", None) if active_slot is not None else None,
+        "journey_url": payload["candidate"].get("portal_url"),
+    }
+    return CandidateActivityGuard(
+        blocked=True,
+        message=message,
+        code="candidate_screening_locked",
+        state="blocked",
+        meta=meta,
+    )
+
+
+async def record_screening_reentry_blocked_event(
+    session: AsyncSession,
+    candidate: User,
+    *,
+    message: str,
+    meta: dict[str, Any] | None = None,
+    source_channel: str,
+) -> None:
+    append_journey_event(
+        candidate,
+        event_key="screening_reentry_blocked",
+        stage="testing",
+        status=getattr(candidate, "candidate_status", None),
+        actor_type="candidate",
+        summary=str(message or "Повторное тестирование заблокировано."),
+        payload={
+            "source_channel": source_channel,
+            **dict(meta or {}),
+        },
+        created_at=_utcnow(),
+    )
+
+
 async def restart_candidate_portal_journey(
     session: AsyncSession,
     candidate: User,
@@ -2359,7 +2817,7 @@ async def restart_candidate_portal_journey(
             active_slot.purpose = "interview"
             await session.flush()
         else:
-            await reject_slot(active_slot.id)
+            await reject_slot(active_slot.id, session=session, update_candidate_status=False)
 
     now = _utcnow()
     active_journeys = (
@@ -2404,6 +2862,20 @@ async def restart_candidate_portal_journey(
     )
     session.add(journey)
     await session.flush()
+    append_journey_event(
+        candidate,
+        event_key="portal_restarted",
+        stage="lead",
+        status=CandidateStatus.LEAD,
+        actor_type="operator",
+        summary="Путь кандидата перезапущен вручную.",
+        payload={
+            "entry_channel": entry_channel or PORTAL_DEFAULT_ENTRY_CHANNEL,
+            "released_slot_id": released_slot_id,
+            "new_journey_session_id": int(journey.id),
+        },
+        created_at=now,
+    )
     return journey, released_slot_id
 
 
@@ -2504,6 +2976,19 @@ async def complete_screening(
     normalized = validate_screening_answers(answers)
     now = _utcnow()
     normalized_source = (source_channel or "candidate_portal").strip() or "candidate_portal"
+    guard = await resolve_candidate_activity_guard(
+        session,
+        candidate,
+        journey=journey,
+        entry_channel=normalized_source if normalized_source in {"web", "max", "telegram"} else PORTAL_DEFAULT_ENTRY_CHANNEL,
+    )
+    if guard.blocked:
+        raise CandidatePortalError(
+            str(guard.message or "У вас уже есть активность в системе."),
+            code=guard.code,
+            state=guard.state,
+            meta=guard.meta,
+        )
 
     question_data = []
     for index, question in enumerate(get_candidate_portal_questions(), start=1):
@@ -2566,6 +3051,20 @@ async def complete_screening(
         step_key="screening",
         status=CandidateJourneyStepStatus.COMPLETED.value,
         payload=normalized,
+    )
+    append_journey_event(
+        candidate,
+        event_key="screening_completed",
+        stage="testing",
+        status=CandidateStatus.WAITING_SLOT,
+        actor_type="candidate",
+        summary="Анкета кандидата завершена и сохранена.",
+        payload={
+            "source_channel": normalized_source,
+            "question_count": len(question_data),
+            "journey_session_id": int(journey.id),
+        },
+        created_at=now,
     )
     await analytics.log_funnel_event(
         analytics.FunnelEvent.TEST1_COMPLETED,
@@ -2665,6 +3164,7 @@ async def reserve_candidate_portal_slot(
     *,
     slot_id: int,
 ) -> dict[str, Any]:
+    await _ensure_portal_slot_write_allowed(session, candidate)
     city = await _resolve_city(session, city_name=candidate.city)
     if city is None:
         raise CandidatePortalError("Сначала укажите город кандидата.")
@@ -2741,6 +3241,7 @@ async def confirm_candidate_portal_slot(
     candidate: User,
     journey: CandidateJourneySession,
 ) -> dict[str, Any]:
+    await _ensure_portal_slot_write_allowed(session, candidate)
     active_slot = await get_candidate_active_slot(session, candidate)
     if active_slot is None:
         raise CandidatePortalError("Активный слот не найден.")
@@ -2757,7 +3258,11 @@ async def confirm_candidate_portal_slot(
             slot = active_slot
             await session.flush()
     else:
-        result = await confirm_slot_by_candidate(active_slot.id)
+        result = await confirm_slot_by_candidate(
+            active_slot.id,
+            session=session,
+            update_candidate_status=False,
+        )
         slot = result.slot if result and result.slot is not None else active_slot
         if result.status not in {"already_confirmed", "confirmed"}:
             raise CandidatePortalError("Слот нельзя подтвердить в текущем статусе.")
@@ -2788,6 +3293,7 @@ async def cancel_candidate_portal_slot(
     candidate: User,
     journey: CandidateJourneySession,
 ) -> dict[str, Any]:
+    await _ensure_portal_slot_write_allowed(session, candidate)
     active_slot = await get_candidate_active_slot(session, candidate)
     if active_slot is None:
         raise CandidatePortalError("Активный слот не найден.")
@@ -2803,7 +3309,7 @@ async def cancel_candidate_portal_slot(
         active_slot.purpose = "interview"
         await session.flush()
     else:
-        await reject_slot(released_slot_id)
+        await reject_slot(released_slot_id, session=session, update_candidate_status=False)
     await ensure_candidate_waiting_slot(session, candidate)
     await upsert_step_state(
         session,
@@ -2831,6 +3337,7 @@ async def reschedule_candidate_portal_slot(
     *,
     new_slot_id: int,
 ) -> dict[str, Any]:
+    await _ensure_portal_slot_write_allowed(session, candidate)
     active_slot = await get_candidate_active_slot(session, candidate)
     if active_slot is None:
         raise CandidatePortalError("Текущий слот не найден.")
@@ -2870,7 +3377,7 @@ async def reschedule_candidate_portal_slot(
         replacement.purpose = "interview"
         await session.flush()
     else:
-        await reject_slot(old_slot_id)
+        await reject_slot(old_slot_id, session=session, update_candidate_status=False)
         replacement.status = SlotStatus.PENDING
         replacement.candidate_id = candidate.candidate_id
         replacement.candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id

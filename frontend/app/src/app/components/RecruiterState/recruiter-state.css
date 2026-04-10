@@ -1,0 +1,150 @@
+.recruiter-action-block,
+.recruiter-risk-banner,
+.recruiter-lifecycle-strip,
+.recruiter-kanban-header {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.recruiter-risk-banner__hint {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+.recruiter-action-block {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+}
+
+.recruiter-action-block--compact {
+  padding: var(--space-2);
+}
+
+.recruiter-action-block--disabled {
+  opacity: 0.72;
+}
+
+.recruiter-action-block__header,
+.recruiter-action-block__body,
+.recruiter-state-context__row,
+.recruiter-kanban-header__title-row,
+.recruiter-kanban-header__meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.recruiter-action-block__text,
+.recruiter-risk-banner__content,
+.recruiter-kanban-header__main,
+.recruiter-state-context {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.recruiter-action-block__eyebrow,
+.recruiter-lifecycle-strip__label,
+.recruiter-kanban-header__helper {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.recruiter-action-block__label,
+.recruiter-kanban-header__title,
+.recruiter-lifecycle-strip__stage,
+.recruiter-risk-banner__title {
+  color: var(--text-primary);
+  font-weight: var(--font-semibold);
+}
+
+.recruiter-action-block__label { font-size: var(--text-base); }
+.recruiter-action-block__explanation,
+.recruiter-state-context__line,
+.recruiter-state-context__scheduling,
+.recruiter-risk-banner__message,
+.recruiter-risk-banner__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.recruiter-state-context__scheduling,
+.recruiter-risk-banner__count,
+.recruiter-kanban-header__count {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.recruiter-action-block__badge,
+.recruiter-state-context__bucket,
+.recruiter-lifecycle-strip__outcome,
+.recruiter-kanban-header__mode,
+.recruiter-kanban-header__count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.recruiter-risk-banner {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.recruiter-risk-banner--info { border-color: color-mix(in srgb, var(--accent) 22%, var(--border-subtle)); }
+.recruiter-risk-banner--warning { border-color: color-mix(in srgb, var(--warning) 24%, var(--border-subtle)); }
+.recruiter-risk-banner--blocker { border-color: color-mix(in srgb, var(--danger) 28%, var(--border-subtle)); }
+.recruiter-risk-banner--repair { border-color: color-mix(in srgb, var(--danger) 20%, var(--warning) 22%, var(--border-subtle)); }
+
+.recruiter-lifecycle-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.recruiter-lifecycle-strip--compact {
+  min-height: 30px;
+  padding: var(--space-1) var(--space-2);
+}
+
+.recruiter-kanban-header {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.recruiter-kanban-header--interactive {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
+}
+
+.recruiter-kanban-header--locked {
+  opacity: 0.84;
+}
+
+@media (max-width: 900px) {
+  .recruiter-action-block__body {
+    flex-direction: column;
+  }
+
+  .recruiter-action-block__cta,
+  .recruiter-action-block__cta > .ui-btn {
+    width: 100%;
+  }
+}

@@ -26,6 +26,14 @@ def test_candidate_templates_have_full_text_copy() -> None:
         assert len(" ".join(text.split())) >= 60, f"Template '{key}' looks too short"
 
 
+def test_interview_confirmed_candidate_template_has_updated_meeting_copy() -> None:
+    text = DEFAULT_TEMPLATES["interview_confirmed_candidate"]
+    assert "Поздравляем — вы на шаг ближе" in text
+    assert "💬 <b>Формат:</b> видеочат | 15–20 мин" in text
+    assert "• тихое место для созвона" in text
+    assert "используйте кнопки ниже, чтобы перенести или отменить встречу" in text
+
+
 def test_stage_templates_have_no_placeholder_stubs() -> None:
     stage3 = STAGE_DEFAULTS["stage3_intro_invite"]
     assert "{intro_address}" in stage3

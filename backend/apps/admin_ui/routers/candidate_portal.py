@@ -8,6 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from backend.apps.admin_api.webapp.auth import validate_max_webapp_data
 from backend.apps.admin_ui.security import get_client_ip, limiter
 from backend.apps.admin_ui.services.candidate_shared_access import (
     CandidateSharedAccessError,
@@ -20,9 +21,11 @@ from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates.portal_service import (
     PORTAL_SESSION_KEY,
+    _mark_journey_event_once,
     build_candidate_portal_journey,
     build_candidate_entry_options,
     build_candidate_hh_entry_url,
+    build_candidate_public_portal_url,
     build_candidate_portal_session_payload,
     cancel_candidate_portal_slot,
     complete_screening,
@@ -37,6 +40,7 @@ from backend.domain.candidates.portal_service import (
     reserve_candidate_portal_slot,
     record_candidate_entry_selection,
     reschedule_candidate_portal_slot,
+    record_screening_reentry_blocked_event,
     resolve_candidate_portal_user,
     save_candidate_profile,
     save_screening_draft,
@@ -46,6 +50,7 @@ from backend.domain.candidates.portal_service import (
     CandidatePortalAuthError,
     CandidatePortalError,
 )
+from backend.domain.candidates.max_owner_preflight import normalize_max_owner_value
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate-portal"])
 PUBLIC_PORTAL_MUTATION_LIMIT = "5/minute"
@@ -66,6 +71,9 @@ PORTAL_RECOVERY_STATE_BLOCKED = "blocked"
 
 class CandidatePortalExchangePayload(BaseModel):
     token: str = Field(min_length=8)
+    max_webapp_data: str | None = Field(default=None, min_length=8)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
 
 
 class CandidateSharedAccessChallengePayload(BaseModel):
@@ -298,6 +306,152 @@ def _candidate_shared_access_error(exc: CandidateSharedAccessError) -> HTTPExcep
     )
 
 
+def _requires_max_webapp_auth(access) -> bool:
+    entry_channel = str(getattr(access, "entry_channel", "") or "").strip().lower()
+    source_channel = str(getattr(access, "source_channel", "") or "").strip().lower()
+    return entry_channel == "max" or source_channel == "max_app"
+
+
+def _max_browser_fallback_url(*, candidate, access) -> str | None:
+    candidate_uuid = str(getattr(candidate, "candidate_id", "") or "").strip()
+    if not candidate_uuid:
+        return None
+    fallback_url = build_candidate_public_portal_url(
+        candidate_uuid=candidate_uuid,
+        entry_channel="web",
+        source_channel="max_browser_fallback",
+        journey_session_id=getattr(access, "journey_session_id", None),
+        session_version=getattr(access, "session_version", None),
+    )
+    return str(fallback_url).strip() or None
+
+
+async def _enforce_max_exchange_auth(
+    *,
+    access,
+    payload: CandidatePortalExchangePayload,
+    candidate,
+) -> None:
+    if not _requires_max_webapp_auth(access):
+        return
+
+    settings = get_settings()
+    fallback_url = _max_browser_fallback_url(candidate=candidate, access=access)
+    max_webapp_data = str(payload.max_webapp_data or "").strip()
+    if not settings.max_bot_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "MAX авторизация недоступна. Попробуйте позже или используйте браузерную ссылку.",
+                "code": "max_bot_token_missing",
+                "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                "can_resume": False,
+                "requires_fresh_link": False,
+                "meta": {"fallback_url": fallback_url},
+            },
+        )
+
+    if not max_webapp_data:
+        await log_audit_action(
+            "portal_max_auth_rejected",
+            "candidate",
+            candidate.id,
+            changes={
+                "reason": "max_webapp_data_missing",
+                "source_channel": getattr(access, "source_channel", None),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "Откройте путь через MAX mini app или используйте браузерную ссылку.",
+                "code": "max_webapp_auth_required",
+                "state": PORTAL_RECOVERY_STATE_RECOVERABLE,
+                "can_resume": True,
+                "requires_fresh_link": False,
+                "meta": {"fallback_url": fallback_url},
+            },
+        )
+
+    try:
+        max_user = validate_max_webapp_data(
+            max_webapp_data,
+            settings.max_bot_token,
+            max_age_seconds=int(settings.max_webapp_auth_max_age_seconds),
+        )
+    except ValueError as exc:
+        await log_audit_action(
+            "portal_max_auth_rejected",
+            "candidate",
+            candidate.id,
+            changes={
+                "reason": "invalid_max_webapp_data",
+                "error": str(exc),
+                "source_channel": getattr(access, "source_channel", None),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "Контекст MAX mini app недействителен. Откройте ссылку заново из MAX.",
+                "code": "max_webapp_data_invalid",
+                "state": PORTAL_RECOVERY_STATE_RECOVERABLE,
+                "can_resume": True,
+                "requires_fresh_link": False,
+                "meta": {"fallback_url": fallback_url},
+            },
+        ) from exc
+
+    expected_owner = normalize_max_owner_value(getattr(candidate, "max_user_id", None))
+    current_owner = normalize_max_owner_value(max_user.user_id)
+    if expected_owner is None:
+        await log_audit_action(
+            "portal_max_auth_rejected",
+            "candidate",
+            candidate.id,
+            changes={
+                "reason": "max_identity_not_bound",
+                "incoming_max_user_id": current_owner,
+                "query_id": max_user.query_id,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "MAX аккаунт ещё не связан с кандидатом. Попросите рекрутера отправить новую персональную ссылку.",
+                "code": "max_identity_not_bound",
+                "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                "can_resume": False,
+                "requires_fresh_link": False,
+                "meta": {"fallback_url": fallback_url},
+            },
+        )
+
+    if current_owner != expected_owner:
+        await log_audit_action(
+            "portal_max_auth_rejected",
+            "candidate",
+            candidate.id,
+            changes={
+                "reason": "max_identity_mismatch",
+                "expected_max_user_id": expected_owner,
+                "incoming_max_user_id": current_owner,
+                "query_id": max_user.query_id,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "Этот MAX аккаунт не совпадает с привязанным кандидатом. Попросите рекрутера отправить новую ссылку.",
+                "code": "max_identity_mismatch",
+                "state": PORTAL_RECOVERY_STATE_BLOCKED,
+                "can_resume": False,
+                "requires_fresh_link": False,
+                "meta": {"fallback_url": fallback_url},
+            },
+        )
+
+
 async def _candidate_session_payload(
     request: Request,
     response: Response | None = None,
@@ -428,9 +582,18 @@ async def _load_candidate(request: Request, response: Response | None = None):
 
 
 def _portal_error(exc: CandidatePortalError) -> HTTPException:
+    detail: dict[str, Any] = {"message": str(exc)}
+    if getattr(exc, "code", None):
+        detail["code"] = exc.code
+    if getattr(exc, "state", None):
+        detail["state"] = exc.state
+        detail["can_resume"] = exc.state == PORTAL_RECOVERY_STATE_RECOVERABLE
+        detail["requires_fresh_link"] = exc.state == PORTAL_RECOVERY_STATE_NEEDS_NEW_LINK
+    if getattr(exc, "meta", None):
+        detail["meta"] = exc.meta
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail={"message": str(exc)},
+        detail=detail,
     )
 
 
@@ -779,6 +942,11 @@ async def exchange_candidate_portal_session(
                         "requires_fresh_link": False,
                     },
                 )
+            await _enforce_max_exchange_auth(
+                access=access,
+                payload=payload,
+                candidate=candidate,
+            )
             journey = await ensure_candidate_portal_session(
                 session,
                 candidate,
@@ -818,6 +986,15 @@ async def exchange_candidate_portal_session(
                 journey=journey,
             )
             journey_meta = dict(journey.payload_json or {})
+            _mark_journey_event_once(
+                candidate,
+                journey,
+                flag_key="portal_entered_logged_at",
+                event_key="portal_entered",
+                summary="Кандидат открыл свой путь в кабинете.",
+                stage="lead",
+                payload={"entry_channel": access.entry_channel or "web"},
+            )
             if test1_result is None and not journey_meta.get("screening_started_logged_at"):
                 await analytics.log_funnel_event(
                     analytics.FunnelEvent.TEST1_STARTED,
@@ -828,6 +1005,15 @@ async def exchange_candidate_portal_session(
                 )
                 journey_meta["screening_started_logged_at"] = candidate.last_activity.isoformat() if candidate.last_activity else None
                 journey.payload_json = journey_meta
+                _mark_journey_event_once(
+                    candidate,
+                    journey,
+                    flag_key="screening_started_event_logged_at",
+                    event_key="screening_started",
+                    summary="Кандидат начал анкету в кабинете.",
+                    stage="testing",
+                    payload={"source_channel": access.entry_channel or "candidate_portal"},
+                )
 
             response_payload = await build_candidate_portal_journey(
                 session,
@@ -990,41 +1176,56 @@ async def complete_candidate_portal_screening(
     payload: CandidatePortalScreeningPayload,
 ):
     session_payload = await _candidate_session_payload(request, response=response)
-    async with async_session() as session:
-        async with session.begin():
-            candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
-            if candidate is None:
-                raise _candidate_portal_not_found_error(
-                    response,
-                    message="Сессия портала недействительна.",
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                candidate = await get_candidate_portal_user(session, int(session_payload["candidate_id"]))
+                if candidate is None:
+                    raise _candidate_portal_not_found_error(
+                        response,
+                        message="Сессия портала недействительна.",
+                    )
+                journey = await ensure_candidate_portal_session(
+                    session,
+                    candidate,
+                    entry_channel=str(session_payload.get("entry_channel") or "web"),
                 )
-            journey = await ensure_candidate_portal_session(
-                session,
-                candidate,
-                entry_channel=str(session_payload.get("entry_channel") or "web"),
-            )
-            try:
                 await complete_screening(
                     session,
                     candidate,
                     journey,
                     answers=payload.answers,
                 )
-            except CandidatePortalError as exc:
-                raise _portal_error(exc) from exc
-            response_payload = await build_candidate_portal_journey(
-                session,
-                candidate,
-                entry_channel=str(session_payload.get("entry_channel") or "web"),
-                journey=journey,
-            )
-            _issue_candidate_portal_resume_cookie(
-                response,
-                candidate=candidate,
-                journey=journey,
-                entry_channel=str(session_payload.get("entry_channel") or "web"),
-            )
-            return response_payload
+                response_payload = await build_candidate_portal_journey(
+                    session,
+                    candidate,
+                    entry_channel=str(session_payload.get("entry_channel") or "web"),
+                    journey=journey,
+                )
+                _issue_candidate_portal_resume_cookie(
+                    response,
+                    candidate=candidate,
+                    journey=journey,
+                    entry_channel=str(session_payload.get("entry_channel") or "web"),
+                )
+                return response_payload
+    except CandidatePortalError as exc:
+        if exc.code == "candidate_screening_locked":
+            async with async_session() as audit_session:
+                async with audit_session.begin():
+                    candidate = await get_candidate_portal_user(
+                        audit_session,
+                        int(session_payload["candidate_id"]),
+                    )
+                    if candidate is not None:
+                        await record_screening_reentry_blocked_event(
+                            audit_session,
+                            candidate,
+                            message=str(exc),
+                            meta=exc.meta,
+                            source_channel=str(session_payload.get("entry_channel") or "web"),
+                        )
+        raise _portal_error(exc) from exc
 
 
 @router.post("/slots/reserve")

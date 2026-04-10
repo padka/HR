@@ -11,6 +11,7 @@ import os
 import re
 import math
 import random
+import secrets
 import time
 import uuid
 from contextlib import contextmanager
@@ -43,15 +44,28 @@ from aiogram.types import (
 
 from pydantic import ValidationError
 
+from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import User
+from backend.domain.candidates.portal_service import (
+    build_candidate_public_portal_url,
+    ensure_candidate_portal_session,
+)
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import (
     set_status_waiting_slot,
     set_status_interview_scheduled,
 )
-from backend.domain.models import Recruiter, Slot, SlotStatus
+from backend.domain.models import (
+    ActionToken,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    SlotStatus,
+)
 from backend.apps.bot.events import InterviewSuccessEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import SchedulerAlreadyRunningError
@@ -91,7 +105,7 @@ from backend.domain.slot_service import (
     city_has_available_slots,
 )
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy import select, case, func
+from sqlalchemy import select, case, func, or_
 
 from backend.apps.bot.utils.text import escape_html
 
@@ -120,6 +134,7 @@ from ..keyboards import (
     kb_approve,
     kb_attendance_confirm,
     kb_recruiters,
+    kb_slot_assignment_active,
     kb_slots_for_recruiter,
     kb_slot_assignment_offer,
     kb_start,
@@ -535,6 +550,7 @@ async def clear_candidate_chat_state(user_id: int) -> None:
         st["slot_assignment_action_token"] = None
         st["slot_assignment_id"] = None
         st["awaiting_intro_decline_reason"] = False
+        st["awaiting_slot_assignment_decline_reason"] = False
         st["flow"] = "scheduled"
         return st, None
 
@@ -1129,6 +1145,314 @@ async def _render_candidate_notification(slot: Slot) -> Tuple[str, str, str, str
         extra={"key": template_key, "slot_id": slot.id, "city_id": getattr(slot, "candidate_city_id", None)},
     )
     return "", tz, city_name, template_key, None
+
+
+_ASSIGNMENT_DETAILS_PREFIX = "slotasg:details:"
+_ASSIGNMENT_CONFIRM_ACTION = "slot_assignment_confirm"
+_ASSIGNMENT_RESCHEDULE_ACTION = "slot_assignment_reschedule_request"
+_ASSIGNMENT_DECLINE_ACTION = "slot_assignment_decline"
+_ACTIVE_MEETING_ASSIGNMENT_STATUSES = {
+    SlotAssignmentStatus.CONFIRMED,
+    SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+}
+
+
+@dataclass
+class CandidateAssignmentControls:
+    assignment_id: int
+    candidate_tg_id: int
+    slot_id: int
+    start_utc: datetime
+    duration_min: int
+    candidate_tz: str
+    assignment_status: str
+    candidate_name: str
+    recruiter_name: str
+    recruiter_tz: str
+    recruiter_tg_id: Optional[int]
+    city_name: str
+    meeting_link: Optional[str] = None
+    portal_url: Optional[str] = None
+    confirm_token: Optional[str] = None
+    reschedule_token: Optional[str] = None
+    decline_token: Optional[str] = None
+
+    @property
+    def meeting_active(self) -> bool:
+        return self.start_utc > datetime.now(timezone.utc)
+
+
+def _assignment_stage_label(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    labels = {
+        SlotAssignmentStatus.OFFERED: "ожидаем ваше подтверждение",
+        SlotAssignmentStatus.CONFIRMED: "встреча подтверждена",
+        SlotAssignmentStatus.RESCHEDULE_REQUESTED: "ждём согласование переноса",
+        SlotAssignmentStatus.RESCHEDULE_CONFIRMED: "новое время подтверждено",
+        SlotAssignmentStatus.REJECTED: "встреча отменена",
+        SlotAssignmentStatus.CANCELLED: "встреча отменена",
+    }
+    return labels.get(normalized, normalized or "статус уточняется")
+
+
+def _candidate_action_token_expires_at(start_utc: datetime, duration_min: int) -> datetime:
+    now = datetime.now(timezone.utc)
+    meeting_end = start_utc + timedelta(minutes=max(int(duration_min or 15), 15))
+    min_lifetime = now + timedelta(hours=48)
+    grace = timedelta(hours=1)
+    return max(min_lifetime, meeting_end + grace)
+
+
+async def _ensure_assignment_action_token(
+    session,
+    *,
+    assignment_id: int,
+    action: str,
+    min_expires_at: datetime,
+) -> str:
+    token_row = await session.scalar(
+        select(ActionToken)
+        .where(
+            ActionToken.entity_id == str(assignment_id),
+            ActionToken.action == action,
+            ActionToken.used_at.is_(None),
+            ActionToken.expires_at >= min_expires_at,
+        )
+        .order_by(ActionToken.created_at.desc())
+    )
+    if token_row is not None:
+        return str(token_row.token)
+
+    token_value = secrets.token_urlsafe(12)
+    session.add(
+        ActionToken(
+            token=token_value,
+            action=action,
+            entity_id=str(assignment_id),
+            expires_at=min_expires_at,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return token_value
+
+
+async def _build_candidate_portal_url(
+    session,
+    *,
+    candidate_tg_id: int,
+) -> Optional[str]:
+    candidate = await session.scalar(
+        select(User).where(
+            or_(
+                User.telegram_id == candidate_tg_id,
+                User.telegram_user_id == candidate_tg_id,
+            )
+        )
+    )
+    if candidate is None or not getattr(candidate, "candidate_id", None):
+        return None
+    journey = await ensure_candidate_portal_session(session, candidate, entry_channel="telegram")
+    return build_candidate_public_portal_url(
+        candidate_uuid=str(candidate.candidate_id),
+        telegram_id=candidate_tg_id,
+        entry_channel="telegram",
+        source_channel="telegram_bot_schedule",
+        journey_session_id=int(journey.id),
+        session_version=int(journey.session_version or 1),
+    ) or None
+
+
+async def get_candidate_assignment_controls(
+    *,
+    candidate_tg_id: int,
+    assignment_id: Optional[int] = None,
+    slot_id: Optional[int] = None,
+) -> Optional[CandidateAssignmentControls]:
+    if not candidate_tg_id:
+        return None
+
+    async with async_session() as session:
+        async with session.begin():
+            stmt = select(SlotAssignment)
+            if assignment_id is not None:
+                stmt = stmt.where(SlotAssignment.id == assignment_id)
+            elif slot_id is not None:
+                stmt = stmt.where(SlotAssignment.slot_id == slot_id)
+            else:
+                return None
+            stmt = stmt.where(
+                SlotAssignment.status.in_(
+                    [
+                        SlotAssignmentStatus.OFFERED,
+                        SlotAssignmentStatus.CONFIRMED,
+                        SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                        SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                    ]
+                )
+            ).order_by(SlotAssignment.id.desc())
+            assignment = await session.scalar(stmt)
+            if assignment is None:
+                return None
+
+            candidate_ids = set()
+            for raw_value in (
+                assignment.candidate_tg_id,
+                candidate_tg_id,
+            ):
+                if raw_value is None:
+                    continue
+                try:
+                    candidate_ids.add(int(raw_value))
+                except (TypeError, ValueError):
+                    continue
+            if candidate_ids and int(candidate_tg_id) not in candidate_ids:
+                return None
+
+            slot = await session.scalar(select(Slot).where(Slot.id == assignment.slot_id))
+            if slot is None or slot.start_utc is None:
+                return None
+            recruiter = await session.scalar(select(Recruiter).where(Recruiter.id == assignment.recruiter_id))
+            candidate_tz = (
+                assignment.candidate_tz
+                or getattr(slot, "candidate_tz", None)
+                or getattr(slot, "tz_name", None)
+                or getattr(recruiter, "tz", None)
+                or DEFAULT_TZ
+            )
+            candidate_name = getattr(slot, "candidate_fio", None) or str(candidate_tg_id)
+            city_name = ""
+            city_id = getattr(slot, "candidate_city_id", None) or getattr(slot, "city_id", None)
+            if city_id is not None:
+                try:
+                    city = await get_city(int(city_id))
+                except Exception:
+                    city = None
+                if city is not None:
+                    city_name = str(getattr(city, "name", None) or getattr(city, "name_plain", None) or "")
+
+            expires_at = _candidate_action_token_expires_at(
+                slot.start_utc.astimezone(timezone.utc),
+                int(getattr(slot, "duration_min", 15) or 15),
+            )
+            normalized_status = (assignment.status or "").strip().lower()
+            confirm_token: Optional[str] = None
+            reschedule_token: Optional[str] = None
+            decline_token: Optional[str] = None
+            if slot.start_utc > datetime.now(timezone.utc):
+                if normalized_status == SlotAssignmentStatus.OFFERED:
+                    confirm_token = await _ensure_assignment_action_token(
+                        session,
+                        assignment_id=int(assignment.id),
+                        action=_ASSIGNMENT_CONFIRM_ACTION,
+                        min_expires_at=expires_at,
+                    )
+                if normalized_status in {
+                    SlotAssignmentStatus.OFFERED,
+                    SlotAssignmentStatus.CONFIRMED,
+                    SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                }:
+                    reschedule_token = await _ensure_assignment_action_token(
+                        session,
+                        assignment_id=int(assignment.id),
+                        action=_ASSIGNMENT_RESCHEDULE_ACTION,
+                        min_expires_at=expires_at,
+                    )
+                if normalized_status in {
+                    SlotAssignmentStatus.OFFERED,
+                    SlotAssignmentStatus.CONFIRMED,
+                    SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                    SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                }:
+                    decline_token = await _ensure_assignment_action_token(
+                        session,
+                        assignment_id=int(assignment.id),
+                        action=_ASSIGNMENT_DECLINE_ACTION,
+                        min_expires_at=expires_at,
+                    )
+
+            portal_url = None
+            try:
+                portal_url = await _build_candidate_portal_url(session, candidate_tg_id=int(candidate_tg_id))
+            except Exception:
+                logger.exception(
+                    "candidate.portal_link_build_failed",
+                    extra={"candidate_tg_id": candidate_tg_id, "assignment_id": assignment.id},
+                )
+
+            return CandidateAssignmentControls(
+                assignment_id=int(assignment.id),
+                candidate_tg_id=int(candidate_tg_id),
+                slot_id=int(slot.id),
+                start_utc=slot.start_utc.astimezone(timezone.utc),
+                duration_min=int(getattr(slot, "duration_min", 15) or 15),
+                candidate_tz=candidate_tz,
+                assignment_status=normalized_status,
+                candidate_name=str(candidate_name),
+                recruiter_name=str(getattr(recruiter, "name", "") or ""),
+                recruiter_tz=str(getattr(recruiter, "tz", "") or DEFAULT_TZ),
+                recruiter_tg_id=getattr(recruiter, "tg_chat_id", None),
+                city_name=city_name,
+                meeting_link=_resolve_recruiter_meeting_link(recruiter),
+                portal_url=portal_url,
+                confirm_token=confirm_token,
+                reschedule_token=reschedule_token,
+                decline_token=decline_token,
+            )
+
+
+def build_candidate_active_meeting_keyboard(
+    controls: CandidateAssignmentControls,
+) -> Optional[InlineKeyboardMarkup]:
+    if not controls.meeting_active:
+        return None
+    return kb_slot_assignment_active(
+        controls.assignment_id,
+        portal_url=controls.portal_url,
+        reschedule_token=controls.reschedule_token,
+        decline_token=controls.decline_token,
+    )
+
+
+def render_candidate_assignment_details(controls: CandidateAssignmentControls) -> str:
+    dt_label = fmt_dt_local(controls.start_utc, controls.candidate_tz)
+    lines = [
+        "🗓 <b>Детали встречи</b>",
+        f"Статус: <b>{escape_html(_assignment_stage_label(controls.assignment_status))}</b>",
+        f"Дата и время: <b>{escape_html(dt_label)}</b> ({escape_html(controls.candidate_tz)})",
+        "Формат: видеовстреча, 15–20 минут",
+    ]
+    if controls.recruiter_name:
+        lines.append(f"Рекрутёр: {escape_html(controls.recruiter_name)}")
+    if controls.city_name:
+        lines.append(f"Город: {escape_html(controls.city_name)}")
+    if controls.meeting_link:
+        lines.append(f"Ссылка на встречу: {escape_html(controls.meeting_link)}")
+    if controls.meeting_active:
+        lines.append("")
+        lines.append("До начала встречи можно перенести или отменить её кнопками ниже.")
+    else:
+        lines.append("")
+        lines.append("Время этой встречи уже прошло.")
+    if controls.portal_url:
+        lines.append("Материалы о компании и текущий этап доступны в кабинете кандидата.")
+    return "\n".join(lines)
+
+
+async def build_candidate_active_meeting_keyboard_for_slot(
+    slot: Slot,
+) -> Optional[InlineKeyboardMarkup]:
+    candidate_tg_id = getattr(slot, "candidate_tg_id", None)
+    if candidate_tg_id is None:
+        return None
+    controls = await get_candidate_assignment_controls(
+        candidate_tg_id=int(candidate_tg_id),
+        slot_id=int(slot.id),
+    )
+    if controls is None:
+        return None
+    return build_candidate_active_meeting_keyboard(controls)
+
+
 def configure_template_provider() -> None:
     """Configure template provider (DB-backed by default)."""
     global _template_provider

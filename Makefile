@@ -1,7 +1,8 @@
-.PHONY: help test test-cov migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-max-bot dev-max-live dev-up gate-sprint12
+.PHONY: help test test-cov test-postgres-proof migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-max-bot dev-max-live dev-up gate-sprint12
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
+PG_PROOF_DATABASE_URL ?= postgresql+asyncpg://recruitsmart:recruitsmart@localhost:5432/rs_test
 
 # Default target
 help:
@@ -20,6 +21,7 @@ help:
 	@echo ""
 	@echo "  make test             - Run all tests (requires PostgreSQL test DB)"
 	@echo "  make test-cov         - Run all tests with coverage"
+	@echo "  make test-postgres-proof - Run critical PostgreSQL-backed proof subset"
 	@echo ""
 	@echo "  make docker-up        - Start Redis services in background"
 	@echo "  make docker-down      - Stop Redis services"
@@ -76,6 +78,24 @@ test-cov: ensure-venv
 	ADMIN_PASSWORD=admin \
 	SESSION_SECRET="test-session-secret-0123456789abcdef0123456789abcd" \
 	$(PYTHON) -m pytest --cov=backend --cov-report=term-missing
+
+test-postgres-proof: ensure-venv
+	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	TEST_USE_POSTGRES=1 \
+	DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
+	TEST_DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
+	ENVIRONMENT=test \
+	REDIS_URL="" \
+	REDIS_NOTIFICATIONS_URL="" \
+	NOTIFICATION_BROKER="memory" \
+	BOT_ENABLED=0 \
+	BOT_INTEGRATION_ENABLED=0 \
+	ADMIN_USER=admin \
+	ADMIN_PASSWORD=admin \
+	SESSION_SECRET="test-session-secret-0123456789abcdef0123456789abcd" \
+	$(PYTHON) -m pytest -q \
+		tests/integration/test_migrations_postgres.py \
+		tests/integration/test_postgres_stateful_proof.py
 
 # Docker management
 docker-up:

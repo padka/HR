@@ -102,6 +102,7 @@ async def build_candidate_hh_summary(session, *, candidate_id: int) -> dict[str,
 
     recent_jobs: list[dict[str, Any]] = []
     if connection_id is not None:
+        stmt = select(HHSyncJob).where(HHSyncJob.connection_id == connection_id)
         entity_ids = [
             value
             for value in (
@@ -111,14 +112,16 @@ async def build_candidate_hh_summary(session, *, candidate_id: int) -> dict[str,
             )
             if value
         ]
-        stmt = select(HHSyncJob).where(HHSyncJob.connection_id == connection_id)
         if entity_ids:
             stmt = stmt.where(
                 or_(
+                    HHSyncJob.candidate_id == candidate_id,
                     HHSyncJob.entity_external_id.in_(entity_ids),
                     HHSyncJob.entity_external_id == identity.external_vacancy_id,
                 )
             )
+        else:
+            stmt = stmt.where(HHSyncJob.candidate_id == candidate_id)
         jobs = (
             await session.execute(stmt.order_by(desc(HHSyncJob.id)).limit(5))
         ).scalars().all()
@@ -129,6 +132,8 @@ async def build_candidate_hh_summary(session, *, candidate_id: int) -> dict[str,
                 "status": job.status,
                 "attempts": job.attempts,
                 "last_error": job.last_error,
+                "failure_code": job.failure_code,
+                "result": dict(job.result_json or {}) if isinstance(job.result_json, dict) else None,
                 "created_at": job.created_at.isoformat() if job.created_at else None,
                 "finished_at": job.finished_at.isoformat() if job.finished_at else None,
             }

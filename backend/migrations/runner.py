@@ -104,6 +104,7 @@ def _get_current_revision(conn: Connection) -> Optional[str]:
     # Backward-compatibility: map legacy revision IDs to the renamed ones
     legacy_map = {
         "20260123_0001": "0057_auth_accounts",
+        "0100_refresh_interview_confirmation_copy": "0099a_refresh_interview_confirmation_copy",
     }
     return legacy_map.get(current, current)
 
@@ -139,6 +140,7 @@ def _slice_pending_migrations(
         # Allow legacy revisions that were renamed
         legacy_map = {
             "20260123_0001": "0057_auth_accounts",
+            "0100_refresh_interview_confirmation_copy": "0099a_refresh_interview_confirmation_copy",
         }
         effective_current = legacy_map.get(current_revision, current_revision)
         try:
@@ -177,12 +179,15 @@ def upgrade_to_head(engine_or_url: Engine | str | None = None) -> None:
             _assert_schema_create_privilege(conn)
             _ensure_version_storage(conn)
             current = _get_current_revision(conn)
-            target = migrations[-1].revision
-            for migration in _slice_pending_migrations(migrations, current, target):
+        target = migrations[-1].revision
+        for migration in _slice_pending_migrations(migrations, current, target):
+            with engine.begin() as conn:
+                _assert_schema_create_privilege(conn)
                 upgrade = getattr(migration.module, "upgrade", None)
                 if upgrade is None:
                     raise RuntimeError(f"Migration {migration.revision} is missing upgrade()")
-                # Support legacy migrations that define upgrade() with no parameters
+                # PostgreSQL enum alterations become visible only after commit, so each
+                # migration must run in its own transaction.
                 if getattr(upgrade, "__code__", None) and upgrade.__code__.co_argcount == 0:
                     upgrade()
                 else:

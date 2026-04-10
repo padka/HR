@@ -4,12 +4,30 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { memo, useCallback, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { apiFetch } from '@/api/client'
+import {
+  CandidateIdentityBlock,
+  RecruiterActionBlock,
+  RecruiterKanbanColumnHeader,
+  RecruiterRiskBanner,
+  RecruiterStateContext,
+} from '@/app/components/RecruiterState'
+import type {
+  CandidateBlockingState,
+  CandidateListCard,
+  CandidateListPayload,
+  CandidateStateFilterOption,
+} from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import '@/theme/pages/candidates.css'
 import { fadeIn, listItem, stagger } from '@/shared/motion'
-import { bulkSendSharedPortalInHh } from '@/api/services/candidates'
+import {
+  buildCandidateSurfaceState,
+  describeKanbanColumnTreatment,
+  RECRUITER_KANBAN_COLUMNS,
+  type RecruiterKanbanColumn,
+} from './candidate-state.adapter'
 
 type CityOption = {
   id: number
@@ -35,175 +53,59 @@ type AICityRecommendationsResponse = {
   notes?: string | null
 }
 
-type Candidate = {
-  id: number
-  fio?: string | null
-  city?: string | null
-  status?: { slug?: string; label?: string; tone?: string }
-  telegram_id?: string | null
-  recruiter_id?: number | null
-  recruiter_name?: string | null
-  recruiter?: { id?: number | null; name?: string | null } | null
-  average_score?: number | null
-  tests_total?: number | null
-  primary_event_at?: string | null
-  latest_message?: { created_at?: string | null } | null
-  latest_slot?: { start_utc?: string | null } | null
-  upcoming_slot?: { start_utc?: string | null } | null
-}
-
-type CandidateCard = {
-  id: number
-  fio?: string | null
-  city?: string | null
-  telegram_id?: number | string | null
-  status?: { slug?: string; label?: string; tone?: string; icon?: string }
-  stage?: string | null
-  primary_event_at?: string | null
-  recruiter?: { id?: number | null; name?: string | null } | null
-  average_score?: number | null
-  latest_slot?: { start_utc?: string | null } | null
-  upcoming_slot?: { start_utc?: string | null } | null
-}
-
-type KanbanWorkflowColumn = {
-  slug: string
-  label: string
-  icon: string
-  targetStatus: string
-  sourceStatuses: string[]
-}
-
-type CalendarDay = {
-  date: string
-  label: string
-  events: Array<{
-    candidate?: CandidateCard
-    slot?: { start_utc?: string | null }
-    status?: { slug?: string; label?: string; tone?: string }
-  }>
-  totals?: Record<string, number>
-}
-
-type CandidateListPayload = {
-  items: Candidate[]
-  total: number
-  page: number
-  pages_total: number
-  filters?: Record<string, unknown>
-  pipeline?: string
-  pipeline_options?: Array<{ slug: string; label: string }>
-  views?: {
-    kanban?: { columns: Array<{ slug: string; label: string; candidates: CandidateCard[] }> }
-    calendar?: { days: CalendarDay[] }
-    candidates?: CandidateCard[]
-  }
-}
-
 type CandidateKanbanMoveResponse = {
   ok: boolean
   message?: string
   status?: string
   candidate_id?: number
+  error?: string
+  blocking_state?: CandidateBlockingState | null
+  intent?: {
+    kind?: string
+    target_column?: string | null
+    intent_key?: string | null
+    resolved_status?: string | null
+    resolution?: string | null
+    compatibility_source?: string | null
+  } | null
+  candidate_state?: {
+    operational_summary?: {
+      kanban_column?: string | null
+    } | null
+  } | null
 }
 
 type KanbanMoveVariables = {
   candidateId: number
-  targetStatus: string
-  previousStatus?: string | null
+  targetColumn: RecruiterKanbanColumn['slug']
+  previousStatus?: RecruiterKanbanColumn['slug'] | null
 }
 
-const STATUS_OPTIONS = [
-  { value: '', label: 'Все статусы' },
-  { value: 'hired', label: '🎉 Закреплён' },
-  { value: 'not_hired', label: '⚠️ Не закреплён' },
-  { value: 'waiting_slot', label: '⏳ Ожидает слот' },
-  { value: 'slot_pending', label: '⌛ Ожидает подтверждения' },
-  { value: 'slot_booked', label: '📅 Согласован слот' },
-  { value: 'interview_passed', label: '✅ Интервью пройдено' },
-  { value: 'test2_passed', label: '✅ Тест 2 пройден' },
-  { value: 'interview_declined', label: '❌ Отказ' },
+type CandidateMoveError = Error & {
+  data?: CandidateKanbanMoveResponse
+}
+
+const DEFAULT_STATE_FILTER_OPTIONS: CandidateStateFilterOption[] = [
+  { value: '', label: 'Все кандидаты', kind: 'all' },
+  ...RECRUITER_KANBAN_COLUMNS.map((column) => ({
+    value: `kanban:${column.slug}`,
+    label: `${column.icon} ${column.label}`,
+    kind: 'kanban',
+    icon: column.icon,
+    target_status: column.targetStatus,
+  })),
 ]
 
-const KANBAN_INCOMING_SOURCE_STATUSES = [
-  'new',
-  'lead',
-  'contacted',
-  'invited',
-  'test1_completed',
-  'waiting_slot',
-  'stalled_waiting_slot',
-]
-
-const KANBAN_WORKFLOW_COLUMNS: KanbanWorkflowColumn[] = [
-  {
-    slug: 'incoming',
-    label: 'Входящие',
-    icon: '📥',
-    targetStatus: 'waiting_slot',
-    sourceStatuses: KANBAN_INCOMING_SOURCE_STATUSES,
-  },
-  {
-    slug: 'slot_pending',
-    label: 'На согласовании',
-    icon: '🕐',
-    targetStatus: 'slot_pending',
-    sourceStatuses: ['slot_pending'],
-  },
-  {
-    slug: 'interview_scheduled',
-    label: 'Назначено собеседование',
-    icon: '📅',
-    targetStatus: 'interview_scheduled',
-    sourceStatuses: ['interview_scheduled'],
-  },
-  {
-    slug: 'interview_confirmed',
-    label: 'Подтвердил собеседование',
-    icon: '✅',
-    targetStatus: 'interview_confirmed',
-    sourceStatuses: ['interview_confirmed'],
-  },
-  {
-    slug: 'test2_sent',
-    label: 'Отправлен тест 2',
-    icon: '📨',
-    targetStatus: 'test2_sent',
-    sourceStatuses: ['test2_sent'],
-  },
-  {
-    slug: 'test2_completed',
-    label: 'Прошел тест 2',
-    icon: '🧪',
-    targetStatus: 'test2_completed',
-    sourceStatuses: ['test2_completed'],
-  },
-  {
-    slug: 'intro_day_scheduled',
-    label: 'Ознакомительный день назначен',
-    icon: '📆',
-    targetStatus: 'intro_day_scheduled',
-    sourceStatuses: ['intro_day_scheduled'],
-  },
-  {
-    slug: 'intro_day_confirmed_preliminary',
-    label: 'Предварительно подтвердил ОД',
-    icon: '👍',
-    targetStatus: 'intro_day_confirmed_preliminary',
-    sourceStatuses: ['intro_day_confirmed_preliminary'],
-  },
-  {
-    slug: 'intro_day_confirmed_day_of',
-    label: 'Подтвердил ОД',
-    icon: '🎯',
-    targetStatus: 'intro_day_confirmed_day_of',
-    sourceStatuses: ['intro_day_confirmed_day_of'],
-  },
-]
-
-const KANBAN_WORKFLOW_COLUMNS_BY_SLUG = new Map(
-  KANBAN_WORKFLOW_COLUMNS.map((column) => [column.slug, column]),
-)
+const DEFAULT_KANBAN_COLUMNS = RECRUITER_KANBAN_COLUMNS.map((column) => ({
+  slug: column.slug,
+  label: column.label,
+  icon: column.icon,
+  tone: 'info',
+  target_status: column.targetStatus,
+  droppable: column.droppable ?? true,
+  total: 0,
+  candidates: [] as CandidateListCard[],
+}))
 
 function candidateScoreTone(score?: number | null) {
   if (typeof score !== 'number') return 'neutral'
@@ -238,8 +140,20 @@ function resolveCandidateDate(candidate: {
   )
 }
 
+function buildSecondaryStatusLabel(state: {
+  statusLabel?: string | null
+  stateContextLine?: string | null
+  schedulingContextLine?: string | null
+}) {
+  const value = state.statusLabel?.trim()
+  if (!value) return null
+  if (value === state.stateContextLine?.trim()) return null
+  if (value === state.schedulingContextLine?.trim()) return null
+  return value
+}
+
 type CandidateKanbanCardProps = {
-  card: CandidateCard
+  card: CandidateListCard
   canDelete: boolean
   isDeleting: boolean
   isDragging: boolean
@@ -261,6 +175,7 @@ const CandidateKanbanCard = memo(function CandidateKanbanCard({
   onDragStart,
   onDragEnd,
 }: CandidateKanbanCardProps) {
+  const state = buildCandidateSurfaceState(card)
   const scoreTone = candidateScoreTone(card.average_score)
   const cardDate = formatCandidateDate(resolveCandidateDate(card))
 
@@ -274,14 +189,38 @@ const CandidateKanbanCard = memo(function CandidateKanbanCard({
       variants={shouldAnimate ? listItem : undefined}
     >
       <div className="kanban-card__header">
-        <div className="kanban-card__identity">
-          <div className="kanban-card__name">{card.fio || '—'}</div>
-          <div className="kanban-card__meta">{card.city || '—'}</div>
-        </div>
-        {typeof card.average_score === 'number' ? (
-          <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
-        ) : null}
+        <CandidateIdentityBlock
+          title={card.fio || '—'}
+          subtitle={card.city || '—'}
+          compact
+          aside={typeof card.average_score === 'number' ? (
+            <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
+          ) : null}
+        />
       </div>
+      <RecruiterActionBlock
+        label={state.nextActionLabel || 'Следующий шаг уточняется'}
+        explanation={state.nextActionExplanation || 'Откройте профиль, чтобы продолжить работу без потери контекста.'}
+        tone={state.nextActionTone}
+        enabled={state.nextActionEnabled}
+        compact
+      />
+      <RecruiterStateContext
+        bucketLabel={state.worklistBucketLabel}
+        contextLine={state.stateContextLine}
+        schedulingLine={state.schedulingContextLine}
+        compact
+      />
+      {state.riskLevel && state.riskTitle && state.riskMessage ? (
+        <RecruiterRiskBanner
+          level={state.riskLevel}
+          title={state.riskTitle}
+          message={state.riskMessage}
+          recoveryHint={state.riskRecoveryHint}
+          count={state.riskCount > 0 ? state.riskCount : undefined}
+          compact
+        />
+      ) : null}
       <div className="kanban-card__footer">
         <span>{card.recruiter?.name || '—'}</span>
         <span>{cardDate}</span>
@@ -319,13 +258,13 @@ export function CandidatesPage() {
     const params = new URLSearchParams(window.location.search)
     return {
       search: params.get('search') ?? '',
-      status: params.get('status') ?? '',
+      stateFilter: params.get('state') ?? params.get('status') ?? '',
       pipeline: params.get('pipeline') ?? 'interview',
     }
   }, [])
 
   const [search, setSearch] = useState(initialFilters.search)
-  const [status, setStatus] = useState(initialFilters.status)
+  const [stateFilter, setStateFilter] = useState(initialFilters.stateFilter)
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
   const [pipeline, setPipeline] = useState(initialFilters.pipeline)
@@ -334,14 +273,14 @@ export function CandidatesPage() {
   const [deletingCandidateId, setDeletingCandidateId] = useState<number | null>(null)
   const [deleteCandidateError, setDeleteCandidateError] = useState<Error | null>(null)
   const [kanbanMoveError, setKanbanMoveError] = useState<Error | null>(null)
-  const [kanbanStatusOverrides, setKanbanStatusOverrides] = useState<Record<number, string>>({})
+  const [kanbanMoveBlockingState, setKanbanMoveBlockingState] = useState<CandidateBlockingState | null>(null)
+  const [kanbanMoveBlockingMessage, setKanbanMoveBlockingMessage] = useState<string | null>(null)
+  const [kanbanStatusOverrides, setKanbanStatusOverrides] = useState<Record<number, RecruiterKanbanColumn['slug']>>({})
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<number[]>([])
   const [draggingCardId, setDraggingCardId] = useState<number | null>(null)
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
   const [movingCandidateId, setMovingCandidateId] = useState<number | null>(null)
   const [hasAnimatedLists, setHasAnimatedLists] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [bulkSharedPortalMessage, setBulkSharedPortalMessage] = useState<string | null>(null)
-  const [bulkSharedPortalError, setBulkSharedPortalError] = useState<Error | null>(null)
   const [calendarFrom, setCalendarFrom] = useState(() => {
     const d = new Date()
     return d.toISOString().slice(0, 10)
@@ -355,7 +294,7 @@ export function CandidatesPage() {
   const pipelineForRequest = view === 'kanban' ? 'main' : pipeline
   const params = new URLSearchParams()
   if (search) params.set('search', search)
-  if (status) params.set('status', status)
+  if (stateFilter) params.set('state', stateFilter)
   if (pipelineForRequest) params.set('pipeline', pipelineForRequest)
   params.set('page', String(page))
   params.set('per_page', String(perPage))
@@ -366,7 +305,7 @@ export function CandidatesPage() {
   }
 
   const { data, isLoading, isError, error } = useQuery<CandidateListPayload>({
-    queryKey: ['candidates', { search, status, page, perPage, pipeline: pipelineForRequest, view, calendarFrom, calendarTo }],
+    queryKey: ['candidates', { search, stateFilter, page, perPage, pipeline: pipelineForRequest, view, calendarFrom, calendarTo }],
     queryFn: () => apiFetch(`/candidates?${params.toString()}`),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
@@ -409,17 +348,21 @@ export function CandidatesPage() {
   })
 
   const moveKanbanCandidateMutation = useMutation({
-    mutationFn: async ({ candidateId, targetStatus }: KanbanMoveVariables) =>
+    mutationFn: async ({ candidateId, targetColumn }: KanbanMoveVariables) =>
       apiFetch<CandidateKanbanMoveResponse>(`/candidates/${candidateId}/kanban-status`, {
         method: 'POST',
-        body: JSON.stringify({ target_status: targetStatus }),
+        body: JSON.stringify({ target_column: targetColumn }),
       }),
     onMutate: ({ candidateId }: KanbanMoveVariables) => {
       setKanbanMoveError(null)
+      setKanbanMoveBlockingState(null)
+      setKanbanMoveBlockingMessage(null)
       setMovingCandidateId(candidateId)
     },
     onSuccess: async (_data, variables) => {
       setKanbanMoveError(null)
+      setKanbanMoveBlockingState(null)
+      setKanbanMoveBlockingMessage(null)
       setKanbanStatusOverrides((prev) => {
         const next = { ...prev }
         delete next[variables.candidateId]
@@ -428,7 +371,10 @@ export function CandidatesPage() {
       await queryClient.invalidateQueries({ queryKey: ['candidates'] })
     },
     onError: (error: Error, variables) => {
-      setKanbanMoveError(error)
+      const response = (error as CandidateMoveError).data
+      setKanbanMoveError(response?.blocking_state ? null : error)
+      setKanbanMoveBlockingState(response?.blocking_state ?? null)
+      setKanbanMoveBlockingMessage(response?.message || error.message)
       setKanbanStatusOverrides((prev) => {
         const next = { ...prev }
         if (variables.previousStatus) {
@@ -443,44 +389,73 @@ export function CandidatesPage() {
       setMovingCandidateId(null)
     },
   })
-  const bulkSharedPortalMutation = useMutation({
-    mutationFn: async (candidateIds: number[]) => bulkSendSharedPortalInHh(candidateIds),
-    onSuccess: async (payload) => {
-      setBulkSharedPortalError(null)
-      const summary = payload.summary
-      setBulkSharedPortalMessage(
-        `Shared portal: отправлено ${summary.sent}, заблокировано ${summary.blocked}, пропущено ${summary.skipped}.`,
-      )
-      setSelectedIds(new Set())
-      await queryClient.invalidateQueries({ queryKey: ['candidates'] })
-    },
-    onError: (error: Error) => {
-      setBulkSharedPortalError(error)
-    },
-  })
   const deleteCandidateMutate = deleteCandidateMutation.mutate
   const moveKanbanCandidateMutate = moveKanbanCandidateMutation.mutate
 
   const total = data?.total ?? 0
   const pagesTotal = data?.pages_total ?? 1
-  const kanbanCards = useMemo(
-    () => data?.views?.candidates ?? [],
-    [data?.views?.candidates],
+  const stateOptions = useMemo(() => {
+    const baseOptions = data?.filters?.state_options?.length
+      ? data.filters.state_options
+      : DEFAULT_STATE_FILTER_OPTIONS
+    if (!stateFilter || baseOptions.some((option) => option.value === stateFilter)) {
+      return baseOptions
+    }
+    return [
+      ...baseOptions,
+      {
+        value: stateFilter,
+        label: stateFilter,
+        kind: 'legacy',
+      },
+    ]
+  }, [data?.filters?.state_options, stateFilter])
+  const listCards = useMemo<CandidateListCard[]>(
+    () => {
+      if (data?.views?.candidates?.length) return data.views.candidates
+      return (data?.items || []).map((item) => ({
+        id: item.id,
+        fio: item.fio,
+        city: item.city,
+        telegram_id: item.telegram_id,
+        status: item.status,
+        recruiter_id: item.recruiter_id,
+        recruiter_name: item.recruiter_name,
+        recruiter: item.recruiter,
+        average_score: item.average_score,
+        primary_event_at: item.primary_event_at,
+        latest_slot: item.latest_slot,
+        upcoming_slot: item.upcoming_slot,
+      }))
+    },
+    [data?.items, data?.views?.candidates],
   )
-  const effectiveStatusById = useMemo(() => {
-    const map = new Map<number, string>()
+  const kanbanCards = useMemo(
+    () => listCards,
+    [listCards],
+  )
+  const backendKanbanColumns = useMemo(
+    () => (data?.views?.kanban?.columns?.length ? data.views.kanban.columns : DEFAULT_KANBAN_COLUMNS),
+    [data?.views?.kanban?.columns],
+  )
+  const kanbanColumnsBySlug = useMemo(
+    () => new Map(backendKanbanColumns.map((column) => [column.slug, column])),
+    [backendKanbanColumns],
+  )
+  const effectiveColumnById = useMemo(() => {
+    const map = new Map<number, RecruiterKanbanColumn['slug']>()
     for (const card of kanbanCards) {
-      const statusSlug = kanbanStatusOverrides[card.id] || card.status?.slug || ''
-      map.set(card.id, statusSlug)
+      const columnSlug = kanbanStatusOverrides[card.id] || buildCandidateSurfaceState(card).kanbanColumnSlug
+      map.set(card.id, columnSlug)
     }
     return map
   }, [kanbanCards, kanbanStatusOverrides])
   const kanbanColumns = useMemo(
     () =>
-      KANBAN_WORKFLOW_COLUMNS.map((column) => {
+      backendKanbanColumns.map((column) => {
         const cards = kanbanCards.filter((card) => {
-          const currentStatus = effectiveStatusById.get(card.id) || ''
-          return column.sourceStatuses.includes(currentStatus)
+          const currentColumn = effectiveColumnById.get(card.id) || 'incoming'
+          return currentColumn === column.slug
         })
         return {
           ...column,
@@ -488,7 +463,7 @@ export function CandidatesPage() {
           candidates: cards,
         }
       }),
-    [kanbanCards, effectiveStatusById],
+    [backendKanbanColumns, kanbanCards, effectiveColumnById],
   )
   const calendarDays = data?.views?.calendar?.days || []
   const pipelineOptions = data?.pipeline_options || [
@@ -496,18 +471,18 @@ export function CandidatesPage() {
     { slug: 'interview', label: 'Интервью' },
     { slug: 'intro_day', label: 'Ознакомительный день' },
   ]
-  const hasActiveFilters = Boolean(search.trim() || status || (view !== 'kanban' && pipeline !== 'interview'))
+  const hasActiveFilters = Boolean(search.trim() || stateFilter || (view !== 'kanban' && pipeline !== 'interview'))
   const firstRenderAnimation = !hasAnimatedLists && !prefersReducedMotion
-  const listAnimationKey = [search, status, pipeline, view, page, perPage].join('|')
+  const listAnimationKey = [search, stateFilter, pipeline, view, page, perPage].join('|')
   const kanbanAnimationKey = [
     search,
-    status,
+    stateFilter,
     pipeline,
     kanbanColumns.map((column) => `${column.slug}:${column.candidates.length}`).join(','),
   ].join('|')
   const activeFilterBadges = [
     search.trim() ? `Поиск: ${search.trim()}` : null,
-    status ? `Статус: ${STATUS_OPTIONS.find((option) => option.value === status)?.label || status}` : null,
+    stateFilter ? `Этап: ${stateOptions.find((option) => option.value === stateFilter)?.label || stateFilter}` : null,
     view !== 'kanban' && pipeline !== 'interview'
       ? `Воронка: ${pipelineOptions.find((option) => option.slug === pipeline)?.label || pipeline}`
       : null,
@@ -515,32 +490,24 @@ export function CandidatesPage() {
 
   const resetFilters = () => {
     setSearch('')
-    setStatus('')
+    setStateFilter('')
     setPipeline('interview')
     setPage(1)
   }
 
   useEffect(() => {
-    const currentIds = new Set((data?.items || []).map((item) => item.id))
-    setSelectedIds((prev) => {
-      if (prev.size === currentIds.size) {
-        let unchanged = true
-        prev.forEach((id) => {
-          if (!currentIds.has(id)) unchanged = false
-        })
-        if (unchanged) return prev
-      }
-      const next = new Set<number>()
-      prev.forEach((id) => {
-        if (currentIds.has(id)) next.add(id)
-      })
-      return next
-    })
-  }, [data?.items])
-
-  useEffect(() => {
     setHasAnimatedLists(true)
   }, [])
+
+  useEffect(() => {
+    setSelectedCandidateIds((prev) => {
+      const next = prev.filter((id) => listCards.some((candidate) => candidate.id === id))
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
+        return prev
+      }
+      return next
+    })
+  }, [listCards])
 
   useEffect(() => {
     if (!isMobile) return
@@ -555,39 +522,64 @@ export function CandidatesPage() {
     deleteCandidateMutate(candidate.id)
   }, [deleteCandidateMutate])
 
-  const toggleCandidateSelected = useCallback((candidateId: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(candidateId)) {
-        next.delete(candidateId)
-      } else {
-        next.add(candidateId)
+  const selectedCandidates = useMemo(
+    () => listCards.filter((candidate) => selectedCandidateIds.includes(candidate.id)),
+    [listCards, selectedCandidateIds],
+  )
+  const workQueueSummary = useMemo(() => {
+    const order = ['incoming', 'today', 'awaiting_recruiter', 'awaiting_candidate', 'blocked', 'closed']
+    const queueMap = new Map<string, { label: string; count: number }>()
+
+    for (const candidate of listCards) {
+      const state = buildCandidateSurfaceState(candidate)
+      const current = queueMap.get(state.worklistBucket)
+      if (current) {
+        current.count += 1
+        continue
       }
-      return next
-    })
+      queueMap.set(state.worklistBucket, {
+        label: state.worklistBucketLabel,
+        count: 1,
+      })
+    }
+
+    return Array.from(queueMap.entries())
+      .sort((left, right) => {
+        const leftOrder = order.indexOf(left[0])
+        const rightOrder = order.indexOf(right[0])
+        if (leftOrder !== rightOrder) return (leftOrder === -1 ? Number.MAX_SAFE_INTEGER : leftOrder) - (rightOrder === -1 ? Number.MAX_SAFE_INTEGER : rightOrder)
+        return right[1].count - left[1].count
+      })
+      .map(([, value]) => value)
+  }, [listCards])
+
+  const toggleCandidateSelected = useCallback((candidateId: number) => {
+    setSelectedCandidateIds((prev) => (
+      prev.includes(candidateId)
+        ? prev.filter((id) => id !== candidateId)
+        : [...prev, candidateId]
+    ))
   }, [])
 
-  const toggleCurrentPageSelection = useCallback(() => {
-    const pageIds = (data?.items || []).map((item) => item.id)
-    if (pageIds.length === 0) return
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      const allSelected = pageIds.every((id) => next.has(id))
-      pageIds.forEach((id) => {
-        if (allSelected) {
-          next.delete(id)
-        } else {
-          next.add(id)
-        }
-      })
-      return next
-    })
-  }, [data?.items])
+  const clearSelectedCandidates = useCallback(() => {
+    setSelectedCandidateIds([])
+  }, [])
 
-  const handleBulkSendSharedPortal = useCallback(() => {
-    if (selectedIds.size === 0) return
-    bulkSharedPortalMutation.mutate(Array.from(selectedIds))
-  }, [bulkSharedPortalMutation, selectedIds])
+  const openSelectedCandidates = useCallback(() => {
+    if (typeof window === 'undefined') return
+    for (const candidate of selectedCandidates) {
+      window.open(`/app/candidates/${candidate.id}`, '_blank', 'noopener,noreferrer')
+    }
+  }, [selectedCandidates])
+
+  const copySelectedCandidateLinks = useCallback(async () => {
+    if (typeof window === 'undefined' || !navigator.clipboard?.writeText) return
+    const origin = window.location.origin
+    const payload = selectedCandidates
+      .map((candidate) => `${candidate.fio || `Кандидат #${candidate.id}`}: ${origin}/app/candidates/${candidate.id}`)
+      .join('\n')
+    await navigator.clipboard.writeText(payload)
+  }, [selectedCandidates])
 
   const handleKanbanDragStart = useCallback((event: DragEvent<HTMLDivElement>) => {
     const rawCandidateId = event.currentTarget.dataset.candidateId
@@ -627,37 +619,37 @@ export function CandidatesPage() {
 
   const handleKanbanDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-    const targetSlug = event.currentTarget.dataset.columnSlug || ''
-    const targetColumn = KANBAN_WORKFLOW_COLUMNS_BY_SLUG.get(targetSlug)
+    const targetSlug = event.currentTarget.dataset.columnSlug as RecruiterKanbanColumn['slug'] | undefined
+    if (!targetSlug) {
+      setDragOverColumn(null)
+      setDraggingCardId(null)
+      return
+    }
+    const targetColumn = kanbanColumnsBySlug.get(targetSlug)
     const rawCandidateId = event.dataTransfer.getData('text/candidate-id')
     const candidateId = Number(rawCandidateId)
     setDragOverColumn(null)
     setDraggingCardId(null)
     if (!targetColumn || !Number.isFinite(candidateId)) return
+    if (targetColumn.droppable === false) return
 
-    const previousStatus = effectiveStatusById.get(candidateId) || null
+    const previousStatus = effectiveColumnById.get(candidateId) || null
     if (!previousStatus) return
 
-    if (
-      targetColumn.slug === 'incoming' &&
-      KANBAN_INCOMING_SOURCE_STATUSES.includes(previousStatus)
-    ) {
-      return
-    }
-    if (targetColumn.targetStatus === previousStatus) {
+    if (targetColumn.slug === previousStatus) {
       return
     }
 
     setKanbanStatusOverrides((prev) => ({
       ...prev,
-      [candidateId]: targetColumn.targetStatus,
+      [candidateId]: targetColumn.slug as RecruiterKanbanColumn['slug'],
     }))
     moveKanbanCandidateMutate({
       candidateId,
-      targetStatus: targetColumn.targetStatus,
+      targetColumn: targetColumn.slug as RecruiterKanbanColumn['slug'],
       previousStatus,
     })
-  }, [effectiveStatusById, moveKanbanCandidateMutate])
+  }, [effectiveColumnById, kanbanColumnsBySlug, moveKanbanCandidateMutate])
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
@@ -679,11 +671,11 @@ export function CandidatesPage() {
               className="filter-bar__search candidates-filter-bar__search"
             />
             <select
-              aria-label="Статус кандидата"
-              value={status}
-              onChange={(e) => { setStatus(e.target.value); setPage(1) }}
+              aria-label="Этап кандидата"
+              value={stateFilter}
+              onChange={(e) => { setStateFilter(e.target.value); setPage(1) }}
             >
-              {STATUS_OPTIONS.map((opt) => (
+              {stateOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
@@ -811,35 +803,56 @@ export function CandidatesPage() {
             </select>
           </div>
 
-          {view === 'list' && selectedIds.size > 0 && (
-            <div className="toolbar app-page__toolbar" data-testid="candidates-bulk-bar">
-              <span className="toolbar__label">Выбрано: {selectedIds.size}</span>
-              <button
-                type="button"
-                className="ui-btn ui-btn--primary ui-btn--sm"
-                onClick={handleBulkSendSharedPortal}
-                disabled={bulkSharedPortalMutation.isPending}
-              >
-                {bulkSharedPortalMutation.isPending ? 'Отправляем…' : 'Отправить shared portal в HH'}
-              </button>
-              <button
-                type="button"
-                className="ui-btn ui-btn--ghost ui-btn--sm"
-                onClick={() => setSelectedIds(new Set())}
-                disabled={bulkSharedPortalMutation.isPending}
-              >
-                Снять выбор
-              </button>
-            </div>
-          )}
-
           {isLoading && <p className="text-muted">Загрузка…</p>}
           {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
           {deleteCandidateError && <ApiErrorBanner error={deleteCandidateError} title="Не удалось удалить кандидата" />}
+          {kanbanMoveBlockingState && (
+            <RecruiterRiskBanner
+              level={
+                kanbanMoveBlockingState.severity === 'warning'
+                  ? (kanbanMoveBlockingState.manual_resolution_required ? 'repair' : 'warning')
+                  : 'blocker'
+              }
+              title="Перемещение остановлено"
+              message={kanbanMoveBlockingMessage || 'Колонка недоступна для этого кандидата.'}
+              count={kanbanMoveBlockingState.issue_codes?.length || undefined}
+              className="candidates-kanban-feedback"
+            />
+          )}
           {kanbanMoveError && <ApiErrorBanner error={kanbanMoveError} title="Не удалось переместить кандидата в канбане" />}
-          {bulkSharedPortalError && <ApiErrorBanner error={bulkSharedPortalError} title="Не удалось отправить shared portal" />}
-          {bulkSharedPortalMessage && <p className="subtitle">{bulkSharedPortalMessage}</p>}
-          {data && data.items.length === 0 && (
+          {view === 'list' && workQueueSummary.length > 0 && (
+            <div data-testid="candidates-work-queues" style={{ marginTop: 'var(--space-3)' }}>
+              <div className="subtitle">Очереди на странице</div>
+              <div className="candidates-filter-pills">
+                {workQueueSummary.map((queue) => (
+                  <div key={queue.label} className="candidates-filter-pill">
+                    <strong>{queue.count}</strong>
+                    <span>{queue.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {view === 'list' && selectedCandidateIds.length > 0 && (
+            <div className="glass candidates-selection-bar" data-testid="candidates-selection-bar">
+              <div className="candidates-selection-bar__summary">
+                <strong>{selectedCandidateIds.length}</strong>
+                <span>выбрано для безопасного триажа</span>
+              </div>
+              <div className="candidates-selection-bar__actions">
+                <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={openSelectedCandidates}>
+                  Открыть профили
+                </button>
+                <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => { void copySelectedCandidateLinks() }}>
+                  Скопировать ссылки
+                </button>
+                <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={clearSelectedCandidates}>
+                  Очистить
+                </button>
+              </div>
+            </div>
+          )}
+          {data && listCards.length === 0 && (
             <div className="empty-state" data-testid="candidates-empty-state">
               <p className="empty-state__text">
                 {hasActiveFilters
@@ -912,19 +925,25 @@ export function CandidatesPage() {
           {view === 'kanban' && (
             <div className="page-section__content">
               <p className="subtitle">
-                Перетаскивайте карточки между этапами. Канбан зафиксирован на основном сценарии из 9 статусов.
+                Доска показывает только безопасные ручные переходы. Закрытые колонки обновляются системой или следующим допустимым шагом.
               </p>
               <div className="kanban">
-                {kanbanColumns.map((col) => (
-                  <article
-                    key={col.slug}
-                    className={`glass kanban__column kanban-column ${dragOverColumn === col.slug ? 'kanban-column--drag-over' : ''}`}
-                    data-kanban-column={col.slug}
-                  >
-                    <div className="kanban__header kanban-column-header">
-                      <span className="kanban__title">{col.icon} {col.label}</span>
-                      <span className="kanban__count kanban-column-count">{col.total ?? col.candidates.length}</span>
-                    </div>
+                {kanbanColumns.map((col) => {
+                  const treatment = describeKanbanColumnTreatment(col)
+                  return (
+                    <article
+                      key={col.slug}
+                      className={`glass kanban__column kanban-column ${dragOverColumn === col.slug ? 'kanban-column--drag-over' : ''} ${col.droppable === false ? 'kanban-column--locked' : ''} kanban-column--${treatment.mode}`}
+                      data-kanban-column={col.slug}
+                    >
+                      <RecruiterKanbanColumnHeader
+                        icon={col.icon || '•'}
+                        label={col.label}
+                        count={col.total ?? col.candidates.length}
+                        droppable={col.droppable !== false}
+                        mode={treatment.mode}
+                        helperText={treatment.helperText}
+                      />
                     <motion.div
                       key={`${kanbanAnimationKey}-${col.slug}`}
                       className={`kanban__cards ${dragOverColumn === col.slug ? 'kanban__cards--drag-over' : ''}`}
@@ -933,10 +952,10 @@ export function CandidatesPage() {
                       animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
                       variants={firstRenderAnimation ? stagger(0.03) : undefined}
                       transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
-                      onDragEnter={handleKanbanDragEnter}
-                      onDragOver={handleKanbanDragOver}
-                      onDragLeave={handleKanbanDragLeave}
-                      onDrop={handleKanbanDrop}
+                      onDragEnter={col.droppable === false ? undefined : handleKanbanDragEnter}
+                      onDragOver={col.droppable === false ? undefined : handleKanbanDragOver}
+                      onDragLeave={col.droppable === false ? undefined : handleKanbanDragLeave}
+                      onDrop={col.droppable === false ? undefined : handleKanbanDrop}
                     >
                       {col.candidates.map((card) => (
                         <CandidateKanbanCard
@@ -957,48 +976,83 @@ export function CandidatesPage() {
                       ))}
                     </motion.div>
                   </article>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
 
-          {view === 'list' && data && data.items.length > 0 && (
+          {view === 'list' && data && listCards.length > 0 && (
             <>
               {isMobile && (
                 <div className="mobile-card-list" data-testid="candidates-mobile-list">
-                  {data.items.map((c) => {
-                    const tone = c.status?.tone
-                    const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
+                  {listCards.map((c) => {
+                      const state = buildCandidateSurfaceState(c)
+                      const secondaryStatusLabel = buildSecondaryStatusLabel(state)
+                      const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
                     const canDelete =
                       isAdmin ||
                       (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
                     const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
+                    const isSelected = selectedCandidateIds.includes(c.id)
                     return (
-                      <article key={`mobile-candidate-${c.id}`} className="candidate-mobile-card glass glass--subtle">
-                        <div className="list-item__header">
-                          <div className="toolbar toolbar--compact" style={{ justifyContent: 'space-between', width: '100%' }}>
-                            <label className="ui-inline-checkbox">
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.has(c.id)}
-                                onChange={() => toggleCandidateSelected(c.id)}
-                              />
-                            </label>
-                            <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
-                              {c.fio || '—'}
-                            </Link>
-                          </div>
-                          <span className={`status-badge status-badge--${tone || 'muted'}`}>
-                            {c.status?.label || c.status?.slug || '—'}
-                          </span>
+                      <article
+                        key={`mobile-candidate-${c.id}`}
+                        className={`candidate-mobile-card glass glass--subtle ${isSelected ? 'candidate-mobile-card--selected' : ''}`}
+                      >
+                        <div className="candidate-mobile-card__top">
+                          <label className="candidate-select">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleCandidateSelected(c.id)}
+                              aria-label={`Выбрать ${c.fio || `кандидата ${c.id}`}`}
+                            />
+                          </label>
+                          <CandidateIdentityBlock
+                            title={(
+                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
+                                {c.fio || '—'}
+                              </Link>
+                            )}
+                            subtitle={c.city || '—'}
+                            compact
+                            aside={(
+                              <span className={`candidate-score candidate-score--${candidateScoreTone(c.average_score)}`}>
+                                {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
+                              </span>
+                            )}
+                            className="candidate-mobile-card__identity"
+                          />
                         </div>
                         <div className="text-muted text-sm">
-                          {c.city || '—'}{isAdmin ? ` · ${recruiterName}` : ''}
+                          {isAdmin ? `Ответственный: ${recruiterName}` : 'Рабочая карточка для быстрого разбора'}
                         </div>
+                        <RecruiterActionBlock
+                          label={state.nextActionLabel || 'Откройте профиль'}
+                          explanation={state.nextActionExplanation || 'Следующий шаг появится после открытия профиля кандидата.'}
+                          tone={state.nextActionTone}
+                          enabled={state.nextActionEnabled}
+                          compact
+                        />
+                        <RecruiterStateContext
+                          bucketLabel={state.worklistBucketLabel}
+                          contextLine={state.stateContextLine}
+                          schedulingLine={state.schedulingContextLine}
+                          compact
+                        />
+                        {state.riskLevel && state.riskTitle && state.riskMessage ? (
+                          <RecruiterRiskBanner
+                            level={state.riskLevel}
+                            title={state.riskTitle}
+                            message={state.riskMessage}
+                            recoveryHint={state.riskRecoveryHint}
+                            count={state.riskCount > 0 ? state.riskCount : undefined}
+                            compact
+                          />
+                        ) : null}
                         <div className="candidate-mobile-card__meta">
-                          <span className={`candidate-score candidate-score--${candidateScoreTone(c.average_score)}`}>
-                            {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
-                          </span>
+                          {secondaryStatusLabel ? <span className="candidate-row__secondary">{secondaryStatusLabel}</span> : null}
                           <span className="candidate-row__date">{formatCandidateDate(resolveCandidateDate(c))}</span>
                         </div>
                         <div className="toolbar toolbar--compact">
@@ -1034,20 +1088,11 @@ export function CandidatesPage() {
                 <table className="data-table candidates-table" data-testid="candidates-table">
                   <thead className="candidates-thead">
                     <tr>
-                      <th className="data-table__th--checkbox">
-                        <input
-                          type="checkbox"
-                          checked={data.items.length > 0 && data.items.every((item) => selectedIds.has(item.id))}
-                          onChange={toggleCurrentPageSelection}
-                          aria-label="Выбрать всех кандидатов на странице"
-                        />
-                      </th>
+                      <th aria-label="Выбор кандидата" />
                       <th>Кандидат</th>
-                      <th>Статус</th>
-                      <th>Score</th>
-                      {isAdmin && <th>Рекрутёр</th>}
-                      <th>Дата</th>
-                      <th>Действия</th>
+                      <th>Следующий шаг</th>
+                      <th>Контекст</th>
+                      <th>Риски и действия</th>
                     </tr>
                   </thead>
                   <motion.tbody
@@ -1057,8 +1102,9 @@ export function CandidatesPage() {
                     variants={firstRenderAnimation ? stagger(0.03) : undefined}
                     transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
                   >
-                    {data.items.map((c) => {
-                      const tone = c.status?.tone
+                    {listCards.map((c) => {
+                      const state = buildCandidateSurfaceState(c)
+                      const secondaryStatusLabel = buildSecondaryStatusLabel(state)
                       const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
                       const canDelete =
                         isAdmin ||
@@ -1066,48 +1112,79 @@ export function CandidatesPage() {
                       const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
                       const scoreTone = candidateScoreTone(c.average_score)
                       const candidateDate = formatCandidateDate(resolveCandidateDate(c))
+                      const isSelected = selectedCandidateIds.includes(c.id)
                       return (
-                        <motion.tr key={c.id} className={`candidate-row ${selectedIds.has(c.id) ? 'data-table__row--selected' : ''}`} variants={firstRenderAnimation ? listItem : undefined}>
-                          <td className="candidate-row__cell">
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(c.id)}
-                              onChange={() => toggleCandidateSelected(c.id)}
-                              aria-label={`Выбрать кандидата ${c.fio || c.id}`}
-                            />
+                        <motion.tr
+                          key={c.id}
+                          className={`candidate-row ${isSelected ? 'candidate-row--selected' : ''}`}
+                          variants={firstRenderAnimation ? listItem : undefined}
+                        >
+                          <td className="candidate-row__cell candidate-row__cell--select">
+                            <label className="candidate-select">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleCandidateSelected(c.id)}
+                                aria-label={`Выбрать ${c.fio || `кандидата ${c.id}`}`}
+                              />
+                            </label>
                           </td>
                           <td className="candidate-row__cell candidate-row__cell--identity">
-                            <div className="candidate-row__identity">
-                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
-                                {c.fio || '—'}
-                              </Link>
-                              <div className="candidate-row__secondary">
-                                {c.city || '—'}
-                                {c.telegram_id ? (
-                                  <>
-                                    {' · '}
-                                    <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="candidate-row__link">
-                                      @{String(c.telegram_id).replace(/^@/, '')}
-                                    </a>
-                                  </>
-                                ) : null}
-                              </div>
+                            <CandidateIdentityBlock
+                              title={(
+                                <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="candidate-row__name">
+                                  {c.fio || '—'}
+                                </Link>
+                              )}
+                              subtitle={c.city || '—'}
+                              meta={c.telegram_id ? (
+                                <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="candidate-row__link">
+                                  @{String(c.telegram_id).replace(/^@/, '')}
+                                </a>
+                              ) : null}
+                              className="candidate-row__identity"
+                            />
+                          </td>
+                          <td className="candidate-row__cell candidate-row__cell--action">
+                            <RecruiterActionBlock
+                              label={state.nextActionLabel || 'Откройте профиль'}
+                              explanation={state.nextActionExplanation || 'Следующий шаг появится после открытия профиля кандидата.'}
+                              tone={state.nextActionTone}
+                              enabled={state.nextActionEnabled}
+                              compact
+                            />
+                          </td>
+                          <td className="candidate-row__cell candidate-row__cell--context">
+                            <RecruiterStateContext
+                              bucketLabel={state.worklistBucketLabel}
+                              contextLine={state.stateContextLine}
+                              schedulingLine={state.schedulingContextLine}
+                              compact
+                            />
+                            <div className="candidate-row__secondary candidate-row__meta-line">
+                              {secondaryStatusLabel ? <span>{secondaryStatusLabel}</span> : null}
+                              <span>{candidateDate}</span>
+                              {isAdmin ? <span>{recruiterName}</span> : null}
                             </div>
                           </td>
-                          <td className="candidate-row__cell">
-                            <span className={`status-badge status-badge--${tone || 'muted'} candidates-status-pill`}>
-                              {c.status?.label || c.status?.slug || '—'}
-                            </span>
-                          </td>
-                          <td className="candidate-row__cell">
-                            <span className={`candidate-score candidate-score--${scoreTone}`}>
-                              {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
-                            </span>
-                          </td>
-                          {isAdmin && <td className="candidate-row__cell candidate-row__secondary">{recruiterName}</td>}
-                          <td className="candidate-row__cell candidate-row__date">{candidateDate}</td>
-                          <td className="candidate-row__cell">
-                            <div className="candidate-row__actions">
+                          <td className="candidate-row__cell candidate-row__cell--signals">
+                            {state.riskLevel && state.riskTitle && state.riskMessage ? (
+                              <RecruiterRiskBanner
+                                level={state.riskLevel}
+                                title={state.riskTitle}
+                                message={state.riskMessage}
+                                recoveryHint={state.riskRecoveryHint}
+                                count={state.riskCount > 0 ? state.riskCount : undefined}
+                                compact
+                              />
+                            ) : (
+                              <div className="candidate-row__secondary candidate-row__healthy">Без блокеров</div>
+                            )}
+                            <div className="candidate-row__signals-footer">
+                              <span className={`candidate-score candidate-score--${scoreTone}`}>
+                                {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
+                              </span>
+                              <div className="candidate-row__actions">
                               <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
                                 Открыть
                               </Link>
@@ -1123,6 +1200,7 @@ export function CandidatesPage() {
                               ) : (
                                 <span className="candidate-row__secondary">—</span>
                               )}
+                            </div>
                             </div>
                           </td>
                         </motion.tr>

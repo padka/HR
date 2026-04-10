@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import logging
 import math
 import time
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import (
@@ -14,6 +15,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.timezones import DEFAULT_TZ
 from backend.apps.admin_ui.utils import fmt_local, safe_zone
@@ -31,6 +33,7 @@ from backend.domain.models import (
     recruiter_city_association,
 )
 from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
+from backend.domain.candidates.state_contract import build_candidate_state_contract
 from backend.domain.ai.models import AIOutput
 from backend.domain.analytics import FunnelEvent
 from backend.domain.analytics_models import analytics_events as ANALYTICS_EVENTS
@@ -369,6 +372,8 @@ async def get_waiting_candidates(
 
             user_ids = [int(row.id) for row in users]
             candidate_ids = [str(row.candidate_id) for row in users if row.candidate_id]
+            slots_by_candidate_id: Dict[str, List[Slot]] = {}
+            slot_assignments_by_candidate_id: Dict[str, List[SlotAssignment]] = {}
             if user_ids:
                 last_msg_sq = (
                     select(
@@ -459,6 +464,31 @@ async def get_waiting_candidates(
                         "risk_hint": risk_hint,
                     }
                 ai_cache_ms = (time.perf_counter() - ai_cache_started) * 1000
+
+            if candidate_ids:
+                slot_rows = (
+                    await session.execute(
+                        select(Slot).where(Slot.candidate_id.in_(candidate_ids))
+                    )
+                ).scalars().all()
+                for slot in slot_rows:
+                    candidate_key = str(getattr(slot, "candidate_id", "") or "").strip()
+                    if not candidate_key:
+                        continue
+                    slots_by_candidate_id.setdefault(candidate_key, []).append(slot)
+
+                assignment_rows = (
+                    await session.execute(
+                        select(SlotAssignment)
+                        .options(selectinload(SlotAssignment.slot))
+                        .where(SlotAssignment.candidate_id.in_(candidate_ids))
+                    )
+                ).scalars().all()
+                for assignment in assignment_rows:
+                    candidate_key = str(getattr(assignment, "candidate_id", "") or "").strip()
+                    if not candidate_key:
+                        continue
+                    slot_assignments_by_candidate_id.setdefault(candidate_key, []).append(assignment)
 
             if candidate_ids:
                 reschedule_intent_map = await get_reschedule_intent_map(
@@ -579,6 +609,47 @@ async def get_waiting_candidates(
                     if status_slug == CandidateStatus.SLOT_PENDING.value
                     else get_status_label(user_candidate_status)
                 )
+            state_contract = build_candidate_state_contract(
+                candidate=SimpleNamespace(
+                    candidate_id=user_candidate_id,
+                    candidate_status=user_candidate_status,
+                    workflow_status=None,
+                    lifecycle_state="active",
+                    final_outcome=None,
+                    archive_reason=None,
+                    rejection_reason=None,
+                    intro_decline_reason=None,
+                    final_outcome_reason=None,
+                    status_changed_at=user_status_changed_at,
+                    telegram_id=user_telegram_id,
+                    max_user_id=None,
+                    phone=None,
+                ),
+                candidate_actions=[],
+                slots=slots_by_candidate_id.get(str(user_candidate_id), []),
+                slot_assignments=slot_assignments_by_candidate_id.get(str(user_candidate_id), []),
+                pending_slot_request=(
+                    {
+                        "requested": True,
+                        "requested_at": reschedule_intent.created_at,
+                        "requested_start_utc": reschedule_intent.requested_start_utc,
+                        "requested_end_utc": reschedule_intent.requested_end_utc,
+                        "requested_tz": reschedule_intent.requested_tz,
+                        "candidate_comment": reschedule_intent.candidate_comment,
+                        "source": reschedule_intent.source,
+                    }
+                    if requested_another_time and reschedule_intent is not None
+                    else None
+                ),
+                legacy_status_slug=status_slug,
+                now=now,
+                waiting_hours=waiting_hours,
+                incoming_substatus=incoming_substatus,
+            )
+            operational_summary = state_contract.get("operational_summary") or {}
+            canonical_queue_state = operational_summary.get("queue_state")
+            if canonical_queue_state:
+                incoming_substatus = str(canonical_queue_state)
             waiting_rows.append(
                 {
                     "id": int(user_id),
@@ -621,6 +692,12 @@ async def get_waiting_candidates(
                         else None
                     ),
                     "incoming_substatus": incoming_substatus,
+                    "state_contract_version": state_contract.get("version"),
+                    "lifecycle_summary": state_contract.get("lifecycle_summary"),
+                    "scheduling_summary": state_contract.get("scheduling_summary"),
+                    "candidate_next_action": state_contract.get("candidate_next_action"),
+                    "operational_summary": operational_summary,
+                    "state_reconciliation": state_contract.get("reconciliation"),
                     "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
                     "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
                     "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),

@@ -1,14 +1,15 @@
-import pytest
-from fastapi.testclient import TestClient
+from datetime import UTC
 
+import pytest
 from backend.core.db import async_session
 from backend.core.messenger.channel_state import (
     get_messenger_channel_health,
     mark_messenger_channel_healthy,
     set_messenger_channel_degraded,
 )
-from backend.domain.models import NotificationLog, OutboxNotification
 from backend.domain import models
+from backend.domain.models import NotificationLog, OutboxNotification
+from fastapi.testclient import TestClient
 
 
 class _DummyIntegration:
@@ -140,7 +141,7 @@ def test_notifications_feed_returns_outbox_items(notifications_feed_app):
 
 def test_notifications_logs_returns_items(notifications_feed_app):
     import asyncio
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     def _run(coro):
         try:
@@ -163,7 +164,7 @@ def test_notifications_logs_returns_items(notifications_feed_app):
                 recruiter_id=recruiter.id,
                 city_id=city.id,
                 tz_name=city.tz,
-                start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                start_utc=datetime.now(UTC) + timedelta(days=1),
                 duration_min=60,
                 status=models.SlotStatus.BOOKED,
                 candidate_tg_id=123,
@@ -267,9 +268,38 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
         assert "token_valid" in payload["portal"]
         assert "max_link_base_source" in payload["portal"]
         assert "webhook_public_ready" in payload["portal"]
+        assert "runtime_status" in payload["portal"]
+        assert "dedupe_ready" in payload["portal"]
+        assert "readiness_blockers" in payload["portal"]
+        assert "browser_portal_fallback_allowed" in payload["portal"]
         assert "shared_access" in payload["portal"]
     finally:
         _run(mark_messenger_channel_healthy("max"))
+
+
+def test_system_messenger_health_surfaces_missing_max_webhook_secret(monkeypatch):
+    import asyncio
+
+    from backend.apps.admin_ui.services.messenger_health import (
+        get_messenger_health_snapshot,
+    )
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("MAX_BOT_ENABLED", "1")
+    monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
+    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
+    monkeypatch.delenv("MAX_WEBHOOK_SECRET", raising=False)
+
+    try:
+        payload = asyncio.run(get_messenger_health_snapshot())
+        assert payload["portal"]["webhook_public_ready"] is False
+        assert payload["portal"]["webhook_error"] == "max_webhook_secret_missing"
+        assert payload["portal"]["subscription_ready"] is False
+        assert payload["portal"]["subscription_error"] == "max_webhook_secret_missing"
+    finally:
+        settings_module.get_settings.cache_clear()
 
 
 def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):

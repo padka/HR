@@ -71,6 +71,7 @@ class State(TypedDict, total=False):
     slot_assignment_state: Optional[str]
     slot_assignment_action_token: Optional[str]
     slot_assignment_candidate_tz: Optional[str]
+    awaiting_slot_assignment_decline_reason: Dict[str, Any]
 
 
 logger = logging.getLogger(__name__)

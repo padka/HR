@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from backend.apps.bot import services
 from backend.apps.bot.events import InterviewSuccessEvent
 from backend.apps.bot.handlers import interview
+from backend.apps.bot import slot_assignment_flow
 from backend.apps.bot.services import (
     NotificationService,
     configure,
@@ -22,7 +23,10 @@ from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.models import (
+    ActionToken,
     SlotStatus,
+    SlotAssignment,
+    SlotAssignmentStatus,
     NotificationLog,
     OutboxNotification,
     TelegramCallbackLog,
@@ -805,6 +809,220 @@ async def test_no_duplicate_confirm_messages(monkeypatch):
     import backend.apps.bot.services as bot_services
 
     bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+async def test_candidate_confirmation_sends_active_assignment_controls(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace()
+    configure(dummy_bot, manager)
+
+    service = NotificationService(poll_interval=0.05)
+    configure_notification_service(service)
+
+    send_calls = []
+
+    async def fake_send(bot, method, correlation_id):
+        send_calls.append((method, correlation_id))
+        return SimpleNamespace(message_id=1)
+
+    async def fake_portal_url(session, *, candidate_tg_id: int):
+        return "https://crm.test/candidate/start?start=abc"
+
+    monkeypatch.setattr("backend.apps.bot.services._send_with_retry", fake_send)
+    monkeypatch.setattr("backend.apps.bot.services.base._build_candidate_portal_url", fake_portal_url)
+
+    candidate_tg_id = 77112233
+
+    async with async_session() as session:
+        existing_template = await session.scalar(
+            select(MessageTemplate.id).where(
+                MessageTemplate.key == "interview_confirmed_candidate",
+                MessageTemplate.locale == "ru",
+                MessageTemplate.channel == "tg",
+            )
+        )
+        if existing_template is None:
+            session.add(
+                MessageTemplate(
+                    key="interview_confirmed_candidate",
+                    locale="ru",
+                    channel="tg",
+                    body_md="{candidate_name}",
+                    version=1,
+                    is_active=True,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+
+        recruiter = models.Recruiter(
+            name="Дарья",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example/meet",
+            tg_chat_id=998877,
+            active=True,
+        )
+        candidate = User(
+            telegram_id=candidate_tg_id,
+            fio="Алиса Кандидат",
+            city="Москва",
+            candidate_status=CandidateStatus.INTERVIEW_CONFIRMED,
+            is_active=True,
+        )
+        session.add_all([recruiter, candidate])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=4),
+            status=SlotStatus.BOOKED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate_tg_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate_tg_id,
+            candidate_tz="Europe/Moscow",
+            status=SlotAssignmentStatus.CONFIRMED,
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        await add_outbox_notification(
+            notification_type="interview_confirmed_candidate",
+            booking_id=slot.id,
+            candidate_tg_id=candidate_tg_id,
+        )
+
+    worker = get_notification_service()
+    await worker._poll_once()
+
+    assert len(send_calls) == 1
+    method = send_calls[0][0]
+    assert getattr(method, "reply_markup", None) is not None
+    buttons = [btn for row in method.reply_markup.inline_keyboard for btn in row]
+    texts = [btn.text for btn in buttons]
+    assert "🗓 Детали встречи" in texts
+    assert "🔁 Перенести" in texts
+    assert "⛔️ Отменить" in texts
+    assert "🏢 Компания и этап" in texts
+
+    async with async_session() as session:
+        token_actions = {
+            row.action
+            for row in (
+                await session.scalars(
+                    select(ActionToken).where(ActionToken.entity_id == str(assignment.id))
+                )
+            ).all()
+        }
+        assert "slot_assignment_reschedule_request" in token_actions
+        assert "slot_assignment_decline" in token_actions
+
+    await service.shutdown()
+    await manager.clear()
+    await manager.close()
+    import backend.apps.bot.services as bot_services
+
+    bot_services._notification_service = None
+
+
+@pytest.mark.asyncio
+async def test_handle_decline_requests_reason_and_forwards_reply(monkeypatch):
+    store = InMemoryStateStore(ttl_seconds=60)
+    manager = StateManager(store)
+    dummy_bot = SimpleNamespace(send_message=AsyncMock())
+    configure(dummy_bot, manager)
+
+    class FakeClient:
+        configured = True
+
+        async def post_json(self, path, payload):
+            assert path == "/api/slot-assignments/42/decline"
+            assert payload["candidate_tg_id"] == 12345
+            return 200, {"message": "Отказ зафиксирован"}
+
+    controls = SimpleNamespace(
+        slot_id=77,
+        recruiter_tg_id=556677,
+        recruiter_name="Рекрутёр",
+        candidate_name="Кандидат",
+        start_utc=datetime(2030, 5, 10, 9, 0, tzinfo=timezone.utc),
+        candidate_tz="Europe/Moscow",
+    )
+
+    monkeypatch.setattr(slot_assignment_flow, "BackendClient", FakeClient)
+    monkeypatch.setattr(
+        slot_assignment_flow,
+        "get_candidate_assignment_controls",
+        AsyncMock(return_value=controls),
+    )
+
+    callback = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        message=SimpleNamespace(edit_reply_markup=AsyncMock()),
+        answer=AsyncMock(),
+    )
+
+    await slot_assignment_flow._handle_decline(
+        callback=callback,
+        assignment_id=42,
+        action_token="token",
+        candidate_id=12345,
+    )
+
+    state = await manager.get(12345)
+    assert state is not None
+    reason_state = state.get("awaiting_slot_assignment_decline_reason")
+    assert reason_state is not None
+    assert reason_state["assignment_id"] == 42
+    assert reason_state["recruiter_chat_id"] == 556677
+
+    assert dummy_bot.send_message.await_count == 2
+    first_args, _first_kwargs = dummy_bot.send_message.await_args_list[0]
+    second_args, second_kwargs = dummy_bot.send_message.await_args_list[1]
+    assert first_args[0] == 12345
+    assert "Отказ зафиксирован" in first_args[1]
+    assert second_args[0] == 12345
+    assert "причину отмены" in second_args[1]
+    assert isinstance(second_kwargs.get("reply_markup"), slot_assignment_flow.ForceReply)
+
+    reason_message = SimpleNamespace(
+        text="Не успеваю к назначенному времени",
+        caption=None,
+        from_user=SimpleNamespace(id=12345),
+        answer=AsyncMock(),
+    )
+
+    handled = await slot_assignment_flow.capture_slot_assignment_decline_reason(
+        reason_message,
+        state,
+    )
+    assert handled is True
+    assert dummy_bot.send_message.await_count == 3
+    recruiter_args, _recruiter_kwargs = dummy_bot.send_message.await_args_list[2]
+    assert recruiter_args[0] == 556677
+    assert "Не успеваю к назначенному времени" in recruiter_args[1]
+
+    cleared_state = await manager.get(12345)
+    assert not (cleared_state or {}).get("awaiting_slot_assignment_decline_reason")
+
+    await manager.clear()
+    await manager.close()
 
 
 @pytest.mark.asyncio

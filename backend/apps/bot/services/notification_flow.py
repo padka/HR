@@ -1295,11 +1295,11 @@ class NotificationService:
 
         assignment_id = payload.get("assignment_id")
         start_utc_str = payload.get("start_utc")
-        
+
         if not assignment_id or not start_utc_str:
             await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "payload_incomplete", None, candidate_tg_id=candidate_id)
             return
-            
+
         start_utc = datetime.fromisoformat(start_utc_str)
 
         context = {"dt_local": fmt_dt_local(start_utc, "Europe/Moscow")} # Assume Moscow, should be candidate's TZ
@@ -1309,10 +1309,29 @@ class NotificationService:
             await self._mark_failed(item, item.attempts, "slot_proposal", "slot_proposal", "template_missing", None, candidate_tg_id=candidate_id)
             return
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_assignment:{assignment_id}")],
-            [InlineKeyboardButton(text="🗓️ Другое время", callback_data=f"reschedule_assignment:{assignment_id}")]
-        ])
+        controls = None
+        try:
+            controls = await get_candidate_assignment_controls(
+                candidate_tg_id=int(candidate_id),
+                assignment_id=int(assignment_id),
+            )
+        except Exception:
+            logger.exception(
+                "slot_proposal.controls_build_failed",
+                extra={"assignment_id": assignment_id, "candidate_id": candidate_id},
+            )
+        if controls is not None and controls.confirm_token and controls.reschedule_token:
+            keyboard = kb_slot_assignment_offer(
+                controls.assignment_id,
+                confirm_token=controls.confirm_token,
+                reschedule_token=controls.reschedule_token,
+                decline_token=controls.decline_token,
+            )
+        else:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_assignment:{assignment_id}")],
+                [InlineKeyboardButton(text="🗓️ Другое время", callback_data=f"reschedule_assignment:{assignment_id}")]
+            ])
 
         attempt = item.attempts + 1
         try:
@@ -1717,6 +1736,14 @@ class NotificationService:
         await self._throttle()
 
         bot = get_bot()
+        reply_markup = None
+        try:
+            reply_markup = await build_candidate_active_meeting_keyboard_for_slot(slot)
+        except Exception:
+            logger.exception(
+                "candidate_confirmation.controls_build_failed",
+                extra={"slot_id": slot.id, "candidate_id": candidate_id},
+            )
         try:
             logger.info(
                 "notification.worker.send_attempt send_callable=%s",
@@ -1729,7 +1756,7 @@ class NotificationService:
             )
             await _send_with_retry(
                 bot,
-                SendMessage(chat_id=candidate_id, text=rendered_text),
+                SendMessage(chat_id=candidate_id, text=rendered_text, reply_markup=reply_markup),
                 correlation_id=f"outbox:{slot.id}:{uuid.uuid4().hex}",
             )
         except TelegramRetryAfter as exc:
@@ -2600,10 +2627,29 @@ class NotificationService:
         if comment:
             text += f"\n\nКомментарий: {escape_html(str(comment))}"
 
+        controls = None
+        assignment_id = payload.get("slot_assignment_id")
+        if assignment_id:
+            try:
+                controls = await get_candidate_assignment_controls(
+                    candidate_tg_id=int(candidate_id),
+                    assignment_id=int(assignment_id),
+                )
+            except Exception:
+                logger.exception(
+                    "slot_assignment_reschedule_approved.controls_build_failed",
+                    extra={"assignment_id": assignment_id, "candidate_id": candidate_id},
+                )
+        reply_markup = (
+            build_candidate_active_meeting_keyboard(controls)
+            if controls is not None
+            else None
+        )
+
         attempt = item.attempts + 1
         await self._throttle()
         try:
-            await get_bot().send_message(candidate_id, text)
+            await get_bot().send_message(candidate_id, text, reply_markup=reply_markup)
         except Exception as exc:
             await self._schedule_retry(
                 item,

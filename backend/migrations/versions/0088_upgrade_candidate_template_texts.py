@@ -73,6 +73,22 @@ _CANDIDATE_TEMPLATE_KEYS = (
 _TEMPLATES = {key: DEFAULT_TEMPLATES[key] for key in _CANDIDATE_TEMPLATE_KEYS if key in DEFAULT_TEMPLATES}
 
 
+def _sync_message_templates_sequence(conn: Connection) -> None:
+    if conn.dialect.name != "postgresql":
+        return
+    conn.execute(
+        sa.text(
+            """
+            SELECT setval(
+                pg_get_serial_sequence('message_templates', 'id'),
+                COALESCE((SELECT MAX(id) FROM message_templates), 1),
+                EXISTS (SELECT 1 FROM message_templates)
+            )
+            """
+        )
+    )
+
+
 def _upsert_active_template(conn: Connection, key: str, body: str) -> None:
     updated = conn.execute(
         sa.text(
@@ -108,6 +124,7 @@ def _upsert_active_template(conn: Connection, key: str, body: str) -> None:
         or 0
     ) + 1
 
+    _sync_message_templates_sequence(conn)
     conn.execute(
         sa.text(
             """

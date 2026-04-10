@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from backend.core.env import load_env
 
@@ -113,6 +114,7 @@ class Settings:
     max_webhook_secret: str
     max_bot_link_base: str
     max_bot_allow_public_entry: bool
+    max_webapp_auth_max_age_seconds: int
     candidate_portal_public_url: str
     candidate_portal_token_ttl_seconds: int
     candidate_portal_session_ttl_seconds: int
@@ -154,8 +156,6 @@ def _default_data_dir() -> Path:
     return DEFAULT_USER_DATA_DIR
 
 
-
-
 def _get_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -163,7 +163,9 @@ def _get_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _get_bool_default_by_env(name: str, *, environment: str, default_non_prod: bool, default_prod: bool) -> bool:
+def _get_bool_default_by_env(
+    name: str, *, environment: str, default_non_prod: bool, default_prod: bool
+) -> bool:
     raw = os.getenv(name)
     if raw is not None:
         return _get_bool(name)
@@ -175,8 +177,6 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
         if os.getenv(name) is not None:
             return _get_bool(name)
     return default
-
-
 
 
 def _get_repo_root() -> Path:
@@ -200,6 +200,14 @@ def _get_repo_root() -> Path:
     return PROJECT_ROOT.resolve()
 
 
+def _is_public_https_url(value: str | None) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    if parsed.scheme.lower() != "https":
+        return False
+    normalized_host = str(parsed.hostname or "").strip().lower().strip("[]")
+    return normalized_host not in {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
 def _validate_production_settings(settings: Settings) -> None:
     """
     Validate production configuration to prevent common deployment errors.
@@ -218,29 +226,32 @@ def _validate_production_settings(settings: Settings) -> None:
     if not session_secret_env:
         errors.append(
             "Production requires SESSION_SECRET to be explicitly set. "
-            "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"'
         )
     elif len(settings.session_secret) < 32:
         errors.append(
             f"SESSION_SECRET too short (got {len(settings.session_secret)} chars, need 32+). "
-            "Generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"'
         )
-    elif any(token in settings.session_secret.lower() for token in {"changeme", "change_me", "session_secret", "changemesecret"}):
+    elif any(
+        token in settings.session_secret.lower()
+        for token in {"changeme", "change_me", "session_secret", "changemesecret"}
+    ):
         errors.append(
             "SESSION_SECRET contains placeholder/default text. "
-            "Generate a fresh secret with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate a fresh secret with: python3 -c "import secrets; print(secrets.token_hex(32))"'
         )
 
     callback_secret_env = os.getenv("BOT_CALLBACK_SECRET") or ""
     if not callback_secret_env:
         errors.append(
             "Production requires BOT_CALLBACK_SECRET to be explicitly set (32+ chars). "
-            "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            'Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"'
         )
     elif len(callback_secret_env.strip()) < 32:
         errors.append(
             "BOT_CALLBACK_SECRET too short (min 32 characters). "
-            "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            'Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"'
         )
     elif callback_secret_env.strip() == settings.session_secret:
         errors.append("BOT_CALLBACK_SECRET must differ from SESSION_SECRET.")
@@ -253,11 +264,19 @@ def _validate_production_settings(settings: Settings) -> None:
         )
     else:
         normalized_pwd = settings.admin_password.strip()
-        weak_tokens = {"admin", "password", "changeme", "change_me", "qwerty", "123456", "123456789"}
+        weak_tokens = {
+            "admin",
+            "password",
+            "changeme",
+            "change_me",
+            "qwerty",
+            "123456",
+            "123456789",
+        }
         if len(normalized_pwd) < 12:
             errors.append(
                 "ADMIN_PASSWORD too short for production (must be at least 12 characters). "
-                "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(24))\""
+                'Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(24))"'
             )
         if any(token in normalized_pwd.lower() for token in weak_tokens):
             errors.append(
@@ -319,7 +338,9 @@ def _validate_production_settings(settings: Settings) -> None:
         elif provider in {"fake"}:
             warnings.append("AI_PROVIDER=fake is not allowed in production.")
         else:
-            errors.append(f"Unsupported AI_PROVIDER in production: {settings.ai_provider}")
+            errors.append(
+                f"Unsupported AI_PROVIDER in production: {settings.ai_provider}"
+            )
 
     # 5. DATA_DIR must exist, be outside repo, and be writable
     data_dir = settings.data_dir.resolve()
@@ -327,7 +348,11 @@ def _validate_production_settings(settings: Settings) -> None:
 
     # Check if DATA_DIR is inside repo
     try:
-        if data_dir == repo_root or repo_root in data_dir.parents or data_dir in repo_root.parents:
+        if (
+            data_dir == repo_root
+            or repo_root in data_dir.parents
+            or data_dir in repo_root.parents
+        ):
             # data_dir is inside or equal to repo_root
             if data_dir.is_relative_to(repo_root):
                 errors.append(
@@ -372,6 +397,7 @@ def _validate_production_settings(settings: Settings) -> None:
         try:
             import socket
             from urllib.parse import urlparse
+
             parsed = urlparse(settings.redis_url)
             host = parsed.hostname or "localhost"
             port = parsed.port or 6379
@@ -403,6 +429,7 @@ def _validate_production_settings(settings: Settings) -> None:
             try:
                 import socket
                 from urllib.parse import urlparse
+
                 parsed = urlparse(settings.rate_limit_redis_url)
                 host = parsed.hostname or "localhost"
                 port = parsed.port or 6379
@@ -423,9 +450,36 @@ def _validate_production_settings(settings: Settings) -> None:
     if settings.session_cookie_secure is False:
         errors.append("SESSION_COOKIE_SECURE must be enabled in production.")
 
+    if settings.max_bot_enabled and not str(settings.max_webhook_secret or "").strip():
+        errors.append(
+            "Production MAX bot requires MAX_WEBHOOK_SECRET when MAX_BOT_ENABLED=true. "
+            "Set a provider-specific shared webhook secret before startup."
+        )
+    if settings.max_bot_enabled and not str(settings.max_bot_token or "").strip():
+        errors.append(
+            "Production MAX bot requires MAX_BOT_TOKEN when MAX_BOT_ENABLED=true. "
+            "Set a valid MAX bot token before startup."
+        )
+    if settings.max_bot_enabled and not _is_public_https_url(settings.max_webhook_url):
+        errors.append(
+            "Production MAX bot requires MAX_WEBHOOK_URL to be a public HTTPS URL when MAX_BOT_ENABLED=true. "
+            "Example: MAX_WEBHOOK_URL=https://max.example.com/webhook"
+        )
+    if settings.max_bot_enabled and not _is_public_https_url(settings.candidate_portal_public_url):
+        errors.append(
+            "Production MAX bot requires CANDIDATE_PORTAL_PUBLIC_URL to resolve to a public HTTPS URL when MAX_BOT_ENABLED=true. "
+            "Example: CANDIDATE_PORTAL_PUBLIC_URL=https://crm.example.com"
+        )
+    if settings.max_bot_link_base and not _is_public_https_url(settings.max_bot_link_base):
+        errors.append(
+            "MAX_BOT_LINK_BASE must be a public HTTPS URL when provided. "
+            "Example: MAX_BOT_LINK_BASE=https://max.ru/recruitsmartbot"
+        )
+
     # Print warnings to stderr
     if warnings:
         import sys
+
         for warning in warnings:
             print(f"\n⚠ WARNING: {warning}", file=sys.stderr)
 
@@ -463,7 +517,9 @@ def get_settings() -> Settings:
 
     # Ensure it's PostgreSQL (prod), но позволяем SQLite в dev/test
     if not raw_db_url.startswith(("postgresql+asyncpg://", "postgresql://")):
-        if environment in {"development", "test", "staging"} and raw_db_url.startswith("sqlite"):
+        if environment in {"development", "test", "staging"} and raw_db_url.startswith(
+            "sqlite"
+        ):
             pass
         else:
             raise RuntimeError(
@@ -472,7 +528,9 @@ def get_settings() -> Settings:
             )
 
     # Normalize to postgresql+asyncpg if just postgresql://
-    if raw_db_url.startswith("postgresql://") and not raw_db_url.startswith("postgresql+asyncpg://"):
+    if raw_db_url.startswith("postgresql://") and not raw_db_url.startswith(
+        "postgresql+asyncpg://"
+    ):
         raw_db_url = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     # In dev on the host, allow replacing docker-style hostnames with localhost to avoid DNS errors.
@@ -518,7 +576,9 @@ def get_settings() -> Settings:
         # Use psycopg (v3) explicitly for sync operations (migrations, admin tooling).
         sync_url = raw_db_url.replace("+asyncpg", "+psycopg", 1)
 
-    bot_enabled = _get_bool_with_fallback("BOT_ENABLED", "ENABLE_TEST2_BOT", default=True)
+    bot_enabled = _get_bool_with_fallback(
+        "BOT_ENABLED", "ENABLE_TEST2_BOT", default=True
+    )
     bot_provider = os.getenv("BOT_PROVIDER", "telegram").strip().lower() or "telegram"
     bot_token = os.getenv("BOT_TOKEN", "")
     bot_api_base = os.getenv("BOT_API_BASE", "").strip()
@@ -535,7 +595,9 @@ def get_settings() -> Settings:
         and not Path("/.dockerenv").exists()
     ):
         redis_url = redis_url.replace("redis_notifications", "localhost", 1)
-    notification_broker = os.getenv("NOTIFICATION_BROKER", "memory").strip().lower() or "memory"
+    notification_broker = (
+        os.getenv("NOTIFICATION_BROKER", "memory").strip().lower() or "memory"
+    )
     if notification_broker not in {"memory", "redis"}:
         notification_broker = "memory"
     bot_integration_enabled = _get_bool("BOT_INTEGRATION_ENABLED", default=True)
@@ -554,7 +616,9 @@ def get_settings() -> Settings:
     )
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
-    default_company_name = os.getenv("DEFAULT_COMPANY_NAME", "SMART SERVICE").strip() or "SMART SERVICE"
+    default_company_name = (
+        os.getenv("DEFAULT_COMPANY_NAME", "SMART SERVICE").strip() or "SMART SERVICE"
+    )
     session_secret = (
         os.getenv("SESSION_SECRET")
         or os.getenv("SECRET_KEY")
@@ -570,12 +634,12 @@ def get_settings() -> Settings:
         "secret",
         "session-secret",
         "my-secret-key",
-        "CHANGE_ME_SESSION_SECRET"
+        "CHANGE_ME_SESSION_SECRET",
     }
     if session_secret.lower() in weak_secrets:
         raise ValueError(
             f"SESSION_SECRET must be changed from default value '{session_secret}'. "
-            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate a strong secret with: python -c "import secrets; print(secrets.token_hex(32))"'
         )
     # Length validation moved to _validate_production_settings() for production only
 
@@ -583,8 +647,12 @@ def get_settings() -> Settings:
     admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
     admin_docs_enabled = _get_bool("ADMIN_DOCS_ENABLED", default=False)
     # Keep secure cookies in production, but allow HTTP cookies in dev/test so CSRF/session work locally
-    session_cookie_secure = _get_bool("SESSION_COOKIE_SECURE", default=environment == "production")
-    session_cookie_samesite = os.getenv("SESSION_COOKIE_SAMESITE", "strict").strip().lower() or "strict"
+    session_cookie_secure = _get_bool(
+        "SESSION_COOKIE_SECURE", default=environment == "production"
+    )
+    session_cookie_samesite = (
+        os.getenv("SESSION_COOKIE_SAMESITE", "strict").strip().lower() or "strict"
+    )
     if session_cookie_samesite not in {"strict", "lax", "none"}:
         session_cookie_samesite = "strict"
 
@@ -597,16 +665,29 @@ def get_settings() -> Settings:
         state_ttl_seconds = 604800
     access_token_ttl_hours = _get_int("ACCESS_TOKEN_TTL_HOURS", 12, minimum=1)
 
-    notification_poll_interval = _get_float("NOTIFICATION_POLL_INTERVAL", 3.0, minimum=0.1)
+    notification_poll_interval = _get_float(
+        "NOTIFICATION_POLL_INTERVAL", 3.0, minimum=0.1
+    )
     notification_batch_size = _get_int("NOTIFICATION_BATCH_SIZE", 100, minimum=1)
-    notification_rate_limit_per_sec = _get_float("NOTIFICATION_RATE_LIMIT_PER_SEC", 10.0, minimum=0.0)
-    notification_worker_concurrency = _get_int("NOTIFICATION_WORKER_CONCURRENCY", 1, minimum=1)
-    notification_retry_base_seconds = _get_int("NOTIFICATION_RETRY_BASE_SECONDS", 30, minimum=1)
-    notification_retry_max_seconds = _get_int("NOTIFICATION_RETRY_MAX_SECONDS", 3600, minimum=1)
+    notification_rate_limit_per_sec = _get_float(
+        "NOTIFICATION_RATE_LIMIT_PER_SEC", 10.0, minimum=0.0
+    )
+    notification_worker_concurrency = _get_int(
+        "NOTIFICATION_WORKER_CONCURRENCY", 1, minimum=1
+    )
+    notification_retry_base_seconds = _get_int(
+        "NOTIFICATION_RETRY_BASE_SECONDS", 30, minimum=1
+    )
+    notification_retry_max_seconds = _get_int(
+        "NOTIFICATION_RETRY_MAX_SECONDS", 3600, minimum=1
+    )
     if notification_retry_max_seconds < notification_retry_base_seconds:
         notification_retry_max_seconds = notification_retry_base_seconds
     notification_max_attempts = _get_int("NOTIFICATION_MAX_ATTEMPTS", 8, minimum=1)
-    rejection_template_key = os.getenv("REJECTION_TEMPLATE_KEY", "candidate_rejection").strip() or "candidate_rejection"
+    rejection_template_key = (
+        os.getenv("REJECTION_TEMPLATE_KEY", "candidate_rejection").strip()
+        or "candidate_rejection"
+    )
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
     log_json = _get_bool("LOG_JSON", default=False)
     log_file = os.getenv("LOG_FILE", "").strip()
@@ -630,7 +711,9 @@ def get_settings() -> Settings:
     db_pool_recycle = _get_int("DB_POOL_RECYCLE", 3600, minimum=60)
 
     # Rate limiting configuration
-    rate_limit_enabled = _get_bool("RATE_LIMIT_ENABLED", default=environment == "production")
+    rate_limit_enabled = _get_bool(
+        "RATE_LIMIT_ENABLED", default=environment == "production"
+    )
     rate_limit_redis_url_env = os.getenv("RATE_LIMIT_REDIS_URL", "").strip()
 
     # Default to REDIS_URL with /1 database if not explicitly set
@@ -638,6 +721,7 @@ def get_settings() -> Settings:
         # Parse existing redis_url and change DB to 1
         try:
             from urllib.parse import urlparse, urlunparse
+
             parsed = urlparse(redis_url)
             # Replace path (database) with /1
             new_parsed = parsed._replace(path="/1")
@@ -654,7 +738,9 @@ def get_settings() -> Settings:
         and environment != "production"
         and not Path("/.dockerenv").exists()
     ):
-        rate_limit_redis_url = rate_limit_redis_url.replace("redis_notifications", "localhost", 1)
+        rate_limit_redis_url = rate_limit_redis_url.replace(
+            "redis_notifications", "localhost", 1
+        )
 
     trust_proxy_headers = _get_bool("TRUST_PROXY_HEADERS", default=False)
     enable_legacy_status_api = _get_bool_default_by_env(
@@ -665,11 +751,15 @@ def get_settings() -> Settings:
     )
 
     slots_cleanup_grace_minutes = _get_int("SLOTS_CLEANUP_GRACE_MINUTES", 1, minimum=0)
-    slots_cleanup_interval_seconds = _get_int("SLOTS_CLEANUP_INTERVAL_SECONDS", 60, minimum=10)
+    slots_cleanup_interval_seconds = _get_int(
+        "SLOTS_CLEANUP_INTERVAL_SECONDS", 60, minimum=10
+    )
 
     # Sentry error tracking (optional)
     sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
-    sentry_traces_sample_rate = _get_float("SENTRY_TRACES_SAMPLE_RATE", 0.1, minimum=0.0)
+    sentry_traces_sample_rate = _get_float(
+        "SENTRY_TRACES_SAMPLE_RATE", 0.1, minimum=0.0
+    )
     if sentry_traces_sample_rate > 1.0:
         sentry_traces_sample_rate = 1.0
 
@@ -677,7 +767,9 @@ def get_settings() -> Settings:
     ai_enabled = _get_bool("AI_ENABLED", default=False)
     ai_provider = os.getenv("AI_PROVIDER", "openai").strip().lower() or "openai"
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    openai_base_url = (
+        os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+    )
     # Default to the newest "mini" family unless overridden via env.
     openai_model = os.getenv("OPENAI_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
     ai_timeout_seconds = _get_int("AI_TIMEOUT_SECONDS", 20, minimum=1)
@@ -696,7 +788,9 @@ def get_settings() -> Settings:
 
     # For GPT-5 Responses API, "minimal" keeps reasoning overhead near-zero and
     # avoids empty outputs under tight token budgets. Can be overridden via env.
-    ai_reasoning_effort = os.getenv("AI_REASONING_EFFORT", "minimal").strip().lower() or "minimal"
+    ai_reasoning_effort = (
+        os.getenv("AI_REASONING_EFFORT", "minimal").strip().lower() or "minimal"
+    )
     if ai_reasoning_effort not in {"minimal", "low", "medium", "high"}:
         ai_reasoning_effort = "minimal"
 
@@ -705,14 +799,24 @@ def get_settings() -> Settings:
         ai_timeout_seconds,
         minimum=1,
     )
-    ai_interview_script_max_tokens = _get_int("AI_INTERVIEW_SCRIPT_MAX_TOKENS", 1800, minimum=256)
-    ai_interview_script_cache_ttl_hours = _get_int("AI_INTERVIEW_SCRIPT_CACHE_TTL_HOURS", 24, minimum=1)
+    ai_interview_script_max_tokens = _get_int(
+        "AI_INTERVIEW_SCRIPT_MAX_TOKENS", 1800, minimum=256
+    )
+    ai_interview_script_cache_ttl_hours = _get_int(
+        "AI_INTERVIEW_SCRIPT_CACHE_TTL_HOURS", 24, minimum=1
+    )
     ai_interview_script_ft_model = os.getenv("AI_INTERVIEW_SCRIPT_FT_MODEL", "").strip()
-    ai_interview_script_ab_percent = _get_int("AI_INTERVIEW_SCRIPT_AB_PERCENT", 0, minimum=0)
+    ai_interview_script_ab_percent = _get_int(
+        "AI_INTERVIEW_SCRIPT_AB_PERCENT", 0, minimum=0
+    )
     if ai_interview_script_ab_percent > 100:
         ai_interview_script_ab_percent = 100
-    ai_interview_script_ft_min_samples = _get_int("AI_INTERVIEW_SCRIPT_FT_MIN_SAMPLES", 300, minimum=1)
-    ai_interview_script_pii_mode = os.getenv("AI_INTERVIEW_SCRIPT_PII_MODE", "redacted").strip().lower()
+    ai_interview_script_ft_min_samples = _get_int(
+        "AI_INTERVIEW_SCRIPT_FT_MIN_SAMPLES", 300, minimum=1
+    )
+    ai_interview_script_pii_mode = (
+        os.getenv("AI_INTERVIEW_SCRIPT_PII_MODE", "redacted").strip().lower()
+    )
     if ai_interview_script_pii_mode not in {"redacted", "full"}:
         ai_interview_script_pii_mode = "redacted"
 
@@ -724,15 +828,27 @@ def get_settings() -> Settings:
     n8n_hh_resolve_webhook_url = os.getenv("N8N_HH_RESOLVE_WEBHOOK_URL", "").strip()
     hh_webhook_secret = os.getenv("HH_WEBHOOK_SECRET", "").strip()
     hh_integration_enabled = _get_bool("HH_INTEGRATION_ENABLED", default=False)
-    hh_api_base_url = os.getenv("HH_API_BASE_URL", "https://api.hh.ru").strip() or "https://api.hh.ru"
-    hh_oauth_authorize_url = os.getenv("HH_OAUTH_AUTHORIZE_URL", "https://hh.ru/oauth/authorize").strip() or "https://hh.ru/oauth/authorize"
+    hh_api_base_url = (
+        os.getenv("HH_API_BASE_URL", "https://api.hh.ru").strip() or "https://api.hh.ru"
+    )
+    hh_oauth_authorize_url = (
+        os.getenv("HH_OAUTH_AUTHORIZE_URL", "https://hh.ru/oauth/authorize").strip()
+        or "https://hh.ru/oauth/authorize"
+    )
     hh_client_id = os.getenv("HH_CLIENT_ID", "").strip()
     hh_client_secret = os.getenv("HH_CLIENT_SECRET", "").strip()
     hh_redirect_uri = os.getenv("HH_REDIRECT_URI", "").strip()
-    hh_user_agent = os.getenv("HH_USER_AGENT", "Attila Recruiting/1.0 (engineering@attila.local)").strip() or "Attila Recruiting/1.0 (engineering@attila.local)"
+    hh_user_agent = (
+        os.getenv(
+            "HH_USER_AGENT", "Attila Recruiting/1.0 (engineering@attila.local)"
+        ).strip()
+        or "Attila Recruiting/1.0 (engineering@attila.local)"
+    )
     hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
     hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
-    hh_auto_import_interval_seconds = _get_int("HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60)
+    hh_auto_import_interval_seconds = _get_int(
+        "HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60
+    )
 
     # VK Max messenger integration
     max_bot_enabled = _get_bool("MAX_BOT_ENABLED", default=False)
@@ -743,6 +859,11 @@ def get_settings() -> Settings:
     max_bot_allow_public_entry = _get_bool(
         "MAX_BOT_ALLOW_PUBLIC_ENTRY",
         default=environment != "production",
+    )
+    max_webapp_auth_max_age_seconds = _get_int(
+        "MAX_WEBAPP_AUTH_MAX_AGE_SECONDS",
+        900,
+        minimum=60,
     )
     candidate_portal_public_url = os.getenv("CANDIDATE_PORTAL_PUBLIC_URL", "").strip()
     if not candidate_portal_public_url:
@@ -855,6 +976,7 @@ def get_settings() -> Settings:
         max_webhook_secret=max_webhook_secret,
         max_bot_link_base=max_bot_link_base,
         max_bot_allow_public_entry=max_bot_allow_public_entry,
+        max_webapp_auth_max_age_seconds=max_webapp_auth_max_age_seconds,
         candidate_portal_public_url=candidate_portal_public_url,
         candidate_portal_token_ttl_seconds=candidate_portal_token_ttl_seconds,
         candidate_portal_session_ttl_seconds=candidate_portal_session_ttl_seconds,

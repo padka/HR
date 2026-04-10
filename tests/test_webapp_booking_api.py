@@ -14,7 +14,14 @@ from fastapi.testclient import TestClient
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
 from backend.domain.candidates.status import CandidateStatus
-from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
+    SlotStatus,
+)
 
 
 BOT_TOKEN = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
@@ -199,6 +206,56 @@ def test_webapp_booking_duplicate_candidate_returns_business_conflict(webapp_cli
 
     assert response.status_code == 409
     assert "active interview booking" in response.json()["detail"].lower()
+
+    free_slot = asyncio.run(_load_slot(seeded["slot_id"]))
+    assert free_slot is not None
+    assert free_slot.status == SlotStatus.FREE
+
+
+def test_webapp_booking_blocks_assignment_owned_scheduling(webapp_client):
+    seeded = asyncio.run(_seed_webapp_scenario(telegram_id=700004))
+
+    async def _seed_assignment_owned_scheduling() -> None:
+        async with async_session() as session:
+            candidate = await session.get(User, seeded["candidate_id"])
+            slot = Slot(
+                recruiter_id=seeded["recruiter_id"],
+                city_id=seeded["city_id"],
+                start_utc=datetime.now(timezone.utc) + timedelta(days=1, hours=3),
+                duration_min=60,
+                status=SlotStatus.PENDING,
+                purpose="interview",
+                tz_name="Europe/Moscow",
+                candidate_id=candidate.candidate_id,
+                candidate_tg_id=seeded["telegram_id"],
+                candidate_fio=candidate.fio,
+                candidate_tz="Europe/Moscow",
+                candidate_city_id=seeded["city_id"],
+            )
+            session.add(slot)
+            await session.flush()
+            session.add(
+                SlotAssignment(
+                    slot_id=slot.id,
+                    recruiter_id=seeded["recruiter_id"],
+                    candidate_id=candidate.candidate_id,
+                    candidate_tg_id=seeded["telegram_id"],
+                    candidate_tz="Europe/Moscow",
+                    status=SlotAssignmentStatus.OFFERED,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed_assignment_owned_scheduling())
+
+    response = webapp_client.post(
+        "/api/webapp/booking",
+        json={"slot_id": seeded["slot_id"]},
+        headers=_webapp_headers(telegram_id=seeded["telegram_id"]),
+    )
+
+    assert response.status_code == 409
+    assert "slotassignment" in response.json()["detail"].lower()
 
     free_slot = asyncio.run(_load_slot(seeded["slot_id"]))
     assert free_slot is not None

@@ -188,10 +188,44 @@ async def test_environment_setting_validation():
             "BOT_CALLBACK_SECRET": "prod-callback-secret-0123456789abcdef0123456789abcd",
             "SESSION_SECRET": "test-prod-secret-32chars-long-0123456789abcdef",
             "SESSION_COOKIE_SECURE": "1",
+            "MAX_BOT_ENABLED": "1",
+            "MAX_BOT_TOKEN": "test-max-token",
+            "MAX_WEBHOOK_SECRET": "prod-max-webhook-secret-0123456789abcdef",
+            "MAX_WEBHOOK_URL": "https://max.example.test/webhook",
+            "CANDIDATE_PORTAL_PUBLIC_URL": "https://crm.example.test",
         }):
             get_settings.cache_clear()
             settings = get_settings()
             assert settings.environment == "production"
+    finally:
+        import shutil
+        from pathlib import Path
+        if Path(temp_dir).exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        get_settings.cache_clear()
+
+    temp_dir = tempfile.mkdtemp(prefix="test_prod_max_")
+    try:
+        with patch.dict(os.environ, {
+            "ENVIRONMENT": "production",
+            "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "NOTIFICATION_BROKER": "redis",
+            "DATA_DIR": temp_dir,
+            "ADMIN_USER": "admin",
+            "ADMIN_PASSWORD": "S3cureAdm1nPass!",
+            "BOT_CALLBACK_SECRET": "prod-callback-secret-0123456789abcdef0123456789abcd",
+            "SESSION_SECRET": "test-prod-secret-32chars-long-0123456789abcdef",
+            "SESSION_COOKIE_SECURE": "1",
+            "MAX_BOT_ENABLED": "1",
+            "MAX_BOT_TOKEN": "test-max-token",
+            "MAX_WEBHOOK_URL": "https://max.example.test/webhook",
+            "CANDIDATE_PORTAL_PUBLIC_URL": "https://crm.example.test",
+        }):
+            get_settings.cache_clear()
+            with pytest.raises(RuntimeError) as exc_info:
+                get_settings()
+            assert "MAX_WEBHOOK_SECRET" in str(exc_info.value)
     finally:
         import shutil
         from pathlib import Path

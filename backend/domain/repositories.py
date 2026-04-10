@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 from dataclasses import MISSING, dataclass
 from typing import Literal
 
@@ -48,6 +49,13 @@ _ACTIVE_SLOT_STATUSES = (
     SlotStatus.BOOKED,
     SlotStatus.CONFIRMED,
     SlotStatus.CONFIRMED_BY_CANDIDATE,
+)
+
+_ACTIVE_ASSIGNMENT_STATUSES = (
+    SlotAssignmentStatus.OFFERED,
+    SlotAssignmentStatus.CONFIRMED,
+    SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+    SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
 )
 
 
@@ -1175,100 +1183,211 @@ async def reset_outbox_entry(outbox_id: int) -> None:
             entry.dead_lettered_at = None
 
 
-async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult:
-    async with async_session() as session:
-        try:
-            async with session.begin():
-                slot = await session.scalar(
-                    select(Slot)
-                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
-                    .where(Slot.id == slot_id)
-                    .with_for_update()
-                )
+async def _confirm_slot_by_candidate_in_session(
+    session: AsyncSession,
+    slot_id: int,
+    *,
+    update_candidate_status: bool = True,
+) -> CandidateConfirmationResult:
+    status_update_candidate_tg_id: Optional[int] = None
+    status_update_is_intro_day = False
+    slot = await session.scalar(
+        select(Slot)
+        .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+        .where(Slot.id == slot_id)
+        .with_for_update()
+    )
 
-                if slot is None:
-                    return CandidateConfirmationResult(status="not_found", slot=None)
+    if slot is None:
+        return CandidateConfirmationResult(status="not_found", slot=None)
 
-                status_value = (slot.status or "").lower()
-                if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
-                    slot.start_utc = _to_aware_utc(slot.start_utc)
-                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+    status_value = (slot.status or "").lower()
+    if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        return CandidateConfirmationResult(status="already_confirmed", slot=slot)
 
-                if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
-                    slot.start_utc = _to_aware_utc(slot.start_utc)
-                    return CandidateConfirmationResult(status="invalid_status", slot=slot)
+    if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        return CandidateConfirmationResult(status="invalid_status", slot=slot)
 
-                candidate_tg_id = slot.candidate_tg_id
-                existing_log = await session.scalar(
-                    select(NotificationLog.id)
-                    .where(
-                        NotificationLog.booking_id == slot_id,
-                        NotificationLog.type == "candidate_confirm",
-                        _log_candidate_clause(candidate_tg_id),
-                    )
-                    .with_for_update()
-                )
-                if existing_log:
-                    slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
-                    slot.start_utc = _to_aware_utc(slot.start_utc)
-                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+    candidate_tg_id = slot.candidate_tg_id
 
-                slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+    async def _sync_matching_slot_assignment() -> None:
+        assignment_filters = [
+            SlotAssignment.slot_id == slot.id,
+            SlotAssignment.status.in_(_ACTIVE_ASSIGNMENT_STATUSES),
+        ]
+        candidate_clauses = []
+        if slot.candidate_id:
+            candidate_clauses.append(SlotAssignment.candidate_id == slot.candidate_id)
+        if candidate_tg_id is not None:
+            candidate_clauses.append(SlotAssignment.candidate_tg_id == candidate_tg_id)
+        if not candidate_clauses:
+            return
+        matching_assignments = (
+            await session.execute(
+                select(SlotAssignment)
+                .where(*assignment_filters, or_(*candidate_clauses))
+                .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+                .with_for_update()
+            )
+        ).scalars().all()
+        if len(matching_assignments) != 1:
+            return
+        assignment = matching_assignments[0]
+        if assignment.status == SlotAssignmentStatus.OFFERED:
+            assignment.status = SlotAssignmentStatus.CONFIRMED
+            assignment.confirmed_at = datetime.now(timezone.utc)
+        elif assignment.status in {
+            SlotAssignmentStatus.CONFIRMED,
+            SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+        }:
+            assignment.confirmed_at = assignment.confirmed_at or datetime.now(timezone.utc)
 
-                # Update candidate status depending on slot purpose
-                if candidate_tg_id is not None:
-                    try:
-                        from backend.domain.candidates.status_service import (
-                            set_status_interview_confirmed,
-                            set_status_intro_day_confirmed_preliminary,
-                        )
+    existing_log = await session.scalar(
+        select(NotificationLog.id)
+        .where(
+            NotificationLog.booking_id == slot_id,
+            NotificationLog.type == "candidate_confirm",
+            _log_candidate_clause(candidate_tg_id),
+        )
+        .with_for_update()
+    )
+    if existing_log:
+        slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+        await _sync_matching_slot_assignment()
+        if update_candidate_status:
+            status_update_candidate_tg_id = candidate_tg_id
+            status_update_is_intro_day = (slot.purpose or "").lower() == "intro_day"
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        result = CandidateConfirmationResult(status="already_confirmed", slot=slot)
+    else:
+        slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
+        await _sync_matching_slot_assignment()
+        if update_candidate_status:
+            status_update_candidate_tg_id = candidate_tg_id
+            status_update_is_intro_day = (slot.purpose or "").lower() == "intro_day"
 
-                        is_intro_day = (slot.purpose or "").lower() == "intro_day"
-                        if is_intro_day:
-                            await set_status_intro_day_confirmed_preliminary(candidate_tg_id, force=True)
-                        else:
-                            await set_status_interview_confirmed(candidate_tg_id)
-                    except Exception:
-                        logger.exception("Failed to update candidate status for candidate %s", candidate_tg_id)
-
-                # Add notification log (idempotent - ignore if already exists)
-                # Use no_autoflush to prevent premature flush during subsequent queries
-                with session.no_autoflush:
-                    session.add(
-                        NotificationLog(
-                            booking_id=slot.id,
-                            candidate_tg_id=candidate_tg_id,
-                            type="candidate_confirm",
-                            created_at=datetime.now(timezone.utc),
-                        )
-                    )
-
-                recruiter_tg_id = (
-                    slot.recruiter.tg_chat_id if slot.recruiter and slot.recruiter.tg_chat_id else None
-                )
-                await add_outbox_notification(
-                    notification_type="recruiter_candidate_confirmed_notice",
+        with session.no_autoflush:
+            session.add(
+                NotificationLog(
                     booking_id=slot.id,
                     candidate_tg_id=candidate_tg_id,
-                    recruiter_tg_id=recruiter_tg_id,
-                    payload={
-                        "event": "candidate_confirmed",
-                        "slot_id": slot.id,
-                    },
-                    session=session,
+                    type="candidate_confirm",
+                    created_at=datetime.now(timezone.utc),
                 )
+            )
 
-            slot.start_utc = _to_aware_utc(slot.start_utc)
-            return CandidateConfirmationResult(status="confirmed", slot=slot)
+        recruiter_tg_id = (
+            slot.recruiter.tg_chat_id if slot.recruiter and slot.recruiter.tg_chat_id else None
+        )
+        await add_outbox_notification(
+            notification_type="recruiter_candidate_confirmed_notice",
+            booking_id=slot.id,
+            candidate_tg_id=candidate_tg_id,
+            recruiter_tg_id=recruiter_tg_id,
+            payload={
+                "event": "candidate_confirmed",
+                "slot_id": slot.id,
+            },
+            session=session,
+        )
+
+        result = CandidateConfirmationResult(status="confirmed", slot=slot)
+
+    await session.flush()
+
+    if update_candidate_status and status_update_candidate_tg_id is not None:
+        try:
+            from backend.domain.candidates.status_service import (
+                set_status_interview_confirmed,
+                set_status_intro_day_confirmed_preliminary,
+            )
+
+            if status_update_is_intro_day:
+                await set_status_intro_day_confirmed_preliminary(
+                    status_update_candidate_tg_id,
+                    force=True,
+                )
+            else:
+                await set_status_interview_confirmed(status_update_candidate_tg_id)
+        except Exception:
+            logger.exception(
+                "Failed to update candidate status for candidate %s",
+                status_update_candidate_tg_id,
+            )
+
+    if result.slot is not None:
+        result.slot.start_utc = _to_aware_utc(result.slot.start_utc)
+    return result
+
+
+async def _update_candidate_status_after_slot_confirmation(slot: Slot) -> None:
+    candidate_tg_id = slot.candidate_tg_id
+    if candidate_tg_id is None:
+        return
+    try:
+        from backend.domain.candidates.status_service import (
+            set_status_interview_confirmed,
+            set_status_intro_day_confirmed_preliminary,
+        )
+
+        if (slot.purpose or "").lower() == "intro_day":
+            await set_status_intro_day_confirmed_preliminary(candidate_tg_id, force=True)
+        else:
+            await set_status_interview_confirmed(candidate_tg_id)
+    except Exception:
+        logger.exception(
+            "Failed to update candidate status for candidate %s",
+            candidate_tg_id,
+        )
+
+
+async def confirm_slot_by_candidate(
+    slot_id: int,
+    *,
+    session: AsyncSession | None = None,
+    update_candidate_status: bool = True,
+) -> CandidateConfirmationResult:
+    if session is not None:
+        try:
+            async with session.begin_nested():
+                return await _confirm_slot_by_candidate_in_session(
+                    session,
+                    slot_id,
+                    update_candidate_status=update_candidate_status,
+                )
         except IntegrityError as e:
-            # IntegrityError on NotificationLog unique constraint = idempotent retry
-            # This means another request already confirmed this slot
             logger.info(
                 "IntegrityError during confirm_slot_by_candidate for slot %s - treating as idempotent retry: %s",
                 slot_id,
-                str(e)
+                str(e),
             )
-            # Re-fetch slot to return current state
+            slot = await session.scalar(
+                select(Slot)
+                .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                .where(Slot.id == slot_id)
+            )
+            if slot:
+                slot.start_utc = _to_aware_utc(slot.start_utc)
+                return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+            return CandidateConfirmationResult(status="not_found", slot=None)
+
+    async with async_session() as session:
+        result: CandidateConfirmationResult
+        try:
+            async with session.begin():
+                result = await _confirm_slot_by_candidate_in_session(
+                    session,
+                    slot_id,
+                    update_candidate_status=False,
+                )
+        except IntegrityError as e:
+            logger.info(
+                "IntegrityError during confirm_slot_by_candidate for slot %s - treating as idempotent retry: %s",
+                slot_id,
+                str(e),
+            )
             async with session.begin():
                 slot = await session.scalar(
                     select(Slot)
@@ -1277,9 +1396,13 @@ async def confirm_slot_by_candidate(slot_id: int) -> CandidateConfirmationResult
                 )
                 if slot:
                     slot.start_utc = _to_aware_utc(slot.start_utc)
-                    return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+                    result = CandidateConfirmationResult(status="already_confirmed", slot=slot)
                 else:
-                    return CandidateConfirmationResult(status="not_found", slot=None)
+                    result = CandidateConfirmationResult(status="not_found", slot=None)
+
+    if update_candidate_status and result.slot is not None and result.status in {"confirmed", "already_confirmed"}:
+        await _update_candidate_status_after_slot_confirmation(result.slot)
+    return result
 
 
 async def reserve_slot(
@@ -1553,127 +1676,157 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
         return slot
 
 
+async def _reject_slot_in_session(
+    session: AsyncSession,
+    slot_id: int,
+    *,
+    outbox_type: Optional[str] = None,
+    outbox_payload: Optional[Dict[str, Any]] = None,
+    update_candidate_status: bool = True,
+) -> Optional[Slot]:
+    slot = await session.get(Slot, slot_id, with_for_update=True)
+    if not slot:
+        return None
+    now_utc = datetime.now(timezone.utc)
+    reservation_date = _to_aware_utc(slot.start_utc).date()
+    candidate_tg_id = slot.candidate_tg_id
+    candidate_id = slot.candidate_id
+    recruiter_id = slot.recruiter_id
+
+    active_assignment_statuses = (
+        SlotAssignmentStatus.OFFERED,
+        SlotAssignmentStatus.CONFIRMED,
+        SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+        SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+    )
+    active_assignments = list(
+        await session.scalars(
+            select(SlotAssignment)
+            .where(
+                SlotAssignment.slot_id == slot.id,
+                SlotAssignment.status.in_(active_assignment_statuses),
+            )
+            .with_for_update()
+        )
+    )
+    if active_assignments:
+        assignment_ids = [str(assignment.id) for assignment in active_assignments]
+        for assignment in active_assignments:
+            assignment.status = SlotAssignmentStatus.CANCELLED
+            assignment.cancelled_at = assignment.cancelled_at or now_utc
+            assignment.status_before_reschedule = None
+        await session.execute(
+            update(ActionToken)
+            .where(
+                ActionToken.entity_id.in_(assignment_ids),
+                ActionToken.used_at.is_(None),
+            )
+            .values(used_at=now_utc)
+        )
+
+    await session.execute(
+        delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
+    )
+    await session.execute(
+        delete(NotificationLog).where(NotificationLog.booking_id == slot.id)
+    )
+    await session.execute(
+        delete(NotificationLog)
+        .where(NotificationLog.booking_id == slot.id)
+        .where(NotificationLog.candidate_tg_id.is_(None))
+    )
+    if candidate_id is not None and recruiter_id is not None:
+        await session.execute(
+            delete(SlotReservationLock).where(
+                SlotReservationLock.candidate_id == candidate_id,
+                SlotReservationLock.recruiter_id == recruiter_id,
+                SlotReservationLock.reservation_date == reservation_date,
+            )
+        )
+    elif candidate_tg_id is not None and recruiter_id is not None:
+        await session.execute(
+            delete(SlotReservationLock).where(
+                SlotReservationLock.candidate_tg_id == candidate_tg_id,
+                SlotReservationLock.recruiter_id == recruiter_id,
+                SlotReservationLock.reservation_date == reservation_date,
+            )
+        )
+    if update_candidate_status and candidate_tg_id is not None:
+        slot_purpose = getattr(slot, "purpose", "interview")
+        try:
+            if slot_purpose == "intro_day":
+                from backend.domain.candidates.status_service import (
+                    get_candidate_status,
+                    set_status_intro_day_declined_invitation,
+                    set_status_intro_day_declined_day_of,
+                )
+                from backend.domain.candidates.status import CandidateStatus
+
+                current_status = await get_candidate_status(candidate_tg_id)
+
+                if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
+                    await set_status_intro_day_declined_day_of(candidate_tg_id)
+                else:
+                    await set_status_intro_day_declined_invitation(candidate_tg_id)
+            else:
+                from backend.domain.candidates.status_service import set_status_interview_declined
+                await set_status_interview_declined(candidate_tg_id)
+        except Exception:
+            logger.exception(
+                "Failed to update candidate status to DECLINED for candidate %s (purpose=%s)",
+                candidate_tg_id,
+                slot_purpose,
+            )
+
+    slot.status = SlotStatus.FREE
+    slot.candidate_id = None
+    slot.candidate_tg_id = None
+    slot.candidate_fio = None
+    slot.candidate_tz = None
+    slot.candidate_city_id = None
+    slot.purpose = "interview"
+    if outbox_type and candidate_tg_id is not None:
+        await add_outbox_notification(
+            notification_type=outbox_type,
+            booking_id=slot.id,
+            candidate_tg_id=candidate_tg_id,
+            recruiter_tg_id=None,
+            payload=outbox_payload or {"event": outbox_type},
+            session=session,
+        )
+    await session.flush()
+    slot.start_utc = _to_aware_utc(slot.start_utc)
+    return slot
+
+
 async def reject_slot(
     slot_id: int,
     *,
     outbox_type: Optional[str] = None,
     outbox_payload: Optional[Dict[str, Any]] = None,
+    session: AsyncSession | None = None,
+    update_candidate_status: bool = True,
 ) -> Optional[Slot]:
+    if session is not None:
+        return await _reject_slot_in_session(
+            session,
+            slot_id,
+            outbox_type=outbox_type,
+            outbox_payload=outbox_payload,
+            update_candidate_status=update_candidate_status,
+        )
+
     async with async_session() as session:
-        slot = await session.get(Slot, slot_id, with_for_update=True)
+        async with session.begin():
+            slot = await _reject_slot_in_session(
+                session,
+                slot_id,
+                outbox_type=outbox_type,
+                outbox_payload=outbox_payload,
+                update_candidate_status=update_candidate_status,
+            )
         if not slot:
             return None
-        now_utc = datetime.now(timezone.utc)
-        reservation_date = _to_aware_utc(slot.start_utc).date()
-        candidate_tg_id = slot.candidate_tg_id
-        candidate_id = slot.candidate_id
-        recruiter_id = slot.recruiter_id
-
-        # Keep slot_assignments in sync with released slot state.
-        active_assignment_statuses = (
-            SlotAssignmentStatus.OFFERED,
-            SlotAssignmentStatus.CONFIRMED,
-            SlotAssignmentStatus.RESCHEDULE_REQUESTED,
-            SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
-        )
-        active_assignments = list(
-            await session.scalars(
-                select(SlotAssignment)
-                .where(
-                    SlotAssignment.slot_id == slot.id,
-                    SlotAssignment.status.in_(active_assignment_statuses),
-                )
-                .with_for_update()
-            )
-        )
-        if active_assignments:
-            assignment_ids = [str(assignment.id) for assignment in active_assignments]
-            for assignment in active_assignments:
-                assignment.status = SlotAssignmentStatus.CANCELLED
-                assignment.cancelled_at = assignment.cancelled_at or now_utc
-                assignment.status_before_reschedule = None
-            await session.execute(
-                update(ActionToken)
-                .where(
-                    ActionToken.entity_id.in_(assignment_ids),
-                    ActionToken.used_at.is_(None),
-                )
-                .values(used_at=now_utc)
-            )
-
-        await session.execute(
-            delete(SlotReservationLock).where(SlotReservationLock.slot_id == slot.id)
-        )
-        await session.execute(
-            delete(NotificationLog).where(NotificationLog.booking_id == slot.id)
-        )
-        # Legacy notification logs (pre candidate binding) may still exist with NULL
-        # ``candidate_tg_id``; remove them as well to avoid blocking future reuse.
-        await session.execute(
-            delete(NotificationLog)
-            .where(NotificationLog.booking_id == slot.id)
-            .where(NotificationLog.candidate_tg_id.is_(None))
-        )
-        if candidate_id is not None and recruiter_id is not None:
-            await session.execute(
-                delete(SlotReservationLock).where(
-                    SlotReservationLock.candidate_id == candidate_id,
-                    SlotReservationLock.recruiter_id == recruiter_id,
-                    SlotReservationLock.reservation_date == reservation_date,
-                )
-            )
-        elif candidate_tg_id is not None and recruiter_id is not None:
-            await session.execute(
-                delete(SlotReservationLock).where(
-                    SlotReservationLock.candidate_tg_id == candidate_tg_id,
-                    SlotReservationLock.recruiter_id == recruiter_id,
-                    SlotReservationLock.reservation_date == reservation_date,
-                )
-            )
-        # Update candidate status based on slot purpose before clearing candidate_tg_id
-        if candidate_tg_id is not None:
-            slot_purpose = getattr(slot, "purpose", "interview")
-            try:
-                if slot_purpose == "intro_day":
-                    from backend.domain.candidates.status_service import (
-                        get_candidate_status,
-                        set_status_intro_day_declined_invitation,
-                        set_status_intro_day_declined_day_of,
-                    )
-                    from backend.domain.candidates.status import CandidateStatus
-
-                    # Check current status to determine which decline this is
-                    current_status = await get_candidate_status(candidate_tg_id)
-
-                    if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
-                        # This is a day-of decline (responding to 3H reminder)
-                        await set_status_intro_day_declined_day_of(candidate_tg_id)
-                    else:
-                        # This is declining the initial invitation
-                        await set_status_intro_day_declined_invitation(candidate_tg_id)
-                else:
-                    from backend.domain.candidates.status_service import set_status_interview_declined
-                    await set_status_interview_declined(candidate_tg_id)
-            except Exception:
-                logger.exception("Failed to update candidate status to DECLINED for candidate %s (purpose=%s)", candidate_tg_id, slot_purpose)
-
-        slot.status = SlotStatus.FREE
-        slot.candidate_id = None
-        slot.candidate_tg_id = None
-        slot.candidate_fio = None
-        slot.candidate_tz = None
-        slot.candidate_city_id = None
-        slot.purpose = "interview"
-        if outbox_type and candidate_tg_id is not None:
-            await add_outbox_notification(
-                notification_type=outbox_type,
-                booking_id=slot.id,
-                candidate_tg_id=candidate_tg_id,
-                recruiter_tg_id=None,
-                payload=outbox_payload or {"event": outbox_type},
-                session=session,
-            )
-        await session.commit()
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
         return slot

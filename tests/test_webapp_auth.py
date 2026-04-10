@@ -5,14 +5,18 @@ from __future__ import annotations
 import time
 import hmac
 import hashlib
+import json
+from typing import Optional
 from urllib.parse import urlencode
 
 import pytest
 from fastapi import HTTPException
 
 from backend.apps.admin_api.webapp.auth import (
+    MaxWebAppUser,
     TelegramUser,
     validate_init_data,
+    validate_max_webapp_data,
     _parse_user_from_init_data,
 )
 
@@ -64,6 +68,45 @@ def _generate_valid_init_data(
 
     params["hash"] = computed_hash
 
+    return urlencode(params)
+
+
+def _generate_valid_max_webapp_data(
+    user_id: str,
+    bot_token: str,
+    *,
+    username: str = "maxuser",
+    first_name: str = "Max",
+    auth_date: Optional[int] = None,
+    start_param: str = "mx1token",
+) -> str:
+    user_json = json.dumps(
+        {
+            "id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "language_code": "ru",
+        }
+    )
+
+    params = {
+        "user": user_json,
+        "auth_date": str(auth_date or int(time.time())),
+        "query_id": "max_query_id",
+        "start_param": start_param,
+    }
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+    secret_key = hmac.new(
+        key=b"WebAppData",
+        msg=bot_token.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    computed_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    params["hash"] = computed_hash
     return urlencode(params)
 
 
@@ -288,3 +331,51 @@ class TestTelegramUser:
         """Test full_name fallback to user_id."""
         user = TelegramUser(user_id=12345)
         assert user.full_name == "12345"
+
+
+class TestValidateMaxWebAppData:
+    def test_validate_valid_max_webapp_data(self):
+        bot_token = "test-max-bot-token"
+        init_data = _generate_valid_max_webapp_data(
+            user_id="mx-user-123",
+            bot_token=bot_token,
+            start_param="mx1-launch-token",
+        )
+
+        user = validate_max_webapp_data(init_data, bot_token, max_age_seconds=900)
+
+        assert user.user_id == "mx-user-123"
+        assert user.username == "maxuser"
+        assert user.start_param == "mx1-launch-token"
+        assert user.query_id == "max_query_id"
+
+    def test_validate_tampered_max_webapp_data(self):
+        bot_token = "test-max-bot-token"
+        init_data = _generate_valid_max_webapp_data(user_id="mx-user-123", bot_token=bot_token)
+
+        with pytest.raises(ValueError, match="Invalid initData signature"):
+            validate_max_webapp_data(init_data.replace("maxuser", "attacker"), bot_token)
+
+    def test_validate_stale_max_webapp_data(self):
+        bot_token = "test-max-bot-token"
+        init_data = _generate_valid_max_webapp_data(
+            user_id="mx-user-123",
+            bot_token=bot_token,
+            auth_date=int(time.time()) - 7200,
+        )
+
+        with pytest.raises(ValueError, match="initData is too old"):
+            validate_max_webapp_data(init_data, bot_token, max_age_seconds=900)
+
+    def test_validate_max_webapp_data_requires_user_id(self):
+        bot_token = "test-max-bot-token"
+        init_data = _generate_valid_max_webapp_data(user_id="", bot_token=bot_token)
+
+        with pytest.raises(ValueError, match="Missing or invalid user_id"):
+            validate_max_webapp_data(init_data, bot_token, max_age_seconds=900)
+
+
+class TestMaxWebAppUser:
+    def test_full_name_falls_back_to_user_id(self):
+        user = MaxWebAppUser(user_id="mx-user-123")
+        assert user.full_name == "mx-user-123"

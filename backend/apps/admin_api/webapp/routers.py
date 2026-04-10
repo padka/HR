@@ -21,6 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.apps.admin_api.webapp.auth import TelegramUser, get_telegram_webapp_auth
 from backend.domain import analytics
+from backend.domain.candidates.models import User
+from backend.domain.candidates.scheduling_integrity import (
+    WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR,
+    load_candidate_scheduling_integrity,
+)
 from backend.domain.models import (
     SlotStatus,
     SlotStatusTransitionError,
@@ -39,6 +44,26 @@ router = APIRouter(tags=["webapp"])
 def _safe_text(sql: str, params: tuple[str, ...]):
     """Return a bound text clause to avoid accidental string interpolation."""
     return text(sql).bindparams(*(bindparam(name) for name in params))
+
+
+async def _ensure_webapp_slot_write_allowed(session: AsyncSession, candidate: User) -> None:
+    integrity = await load_candidate_scheduling_integrity(session, candidate)
+    if integrity.get("slot_only_writes_allowed"):
+        return
+    if integrity.get("write_behavior") == WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Scheduling conflict requires manual repair before webapp slot update.",
+        )
+    if integrity.get("assignment_owned"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Scheduling is managed by SlotAssignment. Webapp slot-only mutation is not allowed.",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Scheduling state cannot be updated through legacy webapp slot-only flow.",
+    )
 
 
 # ============================================================================
@@ -316,6 +341,13 @@ async def create_booking(
         )
 
     candidate_id, candidate_uuid, candidate_fio, candidate_username, candidate_city_id, candidate_tz = candidate_row
+    candidate = await session.get(User, int(candidate_id))
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate not found. Please complete registration first.",
+        )
+    await _ensure_webapp_slot_write_allowed(session, candidate)
 
     # Strict cross-purpose guard: one candidate cannot hold active interview + intro_day at once.
     active_other_purpose_query = _safe_text(
@@ -419,6 +451,10 @@ async def reschedule_booking(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
     candidate_id, candidate_uuid, candidate_city_id = candidate_row
+    candidate = await session.get(User, int(candidate_id))
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    await _ensure_webapp_slot_write_allowed(session, candidate)
 
     old_slot_id = request.booking_id
 
@@ -597,6 +633,10 @@ async def cancel_booking(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
 
     candidate_id = candidate_row[0]
+    candidate = await session.get(User, int(candidate_id))
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    await _ensure_webapp_slot_write_allowed(session, candidate)
 
     slot_id = request.booking_id
 

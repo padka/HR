@@ -27,6 +27,7 @@ import {
   hasCandidatePortalLocationToken,
   markCandidateWebAppReady,
   persistCandidatePortalAccessToken,
+  readCandidateWebAppInitData,
   resolveCandidatePortalToken,
 } from './webapp'
 import '../candidate-portal.css'
@@ -441,8 +442,8 @@ function gatewayFromJourney(payload: CandidatePortalJourneyResponse): CandidateE
       summary: payload.company?.summary,
       highlights: payload.company?.highlights || [],
     },
-    suggested_channel: 'web',
-    fallback_policy: 'web_always_available_when_portal_public_ready',
+    suggested_channel: 'max',
+    fallback_policy: 'messenger_first',
   }
 }
 
@@ -482,10 +483,10 @@ export function CandidateStartPage() {
     const currentStep = String(entryGateway.journey.current_step || '').trim()
     const order = ['profile', 'screening', 'slot_selection', 'status'] as const
     const labels: Record<string, string> = {
-      profile: 'Анкета',
+      profile: 'Профиль',
       screening: 'Тест 1',
       slot_selection: 'Слот',
-      status: 'Диалог',
+      status: 'Обратная связь',
     }
     const currentIndex = Math.max(order.indexOf(currentStep as (typeof order)[number]), 0)
     return order.map((key, index) => ({
@@ -495,45 +496,31 @@ export function CandidateStartPage() {
         index < currentIndex ? 'completed' : index === currentIndex ? 'current' : 'pending',
     }))
   }, [entryGateway])
+  const entryGatewayHasActiveStage = useMemo(() => {
+    if (!entryGateway) return false
+    const currentStep = String(entryGateway.journey.current_step || '').trim()
+    return currentStep === 'slot_selection' || currentStep === 'status'
+  }, [entryGateway])
+  const browserFallbackOption = useMemo(
+    () => (entryGateway ? entryGateway.options.web || null : null),
+    [entryGateway],
+  )
+  const browserFallbackReady = Boolean(browserFallbackOption?.enabled && browserFallbackOption?.launch_url)
   const entryChannelCards = useMemo(() => {
     if (!entryGateway) return []
-    return (['web', 'max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
+    return (['max', 'telegram'] as CandidateEntryChannel[]).map((channel) => {
       const option = entryGateway.options[channel]
       return {
         channel,
         option,
-        title:
-          channel === 'web'
-            ? 'Веб-кабинет'
-            : channel === 'max'
-              ? 'MAX Messenger'
-              : 'Telegram',
-        kicker:
-          channel === 'web'
-            ? 'Рекомендуем для прохождения этапов'
-            : channel === 'max'
-              ? 'Продолжение через MAX'
-              : 'Продолжение через Telegram',
-        body:
-          channel === 'web'
-            ? 'Пройти Test 1, записаться на слот, читать информацию о компании и общаться с рекрутером в одном кабинете.'
-            : 'Запускает тот же путь через бот и возвращает вас в тот же кабинет без потери прогресса.',
-        note:
-          channel === 'web'
-            ? 'Самый устойчивый путь для анкеты, теста и записи на собеседование.'
-            : 'Подходит, если удобнее получать напоминания и продолжать диалог в мессенджере.',
-        accent:
-          channel === 'web'
-            ? 'web'
-            : channel === 'max'
-              ? 'max'
-              : 'telegram',
-        cta:
-          channel === 'web'
-            ? 'Открыть кабинет'
-            : channel === 'max'
-              ? 'Продолжить в MAX'
-              : 'Продолжить в Telegram',
+        title: channel === 'max' ? 'MAX' : 'Telegram',
+        kicker: channel === 'max' ? 'Основной канал кандидата' : 'Альтернативный messenger flow',
+        body: 'Кандидат проходит Test 1, получает слот и видит обратную связь прямо в этом мессенджере. CRM синхронизируется автоматически.',
+        note: channel === 'max'
+          ? 'Подходит для основного потока MAX-first и сохраняет весь путь в одном messenger flow.'
+          : 'Тот же сценарий через Telegram: тест, слот и сообщения идут в один канал.',
+        accent: channel === 'max' ? 'max' : 'telegram',
+        cta: channel === 'max' ? 'Открыть MAX' : 'Открыть Telegram',
         statusLabel: option?.enabled ? 'Готово' : 'Недоступно',
       }
     })
@@ -589,7 +576,7 @@ export function CandidateStartPage() {
         } catch (gatewayError) {
           if (cancelled) return
           const info = parseCandidatePortalError(gatewayError)
-          setError(info?.message || 'Не удалось подготовить варианты входа. Попробуйте открыть кабинет на этом устройстве ещё раз.')
+          setError(info?.message || 'Не удалось подготовить варианты продолжения. Попробуйте ещё раз.')
           setErrorState(info?.state || null)
           return
         }
@@ -607,7 +594,10 @@ export function CandidateStartPage() {
         return
       }
       try {
-        const payload = await exchangeCandidatePortalToken(resolvedToken.token)
+        const maxWebAppData = readCandidateWebAppInitData()
+        const payload = maxWebAppData
+          ? await exchangeCandidatePortalToken(resolvedToken.token, { maxWebAppData })
+          : await exchangeCandidatePortalToken(resolvedToken.token)
         if (cancelled) return
         persistCandidatePortalEntryTokenFromUrl(payload.candidate?.entry_url)
         persistCandidatePortalAccessToken(resolvedToken.token)
@@ -644,13 +634,13 @@ export function CandidateStartPage() {
             if (resolvedToken.source === 'storage') {
               showNeutralLanding(
                 resumeNonce > 0
-                  ? 'На этом устройстве не найден активный кабинет. Запросите новый код на стартовой странице и продолжите через удобный канал.'
+                  ? 'На этом устройстве не найден активный messenger-сеанс. Запросите новый код и продолжите через MAX или Telegram.'
                   : null,
               )
               return
             }
             const info = shouldSkipStoredToken ? initialError : parseCandidatePortalError(fallbackError)
-            setError(info?.message || 'Не удалось восстановить кабинет автоматически.')
+            setError(info?.message || 'Не удалось восстановить путь кандидата автоматически.')
             setErrorState(info?.state || null)
             return
           }
@@ -677,14 +667,14 @@ export function CandidateStartPage() {
           : await selectCandidateEntryChannel(entryToken || readCandidatePortalEntryToken(), channel)
       const launchUrl = String(payload.launch?.url || payload.cabinet_url || '').trim()
       if (!launchUrl) {
-        setError('Ссылка для запуска канала пока не подготовлена. Продолжайте через веб-кабинет.')
+        setError('Ссылка для запуска мессенджера пока не подготовлена.')
         setEntryPendingChannel(null)
         return
       }
       window.location.assign(launchUrl)
     } catch (selectError) {
       const info = parseCandidatePortalError(selectError)
-      setError(info?.message || 'Не удалось запустить выбранный канал. Попробуйте ещё раз или продолжайте через веб-кабинет.')
+      setError(info?.message || 'Не удалось запустить выбранный мессенджер. Попробуйте ещё раз.')
       setErrorState(info?.state || null)
       setEntryPendingChannel(null)
     }
@@ -748,33 +738,37 @@ export function CandidateStartPage() {
           <div className="candidate-portal__eyebrow">Candidate Portal</div>
           <h1 className="candidate-portal__title">
             {entryGateway
-              ? 'Выберите, где продолжить общение'
+              ? entryGatewayHasActiveStage
+                ? 'У вас уже есть активный этап'
+                : 'Выберите мессенджер'
               : showGenericLanding
-                ? 'Начните путь в компании'
-              : error
-                ? errorState === 'blocked'
-                  ? 'Доступ к кабинету недоступен'
+                ? 'Начните путь в мессенджере'
+                : error
+                  ? errorState === 'blocked'
+                  ? 'Доступ к пути кандидата недоступен'
                   : errorState === 'recoverable'
                     ? 'Восстанавливаю доступ'
                     : errorState === 'needs_new_link'
                       ? 'Продолжим через выбор канала'
-                      : 'Не удалось восстановить кабинет'
-                : 'Открываю ваш кабинет'}
+                      : 'Не удалось восстановить путь кандидата'
+                : 'Подготавливаю путь кандидата'}
           </h1>
           <p className="candidate-portal__subtitle">
             {entryGateway
-              ? entryGateway.journey.next_action || 'Можно продолжить в браузере, MAX или Telegram без потери прогресса.'
+              ? entryGatewayHasActiveStage
+                ? entryGateway.journey.next_action || 'Продолжайте текущий путь кандидата в MAX или Telegram без повторного старта.'
+                : entryGateway.journey.next_action || 'Можно продолжить в MAX или Telegram без потери прогресса.'
               : showGenericLanding
-                ? 'Введите телефон из отклика, получите код в HH, Telegram или MAX и выберите удобный способ продолжения.'
+                ? 'Введите телефон из отклика, получите код в связанный MAX или Telegram и продолжите путь там.'
                 : error
                 ? errorState === 'blocked'
-                  ? 'Кабинет сейчас недоступен в текущем режиме. Попробуйте вернуться к выбору способа входа.'
+                  ? 'Сейчас этот вход недоступен. Вернитесь к выбору мессенджера.'
                   : errorState === 'recoverable'
-                    ? 'Пробую вернуть вас в кабинет на этом устройстве без потери прогресса.'
+                    ? 'Пробую вернуть вас в тот же messenger-сеанс без потери прогресса.'
                     : errorState === 'needs_new_link'
-                      ? 'Текущий вход устарел, поэтому вернёмся к выбору Web, MAX или Telegram.'
-                      : 'Сейчас попробую открыть кабинет заново на этом устройстве.'
-                : 'Проверяю ссылку, поднимаю кабинет и восстанавливаю прогресс прохождения.'}
+                      ? 'Текущий вход устарел, поэтому вернёмся к выбору MAX или Telegram.'
+                      : 'Сейчас попробую восстановить текущий этап на этом устройстве.'
+                : 'Проверяю ссылку и восстанавливаю текущий этап кандидата.'}
           </p>
           {error ? <p className="candidate-portal__error">{error}</p> : null}
           {showGenericLanding ? (
@@ -782,34 +776,34 @@ export function CandidateStartPage() {
               <section className="glass candidate-portal__entry-hero">
                 <div className="candidate-portal__entry-copy">
                   <div className="candidate-portal__entry-badges">
-                    <span className="candidate-portal__summary-tag">Одна ссылка для всех кандидатов</span>
-                    <span className="candidate-portal__summary-tag">Код придёт в связанный канал</span>
-                    <span className="candidate-portal__summary-tag">Web, MAX и Telegram на выбор</span>
+                    <span className="candidate-portal__summary-tag">Один вход для всех кандидатов</span>
+                    <span className="candidate-portal__summary-tag">Код придёт в связанный мессенджер</span>
+                    <span className="candidate-portal__summary-tag">MAX и Telegram на выбор</span>
                   </div>
                   <div className="candidate-portal__summary-grid" aria-label="Как устроен путь кандидата">
                     <article className="glass candidate-portal__summary-card candidate-portal__summary-card--spotlight">
                       <div className="candidate-portal__summary-label">Шаг 1</div>
-                      <div className="candidate-portal__summary-value">Откройте единый портал</div>
-                      <div className="candidate-portal__summary-meta">Эту ссылку рекрутер отправляет всем кандидатам массово.</div>
+                      <div className="candidate-portal__summary-value">Подтвердите номер</div>
+                      <div className="candidate-portal__summary-meta">Используйте тот же номер, который был в отклике кандидата.</div>
                     </article>
                     <article className="glass candidate-portal__summary-card">
                       <div className="candidate-portal__summary-label">Шаг 2</div>
-                      <div className="candidate-portal__summary-value">Подтвердите номер</div>
-                      <div className="candidate-portal__summary-meta">Код придёт в уже связанный HH, Telegram или MAX без ручной ссылки.</div>
+                      <div className="candidate-portal__summary-value">Получите код</div>
+                      <div className="candidate-portal__summary-meta">Код придёт в уже связанный MAX или Telegram без ручной ссылки.</div>
                     </article>
                     <article className="glass candidate-portal__summary-card">
                       <div className="candidate-portal__summary-label">Шаг 3</div>
-                      <div className="candidate-portal__summary-value">Выберите Web, MAX или Telegram</div>
-                      <div className="candidate-portal__summary-meta">Анкета, Test 1, слот и чат с рекрутером живут в одном кабинете.</div>
+                      <div className="candidate-portal__summary-value">Откройте нужный мессенджер</div>
+                      <div className="candidate-portal__summary-meta">Test 1, слот и обратная связь идут дальше в MAX или Telegram.</div>
                     </article>
                   </div>
 
                   <div className="candidate-portal__entry-timeline" aria-label="Основные действия">
                     {[
-                      'Единый портал',
+                      'Номер',
                       'Код входа',
-                      'Выбор слота',
-                      'Диалог с рекрутером',
+                      'Test 1',
+                      'Обратная связь',
                     ].map((label, index) => (
                       <div
                         key={label}
@@ -849,19 +843,19 @@ export function CandidateStartPage() {
               <div className="candidate-portal__entry-grid">
                 <aside className="candidate-portal__entry-side">
                   <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
-                    <strong>Что будет доступно после входа</strong>
+                    <strong>Что происходит дальше</strong>
                     <ul className="candidate-portal__entry-feature-list">
-                      <li>Пройти анкету и Test 1 в одном потоке</li>
-                      <li>Записаться на свободный слот собеседования</li>
-                      <li>Получать ответы рекрутера и писать в ответ</li>
-                      <li>Проверять этап найма и информацию о компании</li>
+                      <li>Кандидат получает Test 1 в MAX или Telegram</li>
+                      <li>После завершения в CRM появляется анкета с деталями кандидата</li>
+                      <li>Если кандидат проходит по критериям, рекрутер назначает слот</li>
+                      <li>Подтверждение и следующая обратная связь приходят в тот же мессенджер</li>
                     </ul>
                   </div>
                   <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
                     <strong>Подтверждение входа</strong>
                     <p>
                       Введите телефон, который вы использовали при отклике. Если кандидат найден,
-                      система отправит одноразовый код в HH, Telegram или MAX и откроет ваш кабинет без участия рекрутера.
+                      система отправит одноразовый код в MAX или Telegram и продолжит путь в том же messenger flow.
                     </p>
                     {sharedAccessMessage ? (
                       <p className="candidate-portal__helper">{sharedAccessMessage}</p>
@@ -876,9 +870,9 @@ export function CandidateStartPage() {
                         <div className="candidate-portal__entry-option-kicker">Шаг 1. Подтвердите себя</div>
                         <strong>Телефон из вашего отклика</strong>
                       </div>
-                      <span className="candidate-portal__entry-status is-ready">Shared portal</span>
+                      <span className="candidate-portal__entry-status is-ready">Candidate access</span>
                     </div>
-                    <p>Никаких персональных ссылок. Один и тот же портал подходит для всех кандидатов.</p>
+                    <p>Никаких персональных browser-ссылок. Один и тот же вход подходит для MAX и Telegram.</p>
                     <label className="candidate-portal__field">
                       <span className="candidate-portal__field-label">Телефон</span>
                       <input
@@ -911,7 +905,7 @@ export function CandidateStartPage() {
                         {sharedChallengeToken ? 'Код отправлен' : 'Ожидает телефон'}
                       </span>
                     </div>
-                    <p>Если номер найден, код придёт в доступный канал, уже связанный с вашим откликом.</p>
+                    <p>Если номер найден, код придёт в доступный мессенджер, уже связанный с вашим откликом.</p>
                     <label className="candidate-portal__field">
                       <span className="candidate-portal__field-label">Код</span>
                       <input
@@ -936,14 +930,14 @@ export function CandidateStartPage() {
                   </div>
                   {[
                     {
-                      title: 'Веб-кабинет',
-                      kicker: 'После кода откроется основная рабочая зона',
-                      note: 'Здесь кандидат проходит тесты, выбирает слот, читает информацию о компании и пишет рекрутеру.',
+                      title: 'MAX',
+                      kicker: 'Основной messenger-first сценарий',
+                      note: 'Кандидат проходит Test 1, получает слот и отвечает рекрутеру прямо в MAX.',
                     },
                     {
-                      title: 'MAX и Telegram',
-                      kicker: 'После кода можно продолжить в мессенджере',
-                      note: 'Мессенджеры остаются launcher-слоем, а весь прогресс хранится в одном кабинете кандидата.',
+                      title: 'Telegram',
+                      kicker: 'Альтернативный messenger flow',
+                      note: 'Тот же процесс: тест, слот и сообщения синхронизируются с CRM в одном канале.',
                     },
                   ].map((item) => (
                     <div key={item.title} className="candidate-portal__entry-option">
@@ -966,9 +960,16 @@ export function CandidateStartPage() {
               <section className="glass candidate-portal__entry-hero">
                 <div className="candidate-portal__entry-copy">
                   <div className="candidate-portal__entry-badges">
-                    <span className="candidate-portal__summary-tag">Новый шаг найма</span>
+                    <span className="candidate-portal__summary-tag">
+                      {entryGatewayHasActiveStage ? 'У вас уже есть активный этап' : 'Продолжим текущий шаг'}
+                    </span>
                     <span className="candidate-portal__summary-tag">Прогресс сохранится автоматически</span>
-                    <span className="candidate-portal__summary-tag">Можно переключать канал позже</span>
+                    <span className="candidate-portal__summary-tag">MAX и Telegram синхронизируются с CRM</span>
+                    {browserFallbackOption?.launch_url ? (
+                      <span className="candidate-portal__summary-tag">
+                        {browserFallbackReady ? 'Есть browser fallback' : 'Browser fallback ограничен'}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="candidate-portal__summary-grid" aria-label="Входной контекст">
                     <article className="glass candidate-portal__summary-card candidate-portal__summary-card--spotlight">
@@ -1025,22 +1026,59 @@ export function CandidateStartPage() {
               <div className="candidate-portal__entry-grid">
                 <aside className="candidate-portal__entry-side">
                   <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
-                    <strong>Что будет доступно в кабинете</strong>
+                    <strong>{entryGatewayHasActiveStage ? 'Текущая активность' : 'Что будет доступно в мессенджере'}</strong>
                     <ul className="candidate-portal__entry-feature-list">
-                      <li>Пройти анкету и Test 1 без потери прогресса</li>
-                      <li>Выбрать свободный слот и подтвердить собеседование</li>
-                      <li>Написать рекрутеру и увидеть ответ в одном месте</li>
-                      <li>Проверить этап найма и прочитать информацию о компании</li>
+                      {entryGatewayHasActiveStage ? (
+                        <>
+                          <li>Система уже знает ваш текущий этап и не запустит процесс заново</li>
+                          <li>История шагов и последние обновления останутся в кабинете кандидата</li>
+                          <li>Подтверждение, перенос и детали встречи остаются в том же диалоге</li>
+                          <li>Следующая обратная связь придёт в MAX или Telegram без дублирования профиля</li>
+                        </>
+                      ) : (
+                        <>
+                          <li>Пройти Test 1 и сразу передать результаты в CRM</li>
+                          <li>Получить слот после решения рекрутера</li>
+                          <li>Подтвердить время или запросить перенос в том же диалоге</li>
+                          <li>Получать следующую обратную связь в том же мессенджере</li>
+                        </>
+                      )}
                     </ul>
                   </div>
                   {entryGateway.company_preview?.summary ? (
                     <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
-                      <strong>Что дальше</strong>
+                      <strong>{entryGatewayHasActiveStage ? 'Что делать сейчас' : 'Что дальше'}</strong>
                       <p>{entryGateway.company_preview.summary}</p>
                       <div className="candidate-portal__summary-tags">
                         {(entryGateway.company_preview.highlights || []).map((item) => (
                           <span key={item} className="candidate-portal__summary-tag">{item}</span>
                         ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {browserFallbackOption ? (
+                    <div className="candidate-portal__resource-card candidate-portal__entry-sidecard">
+                      <strong>Резервный вход</strong>
+                      <p>
+                        {entryGatewayHasActiveStage
+                          ? 'Если MAX или Telegram не открываются на этом устройстве, продолжите этот же этап в браузере без потери прогресса.'
+                          : 'Если messenger launcher сейчас недоступен, продолжите тот же шаг в браузере на существующем shared path.'}
+                      </p>
+                      {entryGateway.fallback_policy ? (
+                        <p className="candidate-portal__helper">Политика восстановления: {entryGateway.fallback_policy}</p>
+                      ) : null}
+                      {browserFallbackOption.reason_if_blocked ? (
+                        <p className="candidate-portal__helper">{browserFallbackOption.reason_if_blocked}</p>
+                      ) : null}
+                      <div className="candidate-portal__actions">
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--ghost"
+                          disabled={!browserFallbackReady || entryPendingChannel !== null}
+                          onClick={() => handleSelectEntryChannel('web')}
+                        >
+                          {entryPendingChannel === 'web' ? 'Открываю…' : 'Открыть в браузере'}
+                        </button>
                       </div>
                     </div>
                   ) : null}
@@ -1050,7 +1088,7 @@ export function CandidateStartPage() {
                   {entryChannelCards.map(({ channel, option, title, kicker, body, note, accent, cta, statusLabel }) => (
                     <div
                       key={channel}
-                      className={`candidate-portal__entry-option candidate-portal__entry-option--${accent} ${channel === 'web' ? 'is-featured' : ''}`}
+                      className={`candidate-portal__entry-option candidate-portal__entry-option--${accent} ${channel === 'max' ? 'is-featured' : ''}`}
                     >
                       <div className="candidate-portal__entry-option-head">
                         <div>
@@ -1069,7 +1107,7 @@ export function CandidateStartPage() {
                       <div className="candidate-portal__actions">
                         <button
                           type="button"
-                          className={`ui-btn ${channel === 'web' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
+                          className={`ui-btn ${channel === 'max' ? 'ui-btn--primary' : 'ui-btn--ghost'}`}
                           disabled={!option?.enabled || entryPendingChannel !== null}
                           onClick={() => handleSelectEntryChannel(channel)}
                         >
@@ -1112,8 +1150,8 @@ export function CandidateStartPage() {
           {error ? (
             <p className="candidate-portal__helper" style={{ textAlign: 'center', marginTop: 12 }}>
               {recoveryEntryToken
-                ? 'Использую сохранённый вход на этом устройстве, чтобы вернуть вас к выбору Web, MAX или Telegram.'
-                : 'Если автоматическое восстановление не сработало, вернитесь на стартовую страницу и продолжите через удобный канал.'}
+                ? 'Использую сохранённый вход на этом устройстве, чтобы вернуть вас к выбору MAX или Telegram. Если messenger launcher снова не откроется, используйте browser fallback на следующем шаге.'
+                : 'Если автоматическое восстановление не сработало, вернитесь на стартовую страницу и продолжите через нужный мессенджер или browser fallback.'}
             </p>
           ) : null}
         </div>

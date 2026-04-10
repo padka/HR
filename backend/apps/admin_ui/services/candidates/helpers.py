@@ -6,7 +6,7 @@ import re
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 from sqlalchemy import String, and_, cast, delete, exists, false, func, literal, or_, select
@@ -38,6 +38,14 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.portal_service import build_candidate_portal_url
+from backend.domain.candidates.state_contract import (
+    KANBAN_COLUMN_ICONS,
+    KANBAN_COLUMN_LABELS,
+    KANBAN_COLUMN_TARGET_STATUSES,
+    KANBAN_PIPELINE_COLUMNS,
+    build_candidate_state_contract,
+)
+from backend.domain.candidates.write_contract import KANBAN_CANONICAL_MOVE_COLUMNS
 from backend.domain.candidates.status import (
     CandidateStatus,
     STATUS_TRANSITIONS,
@@ -57,7 +65,7 @@ from backend.domain.candidates.workflow import (
     workflow_status_for_candidate_status,
     workflow_status_from_raw_value,
 )
-from backend.domain.models import City, Recruiter, Slot, SlotStatus, recruiter_city_association
+from backend.domain.models import City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
 from backend.domain.repositories import find_city_by_plain_name, get_message_template
 from backend.utils.jinja_renderer import render_template
 
@@ -78,6 +86,35 @@ class CandidateRow:
     upcoming_slot: Optional[Slot]
     status_slug: str = "new"
     status_label: str = "Новые"
+
+
+async def _load_slot_assignment_maps(
+    session,
+    *,
+    candidate_ids: Sequence[str],
+    telegram_ids: Sequence[int],
+    telegram_to_candidate: Mapping[int, str],
+) -> Dict[str, List[SlotAssignment]]:
+    if not candidate_ids and not telegram_ids:
+        return {}
+    assignment_rows = await session.execute(
+        select(SlotAssignment)
+        .options(selectinload(SlotAssignment.slot))
+        .where(
+            or_(
+                SlotAssignment.candidate_id.in_(candidate_ids) if candidate_ids else false(),
+                SlotAssignment.candidate_tg_id.in_(telegram_ids) if telegram_ids else false(),
+            )
+        )
+        .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+    )
+    assignments_by_candidate: Dict[str, List[SlotAssignment]] = defaultdict(list)
+    for assignment in assignment_rows.scalars():
+        candidate_key = assignment.candidate_id or telegram_to_candidate.get(assignment.candidate_tg_id)
+        if candidate_key is None:
+            continue
+        assignments_by_candidate[str(candidate_key)].append(assignment)
+    return assignments_by_candidate
 
 
 _candidate_status_service = CandidateStatusService()
@@ -728,6 +765,182 @@ PIPELINE_DEFINITIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
 
 DEFAULT_PIPELINE = "interview"
 
+CANONICAL_STATE_FILTER_PREFIXES = ("kanban:", "lifecycle:", "worklist:", "reconciliation:")
+
+
+def _state_filter_options_for_pipeline(pipeline_slug: str) -> List[Dict[str, Any]]:
+    columns = KANBAN_PIPELINE_COLUMNS.get(pipeline_slug, KANBAN_PIPELINE_COLUMNS.get(DEFAULT_PIPELINE, []))
+    options: List[Dict[str, Any]] = [
+        {
+            "value": "",
+            "label": "Все кандидаты",
+            "kind": "all",
+        }
+    ]
+    for column_slug in columns:
+        options.append(
+            {
+                "value": f"kanban:{column_slug}",
+                "label": KANBAN_COLUMN_LABELS.get(column_slug, column_slug),
+                "kind": "kanban",
+                "icon": KANBAN_COLUMN_ICONS.get(column_slug),
+                "target_status": KANBAN_COLUMN_TARGET_STATUSES.get(column_slug),
+            }
+        )
+    return options
+
+
+def _normalize_candidate_state_filters(
+    *,
+    state_filters: Optional[Sequence[str]],
+    statuses: Optional[Sequence[str]],
+) -> Tuple[List[str], List[str]]:
+    normalized_state_filters: List[str] = []
+    normalized_statuses: List[str] = []
+
+    for raw_value in state_filters or []:
+        normalized = str(raw_value or "").strip().lower()
+        if not normalized:
+            continue
+        if normalized.startswith(CANONICAL_STATE_FILTER_PREFIXES):
+            normalized_state_filters.append(normalized)
+        elif normalized in STATUS_DEFINITIONS:
+            normalized_statuses.append(normalized)
+
+    if normalized_state_filters:
+        return list(dict.fromkeys(normalized_state_filters)), list(dict.fromkeys(normalized_statuses))
+
+    for raw_value in statuses or []:
+        normalized = str(raw_value or "").strip().lower()
+        if not normalized:
+            continue
+        if normalized.startswith(CANONICAL_STATE_FILTER_PREFIXES):
+            normalized_state_filters.append(normalized)
+        elif normalized in STATUS_DEFINITIONS:
+            normalized_statuses.append(normalized)
+
+    return list(dict.fromkeys(normalized_state_filters)), list(dict.fromkeys(normalized_statuses))
+
+
+def _canonical_state_filter_expression(
+    token: str,
+    *,
+    status_case: Any,
+    test2_pass_expr: Any,
+    pending_slot_expr: Any,
+    booked_slot_expr: Any,
+    confirmed_slot_expr: Any,
+) -> Optional[Any]:
+    normalized = str(token or "").strip().lower()
+    if not normalized:
+        return None
+
+    if normalized == "kanban:incoming":
+        return status_case.in_(
+            [
+                "new",
+                "lead",
+                "contacted",
+                "invited",
+                "test1_completed",
+                "waiting_slot",
+                "stalled_waiting_slot",
+            ]
+        )
+    if normalized == "kanban:slot_pending":
+        return or_(status_case == literal("slot_pending"), pending_slot_expr)
+    if normalized == "kanban:interview_scheduled":
+        return or_(status_case == literal("interview_scheduled"), booked_slot_expr)
+    if normalized == "kanban:interview_confirmed":
+        return or_(status_case == literal("interview_confirmed"), confirmed_slot_expr)
+    if normalized == "kanban:test2_sent":
+        return and_(status_case == literal("test2_sent"), ~test2_pass_expr)
+    if normalized == "kanban:test2_completed":
+        return or_(
+            status_case == literal("test2_completed"),
+            and_(status_case == literal("test2_sent"), test2_pass_expr),
+        )
+    if normalized == "kanban:intro_day_scheduled":
+        return status_case == literal("intro_day_scheduled")
+    if normalized == "kanban:intro_day_confirmed_preliminary":
+        return status_case == literal("intro_day_confirmed_preliminary")
+    if normalized == "kanban:intro_day_confirmed_day_of":
+        return status_case == literal("intro_day_confirmed_day_of")
+
+    if normalized == "lifecycle:lead":
+        return status_case.in_(["new", "lead"])
+    if normalized == "lifecycle:screening":
+        return status_case.in_(["contacted", "invited", "test1_completed"])
+    if normalized == "lifecycle:waiting_interview_slot":
+        return status_case.in_(["waiting_slot", "stalled_waiting_slot"])
+    if normalized == "lifecycle:interview":
+        return or_(
+            status_case.in_(["slot_pending", "interview_scheduled", "interview_confirmed"]),
+            pending_slot_expr,
+            booked_slot_expr,
+            confirmed_slot_expr,
+        )
+    if normalized == "lifecycle:test2":
+        return and_(status_case == literal("test2_sent"), ~test2_pass_expr)
+    if normalized == "lifecycle:waiting_intro_day":
+        return or_(
+            status_case == literal("test2_completed"),
+            and_(status_case == literal("test2_sent"), test2_pass_expr),
+        )
+    if normalized == "lifecycle:intro_day":
+        return status_case.in_(
+            [
+                "intro_day_scheduled",
+                "intro_day_confirmed_preliminary",
+                "intro_day_confirmed_day_of",
+            ]
+        )
+    if normalized == "lifecycle:closed":
+        return status_case.in_(
+            [
+                "hired",
+                "not_hired",
+                "interview_declined",
+                "test2_failed",
+                "intro_day_declined_invitation",
+                "intro_day_declined_day_of",
+            ]
+        )
+
+    if normalized == "worklist:incoming":
+        return or_(
+            status_case.in_(
+                [
+                    "new",
+                    "lead",
+                    "contacted",
+                    "invited",
+                    "test1_completed",
+                    "waiting_slot",
+                    "stalled_waiting_slot",
+                ]
+            ),
+            status_case == literal("test2_completed"),
+            and_(status_case == literal("test2_sent"), test2_pass_expr),
+        )
+    if normalized == "worklist:today":
+        return or_(booked_slot_expr, confirmed_slot_expr)
+    if normalized == "worklist:awaiting_candidate":
+        return status_case.in_(["interview_scheduled", "intro_day_scheduled"])
+    if normalized == "worklist:awaiting_recruiter":
+        return status_case.in_(["slot_pending", "test2_sent", "test2_completed"])
+    if normalized == "worklist:closed":
+        return _canonical_state_filter_expression(
+            "lifecycle:closed",
+            status_case=status_case,
+            test2_pass_expr=test2_pass_expr,
+            pending_slot_expr=pending_slot_expr,
+            booked_slot_expr=booked_slot_expr,
+            confirmed_slot_expr=confirmed_slot_expr,
+        )
+
+    return None
+
 TEST_STATUS_LABELS: Dict[str, Dict[str, str]] = {
     "passed": {"label": "Пройден", "icon": "✅"},
     "failed": {"label": "Не пройден", "icon": "❌"},
@@ -1302,6 +1515,7 @@ async def list_candidates(
     has_messages: Optional[bool],
     stage: Optional[str] = None,
     statuses: Optional[Sequence[str]] = None,
+    state_filters: Optional[Sequence[str]] = None,
     recruiter_id: Optional[int] = None,
     city_ids: Optional[Sequence[int]] = None,
     date_from: Optional[datetime] = None,
@@ -1323,9 +1537,10 @@ async def list_candidates(
         else:
             raise RuntimeError("principal is required for list_candidates")
 
-    normalized_statuses: List[str] = [
-        slug for slug in (statuses or []) if slug in STATUS_DEFINITIONS
-    ]
+    normalized_state_filters, normalized_statuses = _normalize_candidate_state_filters(
+        state_filters=state_filters,
+        statuses=statuses,
+    )
     test1_status = (test1_status or '').strip().lower() or None
     test2_status = (test2_status or '').strip().lower() or None
     sort_key = (sort or 'event').strip().lower() or 'event'
@@ -1605,7 +1820,6 @@ async def list_candidates(
         ).label('primary_event_at')
 
         normalized_statuses = [slug for slug in normalized_statuses if slug in allowed_with_terminal]
-        status_filter_values = normalized_statuses or (pipeline_statuses or ["__unreachable__"])
         upcoming_slot_expr = exists(
             select(1)
             .where(
@@ -1615,18 +1829,37 @@ async def list_candidates(
             )
             .correlate(User)
         )
-        # Показываем: (а) статусы в воронке, (б) кандидатов с назначенным слотом в текущей воронке,
-        # (в) "новых" кандидатов, у которых уже есть слот.
-        conditions.append(
-            or_(
-                status_case.in_(status_filter_values),
-                and_(
-                    upcoming_slot_expr,
-                    status_case.in_(list(INTERVIEW_SLOT_FALLBACK_STATUSES)),
-                ),
-                and_(status_case == literal('new'), has_slot_expr),
+        canonical_filter_clauses = [
+            clause
+            for clause in (
+                _canonical_state_filter_expression(
+                    token,
+                    status_case=status_case,
+                    test2_pass_expr=test2_pass_expr,
+                    pending_slot_expr=pending_slot_expr,
+                    booked_slot_expr=booked_slot_expr,
+                    confirmed_slot_expr=confirmed_slot_expr,
+                )
+                for token in normalized_state_filters
             )
-        )
+            if clause is not None
+        ]
+        if canonical_filter_clauses:
+            conditions.append(or_(*canonical_filter_clauses))
+        else:
+            status_filter_values = normalized_statuses or (pipeline_statuses or ["__unreachable__"])
+            # Показываем: (а) статусы в воронке, (б) кандидатов с назначенным слотом в текущей воронке,
+            # (в) "новых" кандидатов, у которых уже есть слот.
+            conditions.append(
+                or_(
+                    status_case.in_(status_filter_values),
+                    and_(
+                        upcoming_slot_expr,
+                        status_case.in_(list(INTERVIEW_SLOT_FALLBACK_STATUSES)),
+                    ),
+                    and_(status_case == literal('new'), has_slot_expr),
+                )
+            )
 
         if recruiter_id is not None:
             conditions.append(
@@ -1913,6 +2146,13 @@ async def list_candidates(
                 upcoming_slot_map[candidate_id_key] = upcoming_slot
                 stage_map[candidate_id_key] = _stage_label(latest_slot, now)
 
+        assignments_by_candidate = await _load_slot_assignment_maps(
+            session,
+            candidate_ids=candidate_ids,
+            telegram_ids=telegram_ids,
+            telegram_to_candidate=telegram_to_candidate,
+        )
+
         responsible_recruiters: Dict[int, Recruiter] = {}
         responsible_ids = {
             int(user.responsible_recruiter_id)
@@ -1939,6 +2179,13 @@ async def list_candidates(
 
     items: List[CandidateRow] = []
     candidate_cards: List[Dict[str, Any]] = []
+    active_intro_day_statuses = {
+        SlotStatus.BOOKED,
+        SlotStatus.PENDING,
+        SlotStatus.CONFIRMED,
+        SlotStatus.CONFIRMED_BY_CANDIDATE,
+    }
+    intro_day_cutoff = now - timedelta(hours=1)
 
     for user in users:
         tests_total, avg_score = stats_map.get(user.id, (0, None))
@@ -2001,6 +2248,50 @@ async def list_candidates(
             t2_status_value = 'in_progress' if test2_sent else 'not_started'
 
         telemost_url, telemost_source = _resolve_telemost_url(slots_by_candidate.get(user.candidate_id, []))
+        candidate_slots = slots_by_candidate.get(
+            user.candidate_id or telegram_to_candidate.get(user.telegram_id),
+            [],
+        )
+        candidate_status_obj = getattr(user, "candidate_status", None)
+        has_intro_day_slot = any(
+            (slot.purpose or "").lower() == "intro_day"
+            and (slot.status or "").lower() in active_intro_day_statuses
+            and getattr(slot, "start_utc", None)
+            and slot.start_utc >= intro_day_cutoff
+            for slot in candidate_slots
+        )
+        test2_passed = t2_status_value == 'passed'
+        action_status = candidate_status_obj
+        if candidate_status_obj is None:
+            if t2_status_value == 'passed':
+                action_status = CandidateStatus.TEST2_COMPLETED
+            elif t2_status_value == 'failed':
+                action_status = CandidateStatus.TEST2_FAILED
+        elif candidate_status_obj in {
+            CandidateStatus.TEST2_SENT,
+            CandidateStatus.TEST2_COMPLETED,
+        }:
+            if t2_status_value == 'passed' and candidate_status_obj == CandidateStatus.TEST2_SENT:
+                action_status = CandidateStatus.TEST2_COMPLETED
+            elif t2_status_value == 'failed':
+                action_status = CandidateStatus.TEST2_FAILED
+        candidate_actions = get_candidate_actions(
+            action_status,
+            has_upcoming_slot=upcoming_slot is not None,
+            has_test2_passed=test2_passed,
+            has_intro_day_slot=has_intro_day_slot,
+        )
+        state_contract = build_candidate_state_contract(
+            candidate=user,
+            candidate_actions=candidate_actions,
+            slots=candidate_slots,
+            slot_assignments=assignments_by_candidate.get(str(user.candidate_id or ""), []),
+            pending_slot_request=candidate_journey.get('pending_slot_request'),
+            legacy_status_slug=status_slug if status_slug != 'new' else None,
+            test2_status=t2_status_value,
+            has_intro_day_slot=has_intro_day_slot,
+            now=now,
+        )
 
         primary_dt = primary_event_by_user.get(user.id)
         if primary_dt is None and upcoming_slot and upcoming_slot.start_utc:
@@ -2061,6 +2352,12 @@ async def list_candidates(
                 'final_outcome_reason': candidate_journey.get('final_outcome_reason'),
                 'pending_slot_request': candidate_journey.get('pending_slot_request'),
                 'manual_mode': candidate_journey.get('manual_mode'),
+                'state_contract_version': state_contract.get('version'),
+                'lifecycle_summary': state_contract.get('lifecycle_summary'),
+                'scheduling_summary': state_contract.get('scheduling_summary'),
+                'candidate_next_action': state_contract.get('candidate_next_action'),
+                'operational_summary': state_contract.get('operational_summary'),
+                'state_reconciliation': state_contract.get('reconciliation'),
                 'tests': {
                     'test1': {
                         'status': t1_status,
@@ -2076,10 +2373,7 @@ async def list_candidates(
                 'stage': stage_value,
                 'upcoming_slot': upcoming_slot,
                 'latest_slot': latest_slot,
-                'slots': slots_by_candidate.get(
-                    user.candidate_id or telegram_to_candidate.get(user.telegram_id),
-                    [],
-                ),
+                'slots': candidate_slots,
                 'messages_total': messages_total,
                 'primary_event_at': primary_dt,
                 'group': {
@@ -2100,12 +2394,29 @@ async def list_candidates(
 
     candidate_cards = [card for card in candidate_cards if card['status']['slug'] in allowed_with_terminal]
     items = [row for row in items if row.status_slug in allowed_with_terminal]
+    kanban_column_order = {
+        slug: idx for idx, slug in enumerate(KANBAN_PIPELINE_COLUMNS.get(pipeline_slug, []))
+    }
+    kanban_totals: Dict[str, int] = defaultdict(int)
+    worklist_totals: Dict[str, int] = defaultdict(int)
+    for card in candidate_cards:
+        operational_summary = card.get('operational_summary') or {}
+        kanban_column = operational_summary.get('kanban_column')
+        if isinstance(kanban_column, str) and kanban_column:
+            kanban_totals[kanban_column] += 1
+        worklist_bucket = card.get('candidate_next_action', {}).get('worklist_bucket')
+        if isinstance(worklist_bucket, str) and worklist_bucket:
+            worklist_totals[worklist_bucket] += 1
 
     list_groups: OrderedDict[str, Dict[str, Any]] = OrderedDict()
     for card in sorted(
         candidate_cards,
         key=lambda item: (
             item['group']['date'] or date.max,
+            kanban_column_order.get(
+                ((item.get('operational_summary') or {}).get('kanban_column')),
+                len(kanban_column_order),
+            ),
             STATUS_ORDER.get(item['status']['slug'], 0),
             item['fio'],
         ),
@@ -2122,20 +2433,25 @@ async def list_candidates(
         group['candidates'].append(card)
 
     kanban_columns: List[Dict[str, Any]] = []
-    for slug in pipeline_statuses:
-        meta = STATUS_DEFINITIONS.get(slug)
-        if not meta:
-            continue
-        column_cards = [card for card in candidate_cards if card['status']['slug'] == slug]
+    for slug in KANBAN_PIPELINE_COLUMNS.get(pipeline_slug, []):
+        column_cards = [
+            card
+            for card in candidate_cards
+            if (card.get('operational_summary') or {}).get('kanban_column') == slug
+        ]
         kanban_columns.append(
             {
                 'slug': slug,
-                'label': meta['label'],
-                'icon': meta['icon'],
-                'tone': meta.get('tone', 'info'),
-                'total': status_totals.get(slug, 0),
+                'label': KANBAN_COLUMN_LABELS.get(slug, slug),
+                'icon': KANBAN_COLUMN_ICONS.get(slug, ''),
+                'tone': 'info',
+                'target_status': KANBAN_COLUMN_TARGET_STATUSES.get(slug),
+                'total': kanban_totals.get(slug, 0),
                 'candidates': column_cards,
-                'droppable': slug in droppable_statuses,
+                'droppable': (
+                    KANBAN_COLUMN_TARGET_STATUSES.get(slug) in droppable_statuses
+                    and slug in KANBAN_CANONICAL_MOVE_COLUMNS
+                ),
             }
         )
 
@@ -2249,8 +2565,10 @@ async def list_candidates(
             'rating': rating or '',
             'has_tests': has_tests,
             'has_messages': has_messages,
-            'stage': stage_value,
+            'stage': stage,
             'statuses': list(normalized_statuses),
+            'state': list(normalized_state_filters),
+            'state_options': _state_filter_options_for_pipeline(pipeline_slug),
             'recruiter_id': recruiter_id,
             'city_ids': list(city_ids or []),
             'date_from': range_start_utc,
@@ -2265,7 +2583,7 @@ async def list_candidates(
             'list': list_groups,
             'kanban': {
                 'columns': kanban_columns,
-                'status_totals': status_totals,
+                'status_totals': dict(kanban_totals),
                 'stage_totals': stage_totals,
             },
             'calendar': {
@@ -2281,6 +2599,8 @@ async def list_candidates(
         'summary': {
             'status_totals': stage_totals,
             'raw_status_totals': status_totals,
+            'worklist_totals': dict(worklist_totals),
+            'kanban_totals': dict(kanban_totals),
             'funnel': funnel_summary,
             'today': today_summary,
             'upcoming': upcoming_preview,
@@ -2775,14 +3095,19 @@ async def update_candidate_status(
             elif target_status in STATUSES_ARCHIVE_ON_DECLINE:
                 user.is_active = False
 
-            # hh.ru sync: dispatch status change to n8n if enabled
+            # hh.ru sync: enqueue CRM-master outbound sync when enabled
             if get_settings().hh_sync_enabled and target_status is not None:
                 try:
-                    from backend.domain.hh_sync.dispatcher import dispatch_hh_status_sync
-                    await dispatch_hh_status_sync(user, target_status, session=session)
+                    from backend.domain.hh_integration.outbound import enqueue_candidate_status_sync
+
+                    await enqueue_candidate_status_sync(
+                        session,
+                        candidate=user,
+                        target_status=target_status,
+                    )
                 except Exception:
                     logger.exception(
-                        "hh_sync: failed to dispatch status sync",
+                        "hh_sync: failed to enqueue direct HH status sync",
                         extra={"candidate_id": user.id, "status": normalized},
                     )
 
@@ -2933,6 +3258,19 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             slot.start_utc = _ensure_aware(slot.start_utc)
             slot.test2_sent_at = _ensure_aware(getattr(slot, "test2_sent_at", None))
         upcoming_slot = next((slot for slot in reversed(slots) if slot.start_utc and slot.start_utc >= now), None)
+        slot_assignments = (
+            await session.execute(
+                select(SlotAssignment)
+                .options(selectinload(SlotAssignment.slot))
+                .where(
+                    or_(
+                        SlotAssignment.candidate_id == user.candidate_id,
+                        SlotAssignment.candidate_tg_id == user.telegram_id if user.telegram_id is not None else false(),
+                    )
+                )
+                .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+            )
+        ).scalars().all()
 
         # Use candidate_status field for stage label
         candidate_status = getattr(user, "candidate_status", None)
@@ -3077,37 +3415,6 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         if getattr(user, "responsible_recruiter_id", None):
             responsible_recruiter = await session.get(Recruiter, user.responsible_recruiter_id)
 
-        # Autofix статус, если результат теста выше, но статус ещё не был закреплён вручную
-        if test2_status == "passed" and candidate_status in {
-            CandidateStatus.TEST2_SENT,
-            None,
-        }:
-            try:
-                await _candidate_status_service.force(
-                    user,
-                    CandidateStatus.TEST2_COMPLETED,
-                    reason="autofix:test2_passed",
-                )
-                user.is_active = True
-                candidate_status = user.candidate_status
-                candidate_status_slug = candidate_status.value if candidate_status else None
-                await session.commit()
-                await log_audit_action(
-                    "candidate_status_autofix",
-                    "candidate",
-                    user.id,
-                    changes={
-                        "from": "legacy_or_failed",
-                        "to": CandidateStatus.TEST2_COMPLETED.value,
-                        "source": "test2_result_passed",
-                    },
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to autofix candidate status after Test2 pass",
-                    extra={"candidate_id": user.id, "status": str(candidate_status)},
-                )
-
         # Check if candidate needs intro day (reuse variables calculated earlier)
         status_requires_intro_day = (
             candidate_status in STATUSES_PENDING_INTRO_DAY if candidate_status else False
@@ -3184,6 +3491,17 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             candidate_status_display = candidate_journey.get("state_label") or journey_state_label(
                 candidate_journey.get("state")
             )
+        state_contract = build_candidate_state_contract(
+            candidate=user,
+            candidate_actions=candidate_actions,
+            slots=slots,
+            slot_assignments=slot_assignments,
+            pending_slot_request=candidate_journey.get("pending_slot_request"),
+            legacy_status_slug=candidate_status_slug,
+            test2_status=test2_status,
+            has_intro_day_slot=has_intro_day_slot,
+            now=now,
+        )
 
     # Prepare pipeline stages and allowed next statuses for Status Center UI
     pipeline_stages = _build_pipeline_stages(candidate_status)
@@ -3251,6 +3569,12 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         "final_outcome_reason": candidate_journey.get("final_outcome_reason"),
         "pending_slot_request": candidate_journey.get("pending_slot_request"),
         "manual_mode": candidate_journey.get("manual_mode"),
+        "state_contract_version": state_contract.get("version"),
+        "lifecycle_summary": state_contract.get("lifecycle_summary"),
+        "scheduling_summary": state_contract.get("scheduling_summary"),
+        "candidate_next_action": state_contract.get("candidate_next_action"),
+        "operational_summary": state_contract.get("operational_summary"),
+        "state_reconciliation": state_contract.get("reconciliation"),
     }
 
 
@@ -3783,6 +4107,12 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "final_outcome_reason": detail.get("final_outcome_reason"),
         "pending_slot_request": detail.get("pending_slot_request"),
         "manual_mode": detail.get("manual_mode"),
+        "state_contract_version": detail.get("state_contract_version"),
+        "lifecycle_summary": detail.get("lifecycle_summary"),
+        "scheduling_summary": detail.get("scheduling_summary"),
+        "candidate_next_action": detail.get("candidate_next_action"),
+        "operational_summary": detail.get("operational_summary"),
+        "state_reconciliation": detail.get("state_reconciliation"),
         "reschedule_request": reschedule_payload,
         "stats": detail.get("stats", {}),
         "telemost_url": detail.get("telemost_url"),

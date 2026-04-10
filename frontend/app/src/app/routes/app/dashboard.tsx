@@ -2,6 +2,12 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
+  CandidateIdentityBlock,
+  RecruiterActionBlock,
+  RecruiterRiskBanner,
+  RecruiterStateContext,
+} from '@/app/components/RecruiterState'
+import {
   fetchCurrentKpis,
   fetchDashboardIncoming,
   fetchDashboardRecruiters,
@@ -28,6 +34,12 @@ import { fadeIn, listItem, stagger } from '@/shared/motion'
 import { resolveIncomingDemoCount, withDemoIncomingCandidates } from './incoming-demo'
 import { IncomingPage } from './incoming'
 import { DashboardMetric } from './DashboardMetric'
+import {
+  buildCandidateSurfaceState,
+  compareIncomingCandidates,
+  matchesDashboardIncomingFilter,
+  summarizeIncomingCandidates,
+} from './candidate-state.adapter'
 import {
   dashboardTrendTone,
   formatAiRecommendation,
@@ -68,6 +80,115 @@ const LeaderboardItemCard = memo(function LeaderboardItemCard({
           <span>Нанято: {item.hired_total}</span>
           <span>Отказ: {item.declined_total}</span>
         </div>
+      </div>
+    </article>
+  )
+})
+
+const DashboardTriageCard = memo(function DashboardTriageCard({
+  candidate,
+  isExpanded,
+  onToggleExpanded,
+  onSchedule,
+  onReject,
+}: {
+  candidate: IncomingCandidate
+  isExpanded: boolean
+  onToggleExpanded: () => void
+  onSchedule: () => void
+  onReject: () => void
+}) {
+  const state = buildCandidateSurfaceState(candidate)
+  const isNew = candidate.last_message_at
+    ? Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
+    : false
+
+  return (
+    <article className="glass glass--subtle incoming-card dashboard-triage-card" data-testid="dashboard-triage-card">
+      <div className="incoming-card__main">
+        <div className="incoming-card__main-content">
+          <CandidateIdentityBlock
+            title={candidate.name || 'Без имени'}
+            subtitle={candidate.city || 'Город не указан'}
+            aside={(
+              <span className="incoming-card__waiting">
+                {candidate.waiting_hours != null ? `Ждет ${candidate.waiting_hours} ч` : 'Без ожидания'}
+              </span>
+            )}
+            meta={(
+              <>
+                {candidate.responsible_recruiter_name ? `Ответственный: ${candidate.responsible_recruiter_name}` : 'Без ответственного'}
+                {isNew ? ' · NEW' : ''}
+              </>
+            )}
+          />
+        </div>
+      </div>
+
+      <RecruiterActionBlock
+        label={state.nextActionLabel || 'Откройте профиль'}
+        explanation={state.nextActionExplanation || 'Следующий шаг уточняйте через карточку кандидата.'}
+        tone={state.nextActionTone}
+        enabled={state.nextActionEnabled}
+        badgeLabel={state.urgencyLabel}
+        compact
+      />
+
+      <RecruiterStateContext
+        bucketLabel={state.worklistBucketLabel}
+        contextLine={state.stateContextLine}
+        schedulingLine={state.schedulingContextLine}
+        compact
+      />
+
+      {state.riskLevel && state.riskTitle && state.riskMessage ? (
+        <RecruiterRiskBanner
+          level={state.riskLevel}
+          title={state.riskTitle}
+          message={state.riskMessage}
+          recoveryHint={state.riskRecoveryHint}
+          count={state.riskCount > 0 ? state.riskCount : undefined}
+          compact
+        />
+      ) : null}
+
+      {candidate.ai_risk_hint && (
+        <div className="incoming-card__note incoming-card__note--muted">
+          AI: {candidate.ai_risk_hint}
+        </div>
+      )}
+
+      {candidate.last_message && (
+        <div className={`incoming-card__note incoming-card__note--message ${!isExpanded ? 'incoming-card__meta-collapsed' : ''}`}>
+          💬 {candidate.last_message}
+        </div>
+      )}
+
+      {isExpanded && candidate.state_reconciliation?.issues?.length ? (
+        <div className="incoming-card__note incoming-card__note--highlight">
+          {candidate.state_reconciliation.issues.map((issue, index) => (
+            <div key={`${candidate.id}-issue-${index}`}>{issue.message || issue.code || 'Требуется разбор состояния'}</div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="incoming-card__actions">
+        <button className="ui-btn ui-btn--primary ui-btn--sm" type="button" onClick={onSchedule}>
+          Согласовать время
+        </button>
+        <Link
+          className="ui-btn ui-btn--ghost ui-btn--sm"
+          to="/app/candidates/$candidateId"
+          params={{ candidateId: String(candidate.id) }}
+        >
+          Профиль
+        </Link>
+        <button className="ui-btn ui-btn--danger ui-btn--sm" type="button" onClick={onReject}>
+          Отказать
+        </button>
+        <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={onToggleExpanded}>
+          {isExpanded ? 'Скрыть детали' : 'Подробнее'}
+        </button>
       </div>
     </article>
   )
@@ -129,7 +250,7 @@ export function DashboardPage() {
   const incomingQuery = useQuery<IncomingPayload>({
     queryKey: ['dashboard-incoming'],
     queryFn: () => fetchDashboardIncoming(INCOMING_FETCH_LIMIT),
-    enabled: false,
+    enabled: profileReady && Boolean(isAdmin),
     staleTime: 120_000,
     refetchInterval: 120_000,
     refetchIntervalInBackground: false,
@@ -279,23 +400,7 @@ export function DashboardPage() {
         return false
       }
 
-      if (incomingFilter === 'new') {
-        if (!candidate.last_message_at) return false
-        const ageMs = now - new Date(candidate.last_message_at).getTime()
-        if (!Number.isFinite(ageMs) || ageMs > 24 * 60 * 60 * 1000) return false
-      }
-
-      if (incomingFilter === 'stalled') {
-        const stalledByStatus = candidate.status_slug === 'stalled_waiting_slot'
-        const stalledByTime = (candidate.waiting_hours || 0) >= 24
-        if (!stalledByStatus && !stalledByTime) return false
-      }
-
-      if (incomingFilter === 'pending' && candidate.status_slug !== 'slot_pending') {
-        return false
-      }
-
-      if (incomingFilter === 'requested_other_time' && !candidate.requested_another_time) {
+      if (!matchesDashboardIncomingFilter(candidate, incomingFilter, now)) {
         return false
       }
 
@@ -304,11 +409,15 @@ export function DashboardPage() {
         candidate.name,
         candidate.city,
         candidate.status_display,
+        candidate.lifecycle_summary?.stage_label,
+        candidate.scheduling_summary?.status_label,
+        candidate.candidate_next_action?.primary_action?.label,
         candidate.telegram_username,
         String(candidate.telegram_id || ''),
         candidate.last_message,
         candidate.availability_note,
         candidate.requested_another_time_comment,
+        candidate.state_reconciliation?.issues?.map((issue) => issue.message).filter(Boolean).join(' '),
         candidate.responsible_recruiter_name,
       ]
         .filter(Boolean)
@@ -317,43 +426,65 @@ export function DashboardPage() {
       return haystack.includes(search)
     })
 
-    filtered.sort((a, b) => {
-      const aRequested = a.requested_another_time ? 1 : 0
-      const bRequested = b.requested_another_time ? 1 : 0
-      if (bRequested !== aRequested) return bRequested - aRequested
-
-      if (incomingSort === 'name') {
-        return (a.name || '').localeCompare(b.name || '', 'ru')
-      }
-      if (incomingSort === 'recent') {
-        const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
-        const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
-        return bTime - aTime
-      }
-      const aw = a.waiting_hours ?? -1
-      const bw = b.waiting_hours ?? -1
-      if (bw !== aw) return bw - aw
-      const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0
-      const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0
-      return bTime - aTime
-    })
+    filtered.sort((a, b) => compareIncomingCandidates(a, b, incomingSort))
 
     return filtered
   }, [incomingBaseItems, incomingCityFilter, incomingFilter, incomingSearch, incomingSort])
 
   const incomingStats = useMemo(() => {
-    const base = incomingBaseItems
-    const total = base.length
-    const pending = base.filter((item) => item.status_slug === 'slot_pending').length
-    const requested = base.filter((item) => Boolean(item.requested_another_time)).length
-    const stalled = base.filter((item) => item.status_slug === 'stalled_waiting_slot' || (item.waiting_hours || 0) >= 24).length
-    const fresh = base.filter((item) => {
-      if (!item.last_message_at) return false
-      const ageMs = Date.now() - new Date(item.last_message_at).getTime()
-      return Number.isFinite(ageMs) && ageMs <= 24 * 60 * 60 * 1000
-    }).length
-    return { total, pending, requested, stalled, fresh }
+    const summary = summarizeIncomingCandidates(incomingBaseItems)
+    return {
+      total: summary.total,
+      pending: summary.pending,
+      requested: summary.requested,
+      stalled: summary.stalled,
+      fresh: summary.fresh,
+    }
   }, [incomingBaseItems])
+  const triageItems = useMemo(
+    () => incomingItems.map((candidate) => ({ candidate, state: buildCandidateSurfaceState(candidate) })),
+    [incomingItems],
+  )
+  const triageLanes = useMemo(() => {
+    const grouped = {
+      action_now: [] as typeof triageItems,
+      waiting: [] as typeof triageItems,
+      review: [] as typeof triageItems,
+    }
+
+    for (const item of triageItems) {
+      grouped[item.state.triageLane].push(item)
+    }
+
+    return [
+      {
+        key: 'action_now' as const,
+        title: 'Требует действия сейчас',
+        description: 'Кандидаты, где следующий шаг уже определен и не стоит откладывать.',
+        items: grouped.action_now,
+      },
+      {
+        key: 'waiting' as const,
+        title: 'Ждет кандидата / внешнего ответа',
+        description: 'Поток движется, но сейчас важнее мониторить, а не дергать вручную.',
+        items: grouped.waiting,
+      },
+      {
+        key: 'review' as const,
+        title: 'Требует разбора / есть конфликт',
+        description: 'Блокировки, рассинхрон и scheduling-конфликты, которые нельзя провести вслепую.',
+        items: grouped.review,
+      },
+    ]
+  }, [triageItems])
+  const triageSummary = useMemo(
+    () => ({
+      action_now: triageLanes.find((lane) => lane.key === 'action_now')?.items.length || 0,
+      waiting: triageLanes.find((lane) => lane.key === 'waiting')?.items.length || 0,
+      review: triageLanes.find((lane) => lane.key === 'review')?.items.length || 0,
+    }),
+    [triageLanes],
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined' || isAdmin) return
@@ -514,6 +645,119 @@ export function DashboardPage() {
             </label>
           </div>
         </header>
+      )}
+
+      {isAdmin && (
+        <section className="glass panel app-page__section" data-testid="dashboard-triage-console">
+          <div className="dashboard-section-header app-page__section-head">
+            <div>
+              <h2 className="section-title">Control Tower</h2>
+              <p className="subtitle">Сначала разберите следующий шаг по кандидатам, потом смотрите на KPI.</p>
+            </div>
+            <div className="toolbar toolbar--compact">
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => incomingQuery.refetch()}>
+                Обновить очередь
+              </button>
+              <Link className="ui-btn ui-btn--ghost ui-btn--sm" to="/app/incoming">
+                Полная triage-консоль
+              </Link>
+            </div>
+          </div>
+
+          <div className="toolbar toolbar--compact">
+            <span className="cd-chip">Сейчас: {triageSummary.action_now}</span>
+            <span className="cd-chip">В ожидании: {triageSummary.waiting}</span>
+            <span className="cd-chip">Требуют разбора: {triageSummary.review}</span>
+            <span className="cd-chip">Всего в потоке: {incomingItems.length}</span>
+          </div>
+
+          <div className="incoming-toolbar dashboard-incoming__toolbar ui-filter app-page__toolbar">
+            <div className="incoming-toolbar__stats">
+              <strong>{incomingItems.length}</strong>
+              <span className="text-muted text-sm">из {incomingBaseItems.length} кандидатов</span>
+            </div>
+            <div className="incoming-toolbar__controls">
+              <input
+                className="incoming-toolbar__search"
+                type="search"
+                placeholder="Поиск: имя, город, TG, комментарий..."
+                value={incomingSearch}
+                onChange={(e) => setIncomingSearch(e.target.value)}
+              />
+              <select
+                className="incoming-toolbar__select"
+                value={incomingCityFilter}
+                onChange={(e) => setIncomingCityFilter(e.target.value)}
+              >
+                <option value="all">Все города</option>
+                {incomingCityOptions.map((city) => (
+                  <option key={city.id} value={String(city.id)}>
+                    {city.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="incoming-toolbar__select"
+                value={incomingFilter}
+                onChange={(e) => setIncomingFilter(e.target.value as IncomingFilter)}
+              >
+                <option value="all">Все статусы</option>
+                <option value="pending">На согласовании</option>
+                <option value="requested_other_time">Запросили другое время</option>
+                <option value="stalled">Застряли {'>'}24ч</option>
+                <option value="new">NEW (24ч)</option>
+              </select>
+              <select
+                className="incoming-toolbar__select"
+                value={incomingSort}
+                onChange={(e) => setIncomingSort(e.target.value as 'waiting' | 'recent' | 'name')}
+              >
+                <option value="waiting">Сначала кто дольше ждет</option>
+                <option value="recent">Последние сообщения</option>
+                <option value="name">По имени</option>
+              </select>
+            </div>
+          </div>
+
+          {incomingQuery.isLoading && <p className="subtitle">Загрузка очереди…</p>}
+          {incomingQuery.isError && <ApiErrorBanner error={incomingQuery.error} title="Ошибка загрузки triage-очереди" />}
+          {incomingQuery.data && triageItems.length === 0 && (
+            <div className="dashboard-incoming__empty-state">
+              <p className="subtitle">По текущим фильтрам кандидатов нет.</p>
+            </div>
+          )}
+          {incomingQuery.data && triageItems.length > 0 && (
+            <div className="incoming-lanes" data-testid="dashboard-triage-lanes">
+              {triageLanes.map((lane) => (
+                <section key={lane.key} className={`glass glass--subtle incoming-lane incoming-lane--${lane.key}`}>
+                  <header className="incoming-lane__header">
+                    <div>
+                      <h3 className="incoming-lane__title">{lane.title}</h3>
+                      <p className="incoming-lane__subtitle">{lane.description}</p>
+                    </div>
+                    <span className="incoming-lane__count">{lane.items.length}</span>
+                  </header>
+                  {lane.items.length === 0 ? (
+                    <div className="incoming-lane__empty">Нет кандидатов в этой зоне.</div>
+                  ) : (
+                    <div className="incoming-grid">
+                      {lane.items.slice(0, 4).map(({ candidate }) => (
+                        <DashboardTriageCard
+                          key={candidate.id}
+                          candidate={candidate}
+                          isExpanded={Boolean(expandedIncomingCards[candidate.id])}
+                          onToggleExpanded={() => toggleIncomingCardExpanded(candidate.id)}
+                          onSchedule={() => openIncomingSchedule(candidate)}
+                          onReject={() => rejectCandidate.mutate(candidate.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {isAdmin && (
@@ -749,12 +993,7 @@ export function DashboardPage() {
                   <>
                     <div className="incoming-list incoming-list--fullscreen">
                       {incomingPageItems.map((candidate) => {
-                        const isRequested = Boolean(candidate.requested_another_time)
-                        const isPending = candidate.status_slug === 'slot_pending'
-                        const statusTone =
-                          isRequested ? 'warning' :
-                          isPending ? 'info' :
-                          candidate.status_slug === 'stalled_waiting_slot' ? 'danger' : 'muted'
+                        const state = buildCandidateSurfaceState(candidate)
                         const telegramUsername = candidate.telegram_username?.replace(/^@/, '')
                         const telegramLink = telegramUsername
                           ? `https://t.me/${telegramUsername}`
@@ -775,10 +1014,17 @@ export function DashboardPage() {
                             </div>
 
                             <div className="incoming-min-card__status-row">
-                              {candidate.status_display && (
-                                <span className={`status-pill status-pill--${statusTone}`}>{candidate.status_display}</span>
+                              <span className={`status-pill status-pill--${state.statusTone}`}>{state.statusLabel}</span>
+                              {state.schedulingLabel && (
+                                <span className={`status-pill status-pill--${state.schedulingTone || 'info'}`}>{state.schedulingLabel}</span>
                               )}
-                              {isRequested && <span className="status-pill status-pill--warning">Запросил другое время</span>}
+                              {state.nextActionLabel && (
+                                <span className={`status-pill status-pill--${state.nextActionTone}`}>{state.nextActionLabel}</span>
+                              )}
+                              {state.requestedOtherTime && <span className="status-pill status-pill--warning">Запросил другое время</span>}
+                              {state.hasReconciliationIssues && (
+                                <span className="status-pill status-pill--danger">Проверить состояние</span>
+                              )}
                               {candidate.responsible_recruiter_name && (
                                 <span className="status-pill status-pill--muted">Ответственный: {candidate.responsible_recruiter_name}</span>
                               )}
@@ -801,6 +1047,18 @@ export function DashboardPage() {
                             {candidate.ai_risk_hint && (
                               <div className="incoming-min-card__note incoming-min-card__note--block">
                                 <span>AI: {candidate.ai_risk_hint}</span>
+                              </div>
+                            )}
+
+                            {state.nextActionLabel && (
+                              <div className="incoming-min-card__note incoming-min-card__note--block">
+                                <span>Следующее действие: {state.nextActionLabel}</span>
+                              </div>
+                            )}
+
+                            {state.hasReconciliationIssues && state.reconciliationLabel && (
+                              <div className="incoming-min-card__note incoming-min-card__note--requested incoming-min-card__note--block">
+                                <span>⚠️ {state.reconciliationLabel}</span>
                               </div>
                             )}
 

@@ -1,5 +1,17 @@
 """Onboarding and recruiter entry flow services."""
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+from backend.core.db import async_session
+from backend.domain.candidates.models import User
+from backend.domain.candidates.portal_service import (
+    _mark_journey_event_once,
+    build_candidate_portal_journey,
+    build_candidate_public_portal_url,
+    ensure_candidate_portal_session,
+    resolve_candidate_activity_guard,
+)
+
 from . import base as _base
 
 for _name in dir(_base):
@@ -9,6 +21,54 @@ for _name in dir(_base):
 
 from .test1_flow import send_test1_question
 from .test2_flow import start_test2
+
+
+async def _send_active_candidate_summary(user_id: int, *, candidate: User) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            stored_candidate = await session.get(User, int(candidate.id))
+            if stored_candidate is None:
+                await get_bot().send_message(
+                    user_id,
+                    "Мы нашли ваш профиль, но не смогли восстановить текущий этап. Откройте кабинет кандидата чуть позже.",
+                )
+                return
+            journey = await ensure_candidate_portal_session(session, stored_candidate, entry_channel="telegram")
+            payload = await build_candidate_portal_journey(
+                session,
+                stored_candidate,
+                entry_channel="telegram",
+                journey=journey,
+            )
+            portal_url = build_candidate_public_portal_url(
+                candidate_uuid=str(stored_candidate.candidate_id or ""),
+                entry_channel="telegram",
+                source_channel="telegram_bot_start",
+                journey_session_id=int(journey.id),
+                session_version=int(journey.session_version or 1),
+            )
+
+    reply_markup = None
+    if portal_url:
+        reply_markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Открыть кабинет", web_app=WebAppInfo(url=portal_url))],
+                [InlineKeyboardButton(text="Открыть в браузере", url=portal_url)],
+            ]
+        )
+    history_items = list(((payload.get("history") or {}).get("items") or []))
+    latest_history = history_items[0]["title"] if history_items else None
+    lines = [
+        "У вас уже есть активность в системе. Повторно проходить Test 1 не нужно.",
+        f"Этап: {payload['journey'].get('current_step_label') or 'В работе'}",
+        f"Статус: {payload['candidate'].get('status_label') or 'Обновляется'}",
+        str(payload["journey"].get("next_action") or "Продолжайте текущий путь кандидата."),
+    ]
+    if latest_history:
+        lines.append(f"Последнее обновление: {latest_history}")
+    if portal_url:
+        lines.append("Откройте кабинет, чтобы увидеть историю этапов и актуальные детали.")
+    await get_bot().send_message(user_id, "\n".join(lines), reply_markup=reply_markup)
 
 async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     # Ensure we use the freshest question set after admin edits.
@@ -55,6 +115,22 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
         await candidate_services.set_conversation_mode(user_id, "flow")
     except Exception:  # pragma: no cover - best effort
         logger.debug("Failed to reset conversation mode for %s", user_id, exc_info=True)
+    existing_candidate = await candidate_services.get_user_by_telegram_id(user_id)
+    if existing_candidate is not None:
+        async with async_session() as session:
+            async with session.begin():
+                stored_candidate = await session.get(User, int(existing_candidate.id))
+                if stored_candidate is not None:
+                    journey = await ensure_candidate_portal_session(session, stored_candidate, entry_channel="telegram")
+                    guard = await resolve_candidate_activity_guard(
+                        session,
+                        stored_candidate,
+                        journey=journey,
+                        entry_channel="telegram",
+                    )
+                    if guard.blocked:
+                        await _send_active_candidate_summary(user_id, candidate=stored_candidate)
+                        return
     await state_manager.set(
         user_id,
         State(
@@ -86,6 +162,21 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
             candidate_id=candidate.id if candidate else None,
             metadata={"channel": "telegram"},
         )
+        if candidate is not None:
+            async with async_session() as session:
+                async with session.begin():
+                    stored_candidate = await session.get(User, int(candidate.id))
+                    if stored_candidate is not None:
+                        journey = await ensure_candidate_portal_session(session, stored_candidate, entry_channel="telegram")
+                        _mark_journey_event_once(
+                            stored_candidate,
+                            journey,
+                            flag_key="screening_started_event_logged_at",
+                            event_key="screening_started",
+                            summary="Кандидат начал анкету в Telegram.",
+                            stage="testing",
+                            payload={"source_channel": "telegram"},
+                        )
     except Exception:
         logger.exception("Failed to log TEST1_STARTED for user %s", user_id)
     intro = await _render_tpl(None, "t1_intro")
