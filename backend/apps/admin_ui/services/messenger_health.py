@@ -24,6 +24,7 @@ from backend.domain.candidates.models import (
     ChatMessageStatus,
     User,
 )
+from backend.domain.candidates.max_ownership import inspect_max_user_ownership
 from backend.domain.candidates.portal_service import (
     build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
@@ -187,6 +188,7 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         candidate = await session.get(User, candidate_id)
         if candidate is None:
             return None
+        ownership = await inspect_max_user_ownership(session, candidate.max_user_id)
 
         latest_invite = None
         if candidate.candidate_id:
@@ -290,6 +292,8 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         delivery_block_reason = str(portal_status.get("error") or "candidate_portal_public_url_invalid")
     elif not max_status.get("ready"):
         delivery_block_reason = str(max_status.get("error") or "max_entry_blocked")
+    elif ownership.status == "ambiguous":
+        delivery_block_reason = "max_ownership_ambiguous"
     elif not str(candidate.max_user_id or "").strip():
         delivery_block_reason = "max_not_linked"
     elif str(max_channel_state.get("status") or "").strip().lower() == "degraded":
@@ -313,6 +317,9 @@ async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | No
         "max": {
             "linked": bool(str(candidate.max_user_id or "").strip()),
             "max_user_id": str(candidate.max_user_id or "").strip() or None,
+            "ownership_status": ownership.status,
+            "ownership_candidate_ids": list(ownership.owner_candidate_ids),
+            "ownership_duplicate_count": max(0, ownership.owner_count - 1),
         },
         "active_invite": _serialize_invite(latest_invite, candidate=candidate),
         "last_inbound_at": _iso(last_inbound_at),

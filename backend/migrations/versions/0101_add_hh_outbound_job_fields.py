@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection
 from backend.migrations.utils import column_exists
 
 revision = "0101_add_hh_outbound_job_fields"
-down_revision = "0100_refresh_interview_confirmation_copy"
+down_revision = "0099a_refresh_interview_confirmation_copy"
 branch_labels = None
 depends_on = None
 

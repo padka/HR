@@ -162,6 +162,9 @@ sequenceDiagram
 - Only one active MAX invite is canonical per candidate. New admin rotation supersedes previous active invite instead of creating parallel active links.
 - Reuse of the same invite by the same `max_user_id` is idempotent. Reuse by another `max_user_id` is treated as conflict and must not create duplicate linking side effects.
 - MAX linking via signed portal token must resolve candidate identity without side effects first, then verify `journey_session_id` and `session_version` against the current active portal journey. Mismatch is rejected and audited as `portal_session_version_mismatch`; it must not mutate `max_user_id`, create chat rows, or advance journey state.
+- Reuse of the same `max_user_id` against another candidate is treated as ownership conflict. If the database already contains multiple candidates with the same `max_user_id`, MAX flow must stop with an explicit ambiguity outcome instead of selecting an arbitrary owner row.
+- MAX linking via signed portal token must resolve candidate identity without side effects first, then verify `journey_session_id` and `session_version` against the current active portal journey. Mismatch is rejected and audited as `portal_session_version_mismatch`; it must not mutate `max_user_id`, create chat rows, or advance journey state.
+- Reuse of the same `max_user_id` against another candidate is treated as ownership conflict. If the database already contains multiple candidates with the same `max_user_id`, MAX flow must stop with an explicit ambiguity outcome instead of selecting an arbitrary owner row.
 - `messenger_platform` is no longer silently overwritten on every MAX entry. Preferred channel changes only when candidate has no linked channel yet or an explicit operator action rotates ownership.
 - Recruiter controls are split:
   - `POST /api/candidates/{id}/channels/max-link` reissues access without deleting current progress and bumps `session_version`;

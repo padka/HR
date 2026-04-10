@@ -29,6 +29,7 @@ Read in this order:
 - Frontend SPA: `frontend/app/src/app/main.tsx`
 - Candidate portal: `frontend/app/src/app/routes/candidate/*`
 - Recruiter dashboard/chat: `frontend/app/src/app/routes/app/*`
+- MAX ownership guard and migration plan: `docs/architecture/max-ownership-guard-plan.md`
 
 ## Current migration anchors
 
