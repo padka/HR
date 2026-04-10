@@ -512,7 +512,21 @@ async def ensure_candidate_invite_token(
     channel: str = INVITE_CHANNEL_GENERIC,
 ) -> CandidateInviteToken:
     channel_value = normalize_invite_channel(channel)
-    existing = await get_latest_candidate_invite_token(session, candidate_id, channel=channel_value)
+    await session.scalar(
+        select(User.id)
+        .where(User.candidate_id == candidate_id)
+        .with_for_update()
+    )
+    existing = await session.scalar(
+        select(CandidateInviteToken)
+        .where(
+            CandidateInviteToken.candidate_id == candidate_id,
+            CandidateInviteToken.channel == channel_value,
+        )
+        .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
+        .limit(1)
+        .with_for_update()
+    )
     if existing is not None and (existing.status or INVITE_STATUS_ACTIVE) == INVITE_STATUS_ACTIVE:
         return existing
 

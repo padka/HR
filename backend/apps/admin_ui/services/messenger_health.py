@@ -158,7 +158,8 @@ def _serialize_invite(invite: CandidateInviteToken | None, *, candidate: User) -
 def _serialize_outbound_message(message: ChatMessage | None) -> dict[str, Any] | None:
     if message is None:
         return None
-    return {
+    payload = dict(message.payload_json or {}) if isinstance(message.payload_json, dict) else {}
+    serialized = {
         "id": int(message.id),
         "channel": str(message.channel or "telegram"),
         "status": str(message.status or "unknown"),
@@ -168,6 +169,17 @@ def _serialize_outbound_message(message: ChatMessage | None) -> dict[str, Any] |
         "author": message.author_label,
         "text": message.text or "",
     }
+    if str(payload.get("kind") or "").strip() == "portal_access_package":
+        serialized["portal_access"] = {
+            "invite_id": payload.get("invite_id"),
+            "journey_id": payload.get("journey_id"),
+            "session_version": payload.get("session_version"),
+            "restarted": bool(payload.get("restarted")),
+            "delivery_status": payload.get("delivery_status"),
+            "skipped_reason": payload.get("skipped_reason"),
+            "correlation_id": payload.get("correlation_id"),
+        }
+    return serialized
 
 
 async def get_candidate_channel_health(candidate_id: int) -> dict[str, Any] | None:

@@ -2729,9 +2729,13 @@ async def _record_candidate_portal_access_message(
     text: str,
     success: bool,
     error: str | None = None,
+    payload_meta: dict[str, Any] | None = None,
 ) -> None:
     async with async_session() as session:
         async with session.begin():
+            payload = {"kind": "portal_access_package"}
+            if payload_meta:
+                payload.update(payload_meta)
             session.add(
                 ChatMessage(
                     candidate_id=int(candidate_id),
@@ -2741,10 +2745,45 @@ async def _record_candidate_portal_access_message(
                     status=ChatMessageStatus.SENT.value if success else ChatMessageStatus.FAILED.value,
                     error=error,
                     author_label="System",
-                    payload_json={"kind": "portal_access_package"},
+                    payload_json=payload,
                     created_at=datetime.now(timezone.utc),
                 )
             )
+
+
+async def _audit_candidate_portal_access_delivery(
+    *,
+    candidate_id: int,
+    invite_id: int,
+    journey_id: int,
+    session_version: int,
+    restarted: bool,
+    delivery: dict[str, Any],
+) -> None:
+    delivery_status = str(delivery.get("status") or "unknown")
+    if delivery_status == "sent":
+        action = "candidate_portal_access_delivery_sent"
+    elif delivery_status.startswith("skipped") or delivery_status in {"not_linked", "adapter_unavailable"}:
+        action = "candidate_portal_access_delivery_skipped"
+    else:
+        action = "candidate_portal_access_delivery_failed"
+    await log_audit_action(
+        action,
+        "candidate",
+        candidate_id,
+        changes={
+            "channel": "max",
+            "invite_id": invite_id,
+            "journey_id": journey_id,
+            "session_version": session_version,
+            "restarted": restarted,
+            "delivery_status": delivery_status,
+            "attempted": bool(delivery.get("attempted")),
+            "sent": bool(delivery.get("sent")),
+            "skipped_reason": delivery.get("skipped_reason"),
+            "error": delivery.get("error"),
+        },
+    )
 
 
 async def _deliver_candidate_portal_access_package(
@@ -2753,11 +2792,23 @@ async def _deliver_candidate_portal_access_package(
     text: str,
     browser_link: str | None,
     mini_app_link: str | None,
+    invite_id: int,
+    journey_id: int,
+    session_version: int,
+    restarted: bool,
     delivery_allowed: bool,
     skip_reason: str | None = None,
 ) -> dict[str, Any]:
+    base_payload = {
+        "channel": "max",
+        "invite_id": invite_id,
+        "journey_id": journey_id,
+        "session_version": session_version,
+        "restarted": restarted,
+    }
     if not delivery_allowed:
         return {
+            **base_payload,
             "status": "skipped_by_preflight",
             "sent": False,
             "attempted": False,
@@ -2766,6 +2817,7 @@ async def _deliver_candidate_portal_access_package(
         }
     if not browser_link and not mini_app_link:
         return {
+            **base_payload,
             "status": "skipped_no_entry",
             "sent": False,
             "attempted": False,
@@ -2774,6 +2826,7 @@ async def _deliver_candidate_portal_access_package(
         }
     if not str(candidate.max_user_id or "").strip():
         return {
+            **base_payload,
             "status": "not_linked",
             "sent": False,
             "attempted": False,
@@ -2784,6 +2837,7 @@ async def _deliver_candidate_portal_access_package(
     adapter = await _ensure_max_access_adapter()
     if adapter is None:
         return {
+            **base_payload,
             "status": "adapter_unavailable",
             "sent": False,
             "attempted": False,
@@ -2791,29 +2845,47 @@ async def _deliver_candidate_portal_access_package(
             "skipped_reason": skip_reason or "max_adapter_unavailable",
         }
 
+    correlation_id = f"candidate-portal-access:{candidate.id}:{journey_id}:{session_version}:{invite_id}"
     try:
         result = await adapter.send_message(
             str(candidate.max_user_id),
             text,
             buttons=_candidate_portal_entry_buttons(browser_link=browser_link, mini_app_link=mini_app_link),
             parse_mode="HTML",
-            correlation_id=f"candidate-portal-access:{candidate.id}:{int(datetime.now(timezone.utc).timestamp())}",
+            correlation_id=correlation_id,
         )
     except Exception as exc:
-        logger.exception("candidate_portal.max_delivery_failed", extra={"candidate_id": candidate.id})
+        logger.exception(
+            "candidate_portal.max_delivery_failed",
+            extra={
+                "candidate_id": candidate.id,
+                "invite_id": invite_id,
+                "journey_id": journey_id,
+                "session_version": session_version,
+                "restarted": restarted,
+            },
+        )
         await _record_candidate_portal_access_message(
             candidate_id=int(candidate.id),
             channel="max",
             text=text,
             success=False,
             error=str(exc),
+            payload_meta={
+                **base_payload,
+                "delivery_status": "failed",
+                "skipped_reason": None,
+                "correlation_id": correlation_id,
+            },
         )
         return {
+            **base_payload,
             "status": "failed",
             "sent": False,
             "attempted": True,
             "error": str(exc),
             "skipped_reason": None,
+            "correlation_id": correlation_id,
         }
 
     success = bool(getattr(result, "success", False) or getattr(result, "ok", False))
@@ -2824,13 +2896,21 @@ async def _deliver_candidate_portal_access_package(
         text=text,
         success=success,
         error=error,
+        payload_meta={
+            **base_payload,
+            "delivery_status": "sent" if success else "failed",
+            "skipped_reason": None,
+            "correlation_id": correlation_id,
+        },
     )
     return {
+        **base_payload,
         "status": "sent" if success else "failed",
         "sent": success,
         "attempted": True,
         "error": error,
         "skipped_reason": None,
+        "correlation_id": correlation_id,
     }
 
 
@@ -3003,8 +3083,35 @@ async def api_candidate_max_link(
         text=delivery_text,
         browser_link=payload.get("browser_link"),
         mini_app_link=payload.get("mini_app_link"),
+        invite_id=invite_id,
+        journey_id=int(payload["journey"]["id"]),
+        session_version=int(payload["journey"]["session_version"]),
+        restarted=False,
         delivery_allowed=bool(payload.get("delivery_ready")),
         skip_reason=str(payload.get("delivery_block_reason") or "") or None,
+    )
+    logger.info(
+        "candidate_portal.max_delivery_result",
+        extra={
+            "candidate_id": candidate_id,
+            "invite_id": invite_id,
+            "journey_id": int(payload["journey"]["id"]),
+            "session_version": int(payload["journey"]["session_version"]),
+            "restarted": False,
+            "delivery_status": payload["delivery"].get("status"),
+            "attempted": bool(payload["delivery"].get("attempted")),
+            "sent": bool(payload["delivery"].get("sent")),
+            "skipped_reason": payload["delivery"].get("skipped_reason"),
+            "error": payload["delivery"].get("error"),
+        },
+    )
+    await _audit_candidate_portal_access_delivery(
+        candidate_id=candidate_id,
+        invite_id=invite_id,
+        journey_id=int(payload["journey"]["id"]),
+        session_version=int(payload["journey"]["session_version"]),
+        restarted=False,
+        delivery=payload["delivery"],
     )
 
     await log_audit_action(
@@ -3110,8 +3217,35 @@ async def api_candidate_portal_restart(
         text=delivery_text,
         browser_link=payload.get("browser_link"),
         mini_app_link=payload.get("mini_app_link"),
+        invite_id=int(invite.id),
+        journey_id=int(payload["journey"]["id"]),
+        session_version=int(payload["journey"]["session_version"]),
+        restarted=True,
         delivery_allowed=bool(payload.get("delivery_ready")),
         skip_reason=str(payload.get("delivery_block_reason") or "") or None,
+    )
+    logger.info(
+        "candidate_portal.max_delivery_result",
+        extra={
+            "candidate_id": candidate_id,
+            "invite_id": int(invite.id),
+            "journey_id": int(payload["journey"]["id"]),
+            "session_version": int(payload["journey"]["session_version"]),
+            "restarted": True,
+            "delivery_status": payload["delivery"].get("status"),
+            "attempted": bool(payload["delivery"].get("attempted")),
+            "sent": bool(payload["delivery"].get("sent")),
+            "skipped_reason": payload["delivery"].get("skipped_reason"),
+            "error": payload["delivery"].get("error"),
+        },
+    )
+    await _audit_candidate_portal_access_delivery(
+        candidate_id=candidate_id,
+        invite_id=int(invite.id),
+        journey_id=int(payload["journey"]["id"]),
+        session_version=int(payload["journey"]["session_version"]),
+        restarted=True,
+        delivery=payload["delivery"],
     )
 
     await log_audit_action(

@@ -52,6 +52,7 @@ from backend.domain.candidates.portal_service import (
     build_candidate_public_max_mini_app_url_async,
     build_candidate_public_portal_url,
     bump_candidate_portal_session_version,
+    ensure_candidate_portal_session_for_access,
     complete_screening,
     ensure_candidate_portal_session,
     get_candidate_portal_questions,
@@ -417,6 +418,28 @@ async def _resolve_max_candidate(
     raw_payload = str(start_payload or "").strip()
 
     candidate = existing_by_max_matches[0] if existing_by_max_matches else None
+    def _reject(
+        status: str,
+        *,
+        reason: str,
+        candidate_id: int | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> CandidateResolution:
+        log_extra: dict[str, Any] = {
+            "status": status,
+            "reason": reason,
+            "max_user_id": max_user_id,
+        }
+        if candidate_id is not None:
+            log_extra["candidate_id"] = candidate_id
+        if extra:
+            log_extra.update(extra)
+        logger.warning("max_bot.candidate_resolution_rejected", extra=log_extra)
+        return CandidateResolution(
+            candidate=None,
+            status=status,
+            audit_events=tuple(audit_events),
+        )
     payload_linked = False
     linked_now = False
     candidate_created = False
@@ -431,35 +454,38 @@ async def _resolve_max_candidate(
             if access is not None:
                 candidate = await _candidate_from_portal_access(session, access=access)
                 if candidate is None:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
-                active_journey = await _load_active_portal_journey(
-                    session,
-                    candidate_id=int(candidate.id),
+                    return _reject("invalid_invite", reason="portal_access_invalid")
+                candidate = await session.scalar(
+                    select(User).where(User.id == candidate.id).with_for_update().limit(1)
                 )
-                if _portal_access_mismatch(access, active_journey):
+                assert candidate is not None
+                journey, mismatch = await ensure_candidate_portal_session_for_access(
+                    session,
+                    candidate,
+                    access,
+                )
+                if mismatch is not None:
                     audit_events.append(
                         AuditEvent(
-                            action="max_link_rejected",
+                            action="portal_session_rejected_version_mismatch",
                             entity_id=int(candidate.id),
                             changes={
+                                **mismatch,
                                 "channel": "max",
                                 "max_user_id": max_user_id,
-                                "reason": "portal_session_version_mismatch",
-                                "token_session_id": access.journey_session_id,
-                                "token_session_version": access.session_version,
-                                "actual_session_id": int(active_journey.id) if active_journey is not None else None,
-                                "actual_session_version": (
-                                    int(active_journey.session_version or 1)
-                                    if active_journey is not None
-                                    else None
-                                ),
+                                "source_channel": access.source_channel,
                             },
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="portal_session_version_mismatch",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invalid_invite",
+                        reason="portal_session_version_mismatch",
+                        candidate_id=int(candidate.id),
+                        extra={
+                            **mismatch,
+                            "journey_id": int(journey.id),
+                            "journey_session_version": int(journey.session_version or 1),
+                        },
                     )
                 existing_links = [
                     item
@@ -474,10 +500,10 @@ async def _resolve_max_candidate(
                             changes={"channel": "max", "max_user_id": max_user_id, "reason": "existing_link"},
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invite_conflict",
+                        reason="existing_max_link",
+                        candidate_id=int(candidate.id),
                     )
 
                 current_candidate_owner = normalize_max_owner_value(candidate.max_user_id)
@@ -493,10 +519,10 @@ async def _resolve_max_candidate(
                             },
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invite_conflict",
+                        reason="candidate_already_linked_to_other_max_user",
+                        candidate_id=int(candidate.id),
                     )
 
                 linked_now = current_candidate_owner in {None, max_user_id}
@@ -506,14 +532,18 @@ async def _resolve_max_candidate(
                 invite = await session.scalar(
                     select(CandidateInviteToken)
                     .where(CandidateInviteToken.token == raw_payload)
+                    .with_for_update()
                     .limit(1)
                 )
                 if invite is None:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
+                    return _reject("invalid_invite", reason="invite_missing")
                 if _normalize_invite_channel(invite.channel) not in {"generic", "max"}:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
+                    return _reject("invalid_invite", reason="invite_channel_not_allowed")
                 if (invite.status or "active") not in {"active", "used"}:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
+                    return _reject(
+                        "invalid_invite",
+                        reason=f"invite_status_{str(invite.status or '').strip() or 'unknown'}",
+                    )
 
                 settings = get_settings()
                 invite_ttl = timedelta(seconds=settings.candidate_portal_token_ttl_seconds)
@@ -521,13 +551,16 @@ async def _resolve_max_candidate(
                 if created_at.tzinfo is None:
                     created_at = created_at.replace(tzinfo=UTC)
                 if now - created_at > invite_ttl:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
+                    return _reject("invalid_invite", reason="invite_expired")
 
                 candidate = await session.scalar(
-                    select(User).where(User.candidate_id == invite.candidate_id).limit(1)
+                    select(User)
+                    .where(User.candidate_id == invite.candidate_id)
+                    .with_for_update()
+                    .limit(1)
                 )
                 if candidate is None:
-                    return CandidateResolution(candidate=None, status="invalid_invite")
+                    return _reject("invalid_invite", reason="candidate_missing_for_invite")
 
                 existing_links = [
                     item
@@ -542,10 +575,10 @@ async def _resolve_max_candidate(
                             changes={"channel": "max", "max_user_id": max_user_id, "reason": "existing_link"},
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invite_conflict",
+                        reason="existing_max_link",
+                        candidate_id=int(candidate.id),
                     )
 
                 current_candidate_owner = normalize_max_owner_value(candidate.max_user_id)
@@ -561,10 +594,10 @@ async def _resolve_max_candidate(
                             },
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invite_conflict",
+                        reason="candidate_already_linked_to_other_max_user",
+                        candidate_id=int(candidate.id),
                     )
 
                 invite_owner = normalize_max_owner_value(invite.used_by_external_id)
@@ -580,10 +613,10 @@ async def _resolve_max_candidate(
                             },
                         )
                     )
-                    return CandidateResolution(
-                        candidate=None,
-                        status="invite_conflict",
-                        audit_events=tuple(audit_events),
+                    return _reject(
+                        "invite_conflict",
+                        reason="invite_already_used_by_other_max_user",
+                        candidate_id=int(candidate.id),
                     )
 
                 linked_now = invite.used_at is None and current_candidate_owner in {None, max_user_id}
@@ -598,7 +631,7 @@ async def _resolve_max_candidate(
                 getattr(get_settings(), "max_bot_allow_public_entry", default_max_public_entry_enabled())
             )
             if not allow_public_entry:
-                return CandidateResolution(candidate=None, status="invite_required")
+                return _reject("invite_required", reason="public_entry_disabled")
             candidate = _new_max_candidate(max_user_id=max_user_id, now=now)
             session.add(candidate)
             await session.flush()
@@ -646,7 +679,17 @@ async def _resolve_max_candidate(
         await bump_candidate_portal_session_version(session, candidate_id=int(candidate.id))
 
     await session.flush()
-    logger.info("max_bot.candidate_resolved")
+    logger.info(
+        "max_bot.candidate_resolved",
+        extra={
+            "candidate_id": int(candidate.id),
+            "max_user_id": max_user_id,
+            "status": "created" if candidate_created else ("linked" if payload_linked else "existing"),
+            "payload_linked": payload_linked,
+            "candidate_created": candidate_created,
+            "source_channel": getattr(candidate, "source", None),
+        },
+    )
     return CandidateResolution(
         candidate=candidate,
         status="created" if candidate_created else ("linked" if payload_linked else "existing"),
