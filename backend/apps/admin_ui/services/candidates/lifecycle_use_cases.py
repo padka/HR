@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional, Sequence
+from functools import lru_cache
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.security import Principal, principal_ctx
@@ -16,25 +19,64 @@ from backend.apps.admin_ui.services.candidates.helpers import (
     _recruiter_can_access_candidate,
     _release_intro_day_slots_for_candidate,
     get_candidate_detail,
+    update_candidate_status,
 )
 from backend.apps.admin_ui.services.slots import (
     BotDispatch,
     BotDispatchPlan,
+    _trigger_test2,
     set_slot_outcome,
 )
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
-from backend.domain.candidates.models import TestResult, User
+from backend.domain.applications.persistent_idempotency import (
+    PersistentIdempotencyConflictError,
+)
+from backend.domain.candidates.journey import append_journey_event
+from backend.domain.candidates.models import (
+    CandidateJourneySession,
+    CandidateJourneyStepState,
+    TestResult,
+    User,
+)
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import (
     StatusTransitionError,
     apply_candidate_status,
 )
+from backend.domain.candidates.test1_shared import (
+    TEST1_STEP_KEY,
+    build_test1_restart_snapshot,
+    reset_test1_progress,
+)
 from backend.domain.models import Slot
 
-
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateStatusDualWriteRequest,
+    )
+
+
+@lru_cache(maxsize=1)
+def _candidate_dual_write_runtime() -> SimpleNamespace:
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateStatusDualWriteRequest,
+        build_candidate_status_fallback_idempotency_key,
+        build_candidate_status_payload_fingerprint,
+        claim_candidate_status_transition,
+        finalize_candidate_status_dual_write,
+    )
+
+    return SimpleNamespace(
+        CandidateStatusDualWriteRequest=CandidateStatusDualWriteRequest,
+        build_candidate_status_fallback_idempotency_key=build_candidate_status_fallback_idempotency_key,
+        build_candidate_status_payload_fingerprint=build_candidate_status_payload_fingerprint,
+        claim_candidate_status_transition=claim_candidate_status_transition,
+        finalize_candidate_status_dual_write=finalize_candidate_status_dual_write,
+    )
 
 
 ALLOWED_SEND_TO_TEST2_STATUSES = {
@@ -52,6 +94,17 @@ NEGATIVE_REASON_STATUSES = {
     CandidateStatus.TEST2_FAILED,
     CandidateStatus.NOT_HIRED,
     CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+}
+
+ALLOWED_RESTART_TEST1_STATUSES = {
+    CandidateStatus.TEST1_COMPLETED.value,
+    CandidateStatus.WAITING_SLOT.value,
+    CandidateStatus.STALLED_WAITING_SLOT.value,
+    CandidateStatus.INTERVIEW_DECLINED.value,
+    CandidateStatus.TEST2_FAILED.value,
+    CandidateStatus.INTRO_DAY_DECLINED_INVITATION.value,
+    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF.value,
+    CandidateStatus.NOT_HIRED.value,
 }
 
 
@@ -99,6 +152,11 @@ def _has_scheduling_conflict(detail: Mapping[str, Any]) -> bool:
     return any(code.startswith("scheduling_") for code in _issue_codes(detail))
 
 
+def _has_any_active_scheduling(detail: Mapping[str, Any]) -> bool:
+    scheduling_summary = detail.get("scheduling_summary") or {}
+    return bool(scheduling_summary.get("active"))
+
+
 def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
     if dt is None:
         return None
@@ -116,6 +174,54 @@ def _resolve_actor(principal: Optional[Principal]) -> tuple[Optional[str], Optio
     if principal is None:
         return None, None
     return getattr(principal, "type", None), getattr(principal, "id", None)
+
+
+def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _build_lifecycle_dual_write_request(
+    *,
+    candidate_id: int,
+    status_from: str | None,
+    status_to: CandidateStatus,
+    reason: str | None,
+    comment: str | None,
+    principal: Optional[Principal],
+    previous_status_changed_at: datetime | None,
+    source_ref: str,
+) -> CandidateStatusDualWriteRequest:
+    runtime = _candidate_dual_write_runtime()
+    actor_type, actor_id = _resolve_actor(principal)
+    normalized_reason = _normalize_optional_text(reason)
+    normalized_comment = _normalize_optional_text(comment)
+    return runtime.CandidateStatusDualWriteRequest(
+        idempotency_key=runtime.build_candidate_status_fallback_idempotency_key(
+            candidate_id=candidate_id,
+            status_from=status_from,
+            status_to=status_to,
+            reason=normalized_reason,
+            comment=normalized_comment,
+            principal_type=actor_type,
+            principal_id=actor_id,
+            previous_status_changed_at=previous_status_changed_at,
+            source_ref=source_ref,
+        ),
+        correlation_id=f"candidate-lifecycle-{secrets.token_hex(12)}",
+        payload_fingerprint=runtime.build_candidate_status_payload_fingerprint(
+            candidate_id=candidate_id,
+            status_to=status_to,
+            reason=normalized_reason,
+            comment=normalized_comment,
+            principal_type=actor_type,
+            principal_id=actor_id,
+            source_ref=source_ref,
+        ),
+        principal_type=actor_type,
+        principal_id=actor_id,
+        source_ref=source_ref,
+    )
 
 
 async def _refresh_detail(candidate_id: int, principal: Optional[Principal]) -> Optional[dict[str, Any]]:
@@ -285,6 +391,29 @@ async def _log_candidate_status_updated(
             "from": previous_status,
             "to": target_status,
             "slot_id": slot_id,
+        },
+    )
+
+
+async def _log_test1_restarted(
+    candidate_id: int,
+    *,
+    previous_status: Optional[str],
+    restart_snapshot: Mapping[str, Any] | None,
+) -> None:
+    await log_audit_action(
+        "candidate_test1_restarted",
+        "candidate",
+        candidate_id,
+        changes={
+            "from": previous_status,
+            "to": CandidateStatus.INVITED.value,
+            "previous_test_result_id": (
+                int(restart_snapshot.get("test_result_id"))
+                if restart_snapshot and restart_snapshot.get("test_result_id") is not None
+                else None
+            ),
+            "previous_step": restart_snapshot.get("current_step_key") if restart_snapshot else None,
         },
     )
 
@@ -463,6 +592,46 @@ async def execute_send_to_test2(
                 detail=refreshed,
             )
         previous_status = getattr(getattr(user, "candidate_status", None), "value", None)
+        dual_write_request = None
+        dual_write_claim = None
+        if get_settings().candidate_status_dual_write_enabled:
+            dual_write_request = _build_lifecycle_dual_write_request(
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.TEST2_SENT,
+                reason=None,
+                comment=None,
+                principal=principal,
+                previous_status_changed_at=getattr(user, "status_changed_at", None),
+                source_ref="lifecycle:send_to_test2",
+            )
+            try:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                    session,
+                    dual_write_request,
+                )
+            except PersistentIdempotencyConflictError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Конфликт идемпотентности для перехода кандидата в Тест 2",
+                    status_code=409,
+                    error="idempotency_conflict",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            if dual_write_claim.reused:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=True,
+                    message="Тест 2 уже был отправлен для этого перехода",
+                    status_code=200,
+                    status=CandidateStatus.TEST2_SENT.value,
+                    detail=refreshed,
+                )
         try:
             await apply_candidate_status(
                 user,
@@ -489,6 +658,16 @@ async def execute_send_to_test2(
             CandidateStatus.TEST2_SENT,
             session=session,
         )
+        if dual_write_request is not None and dual_write_claim is not None:
+            await dual_write_runtime.finalize_candidate_status_dual_write(
+                session,
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.TEST2_SENT.value,
+                reason=None,
+                comment=None,
+                request=dual_write_request,
+            )
         await session.commit()
 
     await _log_candidate_status_updated(
@@ -505,6 +684,128 @@ async def execute_send_to_test2(
         status=CandidateStatus.TEST2_SENT.value,
         dispatch=dispatch,
         detail=refreshed,
+    )
+
+
+async def execute_resend_test2(
+    candidate_id: int,
+    *,
+    principal: Optional[Principal],
+    bot_service: Optional[object],
+    action_key: Optional[str] = None,
+) -> LifecycleUseCaseResult:
+    principal = principal or principal_ctx.get()
+    detail = await get_candidate_detail(candidate_id, principal=principal)
+    if not detail:
+        return _result(
+            ok=False,
+            message="Candidate not found",
+            status_code=404,
+            error="candidate_not_found",
+        )
+
+    current_status = _detail_status_slug(detail)
+    if action_key and not _detail_action_allowed(detail, action_key):
+        return _result(
+            ok=False,
+            message="Действие недоступно в текущем статусе",
+            status_code=400,
+            error="action_not_allowed",
+            detail=detail,
+            status=current_status,
+        )
+
+    candidate = detail.get("user")
+    if not isinstance(candidate, User):
+        return _result(
+            ok=False,
+            message="Кандидат не найден",
+            status_code=404,
+            error="candidate_not_found",
+            detail=detail,
+            status=current_status,
+        )
+
+    telegram_id = getattr(candidate, "telegram_user_id", None) or getattr(candidate, "telegram_id", None)
+    max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
+    if not telegram_id and not max_user_id:
+        return _result(
+            ok=False,
+            message="У кандидата нет доступного канала для отправки Теста 2",
+            status_code=400,
+            error="missing_candidate_channel",
+            detail=detail,
+            status=current_status,
+        )
+
+    slot_filters = []
+    if telegram_id:
+        slot_filters.append(Slot.candidate_tg_id == telegram_id)
+    if candidate.candidate_id is not None:
+        slot_filters.append(Slot.candidate_id == candidate.candidate_id)
+
+    async with async_session() as session:
+        slot = await session.scalar(
+            select(Slot)
+            .where(
+                or_(*slot_filters)
+            )
+            .order_by(Slot.start_utc.desc(), Slot.id.desc())
+            .limit(1)
+        )
+        if slot is not None:
+            slot.test2_sent_at = datetime.now(timezone.utc)
+            await session.commit()
+
+    candidate_city_id = (
+        getattr(slot, "candidate_city_id", None)
+        or getattr(slot, "city_id", None)
+        or getattr(candidate, "city_id", None)
+    )
+    candidate_tz = (
+        getattr(slot, "candidate_tz", None)
+        or getattr(candidate, "tz_name", None)
+        or get_settings().timezone
+    )
+
+    result = await _trigger_test2(
+        int(telegram_id or 0),
+        candidate_tz,
+        candidate_city_id,
+        candidate.fio or getattr(candidate, "name", "") or "Кандидат",
+        bot_service=bot_service,
+        required=get_settings().test2_required,
+        slot_id=getattr(slot, "id", None),
+        candidate_public_id=str(candidate.candidate_id or "") or None,
+        max_user_id=max_user_id,
+    )
+
+    stored_status = current_status
+    if result.ok:
+        ok, message, stored_status, _dispatch = await update_candidate_status(
+            candidate_id,
+            "test2_sent",
+            bot_service=bot_service,
+            principal=principal,
+        )
+        if not ok:
+            return _result(
+                ok=False,
+                message=message or "Не удалось обновить статус кандидата.",
+                status_code=400,
+                error="status_update_failed",
+                detail=detail,
+                status=current_status,
+            )
+
+    refreshed_detail = await get_candidate_detail(candidate_id, principal=principal)
+    return _result(
+        ok=result.ok,
+        message=result.message or result.error or "",
+        status_code=200 if result.ok else 400,
+        status=stored_status or _detail_status_slug(refreshed_detail or detail),
+        error=None if result.ok else "test2_dispatch_failed",
+        detail=refreshed_detail or detail,
     )
 
 
@@ -572,6 +873,46 @@ async def execute_mark_test2_completed(
             )
 
         previous_status = getattr(getattr(user, "candidate_status", None), "value", None)
+        dual_write_request = None
+        dual_write_claim = None
+        if get_settings().candidate_status_dual_write_enabled:
+            dual_write_request = _build_lifecycle_dual_write_request(
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.TEST2_COMPLETED,
+                reason=None,
+                comment=None,
+                principal=principal,
+                previous_status_changed_at=getattr(user, "status_changed_at", None),
+                source_ref="lifecycle:mark_test2_completed",
+            )
+            try:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                    session,
+                    dual_write_request,
+                )
+            except PersistentIdempotencyConflictError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Конфликт идемпотентности для завершения Теста 2",
+                    status_code=409,
+                    error="idempotency_conflict",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            if dual_write_claim.reused:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=True,
+                    message="Тест 2 уже был отмечен как пройденный",
+                    status_code=200,
+                    status=CandidateStatus.TEST2_COMPLETED.value,
+                    detail=refreshed,
+                )
         try:
             await apply_candidate_status(
                 user,
@@ -598,6 +939,16 @@ async def execute_mark_test2_completed(
             CandidateStatus.TEST2_COMPLETED,
             session=session,
         )
+        if dual_write_request is not None and dual_write_claim is not None:
+            await dual_write_runtime.finalize_candidate_status_dual_write(
+                session,
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.TEST2_COMPLETED.value,
+                reason=None,
+                comment=None,
+                request=dual_write_request,
+            )
         await session.commit()
 
     await _log_candidate_status_updated(
@@ -611,6 +962,239 @@ async def execute_mark_test2_completed(
         message="Тест 2 отмечен как пройденный",
         status_code=200,
         status=CandidateStatus.TEST2_COMPLETED.value,
+        detail=refreshed,
+    )
+
+
+async def execute_restart_test1(
+    candidate_id: int,
+    *,
+    principal: Optional[Principal],
+    action_key: Optional[str] = None,
+    reason: Optional[str] = None,
+    comment: Optional[str] = None,
+) -> LifecycleUseCaseResult:
+    principal = principal or principal_ctx.get()
+    detail = await get_candidate_detail(candidate_id, principal=principal)
+    if not detail:
+        return _result(
+            ok=False,
+            message="Candidate not found",
+            status_code=404,
+            error="candidate_not_found",
+        )
+
+    current_status = _detail_status_slug(detail)
+    if current_status not in ALLOWED_RESTART_TEST1_STATUSES:
+        return _result(
+            ok=False,
+            message="Повторное прохождение Теста 1 доступно только после завершенного или закрытого этапа отбора.",
+            status_code=409,
+            error="invalid_transition",
+            detail=detail,
+            status=current_status,
+        )
+
+    if action_key and not _detail_action_allowed(detail, action_key):
+        return _result(
+            ok=False,
+            message="Действие недоступно в текущем статусе",
+            status_code=400,
+            error="action_not_allowed",
+            detail=detail,
+            status=current_status,
+        )
+
+    if _has_scheduling_conflict(detail):
+        return _result(
+            ok=False,
+            message="Нельзя перезапустить Тест 1: в scheduling contract есть конфликт. Сначала разберите слоты.",
+            status_code=409,
+            error="scheduling_conflict",
+            detail=detail,
+            status=current_status,
+        )
+
+    if _has_any_active_scheduling(detail):
+        return _result(
+            ok=False,
+            message="Нельзя перезапустить Тест 1, пока у кандидата есть активный слот или назначенный этап.",
+            status_code=409,
+            error="active_scheduling_exists",
+            detail=detail,
+            status=current_status,
+        )
+
+    actor_type, actor_id = _resolve_actor(principal)
+    restart_reason = (
+        _normalize_optional_text(reason)
+        or _normalize_optional_text(comment)
+        or "restart_test1_for_new_selection_cycle"
+    )
+    restart_snapshot: dict[str, Any] | None = None
+
+    async with async_session() as session:
+        user = await _load_candidate_for_write(session, candidate_id, principal)
+        if not user:
+            return _result(
+                ok=False,
+                message="Candidate not found",
+                status_code=404,
+                error="candidate_not_found",
+                detail=detail,
+            )
+
+        previous_status = getattr(getattr(user, "candidate_status", None), "value", None)
+        dual_write_request = None
+        dual_write_claim = None
+        if get_settings().candidate_status_dual_write_enabled:
+            dual_write_request = _build_lifecycle_dual_write_request(
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.INVITED,
+                reason=restart_reason,
+                comment=comment,
+                principal=principal,
+                previous_status_changed_at=getattr(user, "status_changed_at", None),
+                source_ref="lifecycle:restart_test1",
+            )
+            try:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                    session,
+                    dual_write_request,
+                )
+            except PersistentIdempotencyConflictError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Конфликт идемпотентности для перезапуска Теста 1",
+                    status_code=409,
+                    error="idempotency_conflict",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            if dual_write_claim.reused:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=True,
+                    message="Тест 1 уже перезапущен",
+                    status_code=200,
+                    status=CandidateStatus.INVITED.value,
+                    detail=refreshed,
+                )
+
+        journey_session = await session.scalar(
+            select(CandidateJourneySession)
+            .where(CandidateJourneySession.candidate_id == candidate_id)
+            .order_by(CandidateJourneySession.id.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        step_state: CandidateJourneyStepState | None = None
+        if journey_session is not None:
+            step_state = await session.scalar(
+                select(CandidateJourneyStepState)
+                .where(
+                    CandidateJourneyStepState.session_id == journey_session.id,
+                    CandidateJourneyStepState.step_key == TEST1_STEP_KEY,
+                )
+                .limit(1)
+                .with_for_update()
+            )
+            restart_snapshot = build_test1_restart_snapshot(
+                journey_session=journey_session,
+                step_state=step_state,
+                current_status=user.candidate_status,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                reason=restart_reason,
+            )
+            reset_test1_progress(
+                journey_session=journey_session,
+                step_state=step_state,
+                restart_snapshot=restart_snapshot,
+            )
+
+        user.is_active = True
+        user.rejection_reason = None
+        user.rejected_at = None
+        user.rejected_by = None
+        user.intro_decline_reason = None
+        user.final_outcome_reason = None
+        user.manual_slot_from = None
+        user.manual_slot_to = None
+        user.manual_slot_comment = None
+        user.manual_slot_requested_at = None
+        user.manual_slot_response_at = None
+        try:
+            await apply_candidate_status(
+                user,
+                CandidateStatus.INVITED,
+                session=session,
+                force=True,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                reason=restart_reason,
+            )
+        except StatusTransitionError:
+            await session.rollback()
+            refreshed = await _refresh_detail(candidate_id, principal)
+            return _result(
+                ok=False,
+                message="Не удалось перезапустить Тест 1 из-за недопустимого lifecycle transition.",
+                status_code=409,
+                error="invalid_transition",
+                detail=refreshed,
+                status=_detail_status_slug(refreshed or {}),
+            )
+
+        append_journey_event(
+            user,
+            event_key="test1_restarted",
+            stage="test",
+            status=CandidateStatus.INVITED,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            summary="Открыт повторный проход Теста 1",
+            payload={
+                "from_status": previous_status,
+                "to_status": CandidateStatus.INVITED.value,
+                "reason": restart_reason,
+                "restart_snapshot": restart_snapshot,
+            },
+        )
+
+        if dual_write_request is not None and dual_write_claim is not None:
+            await dual_write_runtime.finalize_candidate_status_dual_write(
+                session,
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.INVITED.value,
+                reason=restart_reason,
+                comment=comment,
+                request=dual_write_request,
+            )
+        await session.commit()
+
+    await _log_candidate_status_updated(
+        candidate_id,
+        previous_status=current_status,
+        target_status=CandidateStatus.INVITED.value,
+    )
+    await _log_test1_restarted(
+        candidate_id,
+        previous_status=current_status,
+        restart_snapshot=restart_snapshot,
+    )
+    refreshed = await _refresh_detail(candidate_id, principal)
+    return _result(
+        ok=True,
+        message="Тест 1 сброшен. Кандидат может пройти его заново.",
+        status_code=200,
+        status=CandidateStatus.INVITED.value,
         detail=refreshed,
     )
 
@@ -674,6 +1258,46 @@ async def execute_finalize_hired(
                 detail=detail,
             )
         previous_status = getattr(getattr(user, "candidate_status", None), "value", None)
+        dual_write_request = None
+        dual_write_claim = None
+        if get_settings().candidate_status_dual_write_enabled:
+            dual_write_request = _build_lifecycle_dual_write_request(
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.HIRED,
+                reason=None,
+                comment=None,
+                principal=principal,
+                previous_status_changed_at=getattr(user, "status_changed_at", None),
+                source_ref="lifecycle:finalize_hired",
+            )
+            try:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                    session,
+                    dual_write_request,
+                )
+            except PersistentIdempotencyConflictError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Конфликт идемпотентности для закрепления кандидата",
+                    status_code=409,
+                    error="idempotency_conflict",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            if dual_write_claim.reused:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=True,
+                    message="Кандидат уже закреплен",
+                    status_code=200,
+                    status=CandidateStatus.HIRED.value,
+                    detail=refreshed,
+                )
         try:
             await apply_candidate_status(
                 user,
@@ -700,6 +1324,16 @@ async def execute_finalize_hired(
             CandidateStatus.HIRED,
             session=session,
         )
+        if dual_write_request is not None and dual_write_claim is not None:
+            await dual_write_runtime.finalize_candidate_status_dual_write(
+                session,
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.HIRED.value,
+                reason=None,
+                comment=None,
+                request=dual_write_request,
+            )
         await session.commit()
 
     await _log_candidate_status_updated(
@@ -791,6 +1425,46 @@ async def execute_finalize_not_hired(
             reason=reason,
             comment=comment,
         )
+        dual_write_request = None
+        dual_write_claim = None
+        if get_settings().candidate_status_dual_write_enabled:
+            dual_write_request = _build_lifecycle_dual_write_request(
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.NOT_HIRED,
+                reason=rejection_reason,
+                comment=comment,
+                principal=principal,
+                previous_status_changed_at=getattr(user, "status_changed_at", None),
+                source_ref="lifecycle:finalize_not_hired",
+            )
+            try:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                    session,
+                    dual_write_request,
+                )
+            except PersistentIdempotencyConflictError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Конфликт идемпотентности для финального отказа",
+                    status_code=409,
+                    error="idempotency_conflict",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            if dual_write_claim.reused:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=True,
+                    message="Кандидат уже помечен как не закрепленный",
+                    status_code=200,
+                    status=CandidateStatus.NOT_HIRED.value,
+                    detail=refreshed,
+                )
         try:
             await apply_candidate_status(
                 user,
@@ -828,6 +1502,16 @@ async def execute_finalize_not_hired(
             CandidateStatus.NOT_HIRED,
             session=session,
         )
+        if dual_write_request is not None and dual_write_claim is not None:
+            await dual_write_runtime.finalize_candidate_status_dual_write(
+                session,
+                candidate_id=candidate_id,
+                status_from=previous_status,
+                status_to=CandidateStatus.NOT_HIRED.value,
+                reason=rejection_reason,
+                comment=comment,
+                request=dual_write_request,
+            )
         await session.commit()
 
     await _log_candidate_status_updated(

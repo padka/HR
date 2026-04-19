@@ -3,33 +3,71 @@ from __future__ import annotations
 import logging
 import math
 import re
+import secrets
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from functools import lru_cache
+from types import SimpleNamespace
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 from urllib.parse import urlparse
 
-from sqlalchemy import String, and_, cast, delete, exists, false, func, literal, or_, select
+from sqlalchemy import (
+    String,
+    and_,
+    cast,
+    delete,
+    exists,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select, case
 
-from backend.apps.admin_ui.utils import paginate
-from backend.apps.admin_ui.timezones import DEFAULT_TZ
-from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
-from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
-from backend.core.audit import log_audit_action
-from backend.core.ai.service import schedule_warm_candidate_ai_outputs
-from backend.core.db import async_session
-from backend.core.settings import get_settings
-from backend.apps.admin_ui.security import admin_principal, principal_ctx, Principal
+from backend.apps.admin_ui.security import Principal, admin_principal, principal_ctx
 from backend.apps.admin_ui.services.reschedule_intents import (
     get_candidate_reschedule_intent,
     get_reschedule_intent_map,
 )
+from backend.apps.admin_ui.timezones import DEFAULT_TZ
+from backend.apps.admin_ui.utils import paginate
+from backend.apps.bot.config import PASS_THRESHOLD, TEST2_QUESTIONS
+from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
+from backend.core.ai.candidate_scorecard import fit_level_from_score
+from backend.core.ai.service import (
+    schedule_warm_candidate_ai_outputs,
+    schedule_warm_candidates_ai_outputs,
+)
+from backend.core.audit import log_audit_action
+from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain import analytics
-from backend.domain.ai.models import AIInterviewScriptFeedback
-from backend.domain.candidates.journey import build_candidate_journey, derive_candidate_journey_state, journey_state_label
+from backend.domain.ai.models import AIInterviewScriptFeedback, AIOutput
+from backend.domain.applications.persistent_idempotency import (
+    PersistentIdempotencyConflictError,
+)
+from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.candidates.actions import get_candidate_actions
+from backend.domain.candidates.journey import (
+    LIFECYCLE_DRAFT,
+    build_candidate_journey,
+    derive_candidate_journey_state,
+    journey_state_label,
+)
 from backend.domain.candidates.models import (
     AutoMessage,
     InterviewNote,
@@ -37,7 +75,7 @@ from backend.domain.candidates.models import (
     TestResult,
     User,
 )
-from backend.domain.candidates.portal_service import build_candidate_portal_url
+from backend.domain.candidates.services import issue_candidate_invite_token
 from backend.domain.candidates.state_contract import (
     KANBAN_COLUMN_ICONS,
     KANBAN_COLUMN_LABELS,
@@ -45,32 +83,207 @@ from backend.domain.candidates.state_contract import (
     KANBAN_PIPELINE_COLUMNS,
     build_candidate_state_contract,
 )
-from backend.domain.candidates.write_contract import KANBAN_CANONICAL_MOVE_COLUMNS
 from backend.domain.candidates.status import (
-    CandidateStatus,
-    STATUS_TRANSITIONS,
     STATUS_CATEGORIES,
+    STATUS_TRANSITIONS,
+    CandidateStatus,
     StatusCategory,
     get_next_statuses,
     get_status_color,
     is_terminal_status,
 )
-from backend.domain.candidate_status_service import CandidateStatusService
 from backend.domain.candidates.status_service import FUNNEL_STATUS_EVENTS
-from backend.domain.candidates.services import issue_candidate_invite_token
-from backend.domain.candidates.actions import get_candidate_actions
 from backend.domain.candidates.workflow import (
     CandidateWorkflowService,
     WorkflowStatus,
     workflow_status_for_candidate_status,
     workflow_status_from_raw_value,
 )
-from backend.domain.models import City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
+from backend.domain.candidates.write_contract import KANBAN_CANONICAL_MOVE_COLUMNS
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotStatus,
+    recruiter_city_association,
+)
 from backend.domain.repositories import find_city_by_plain_name, get_message_template
 from backend.utils.jinja_renderer import render_template
 
 if TYPE_CHECKING:  # pragma: no cover - used only for typing
     from backend.apps.admin_ui.services.bot_service import BotService
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateCreateDualWriteRequest,
+        CandidateStatusDualWriteRequest,
+    )
+
+
+def _display_pending_slot_request(
+    user: User,
+    journey_request: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if isinstance(journey_request, Mapping) and bool(journey_request.get("requested")):
+        return dict(journey_request)
+
+    status_value = getattr(user, "candidate_status", None)
+    if hasattr(status_value, "value"):
+        status_value = status_value.value
+    status_slug = str(status_value or "").strip().lower()
+    if status_slug not in {
+        CandidateStatus.WAITING_SLOT.value,
+        CandidateStatus.STALLED_WAITING_SLOT.value,
+    }:
+        return None
+
+    requested_at = getattr(user, "manual_slot_requested_at", None)
+    responded_at = getattr(user, "manual_slot_response_at", None)
+    requested_from = getattr(user, "manual_slot_from", None)
+    requested_to = getattr(user, "manual_slot_to", None)
+    candidate_comment = getattr(user, "manual_slot_comment", None)
+    requested_tz = getattr(user, "manual_slot_timezone", None)
+    if (
+        requested_at is None
+        and responded_at is None
+        and requested_from is None
+        and requested_to is None
+        and not str(candidate_comment or "").strip()
+    ):
+        return None
+
+    return {
+        "requested": True,
+        "requested_at": responded_at or requested_at,
+        "requested_start_utc": requested_from,
+        "requested_end_utc": requested_to,
+        "requested_tz": requested_tz,
+        "candidate_comment": candidate_comment,
+        "source": "manual_slot_availability",
+    }
+
+
+@lru_cache(maxsize=1)
+def _candidate_dual_write_runtime() -> SimpleNamespace:
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateCreateDuplicateError,
+        CandidateStatusDualWriteRequest,
+        build_candidate_status_fallback_idempotency_key,
+        build_candidate_status_payload_fingerprint,
+        claim_candidate_create,
+        claim_candidate_status_transition,
+        finalize_candidate_create_dual_write,
+        finalize_candidate_status_dual_write,
+        get_candidate_status_transition_record,
+    )
+
+    return SimpleNamespace(
+        CandidateCreateDuplicateError=CandidateCreateDuplicateError,
+        CandidateStatusDualWriteRequest=CandidateStatusDualWriteRequest,
+        build_candidate_status_fallback_idempotency_key=build_candidate_status_fallback_idempotency_key,
+        build_candidate_status_payload_fingerprint=build_candidate_status_payload_fingerprint,
+        claim_candidate_create=claim_candidate_create,
+        claim_candidate_status_transition=claim_candidate_status_transition,
+        finalize_candidate_create_dual_write=finalize_candidate_create_dual_write,
+        finalize_candidate_status_dual_write=finalize_candidate_status_dual_write,
+        get_candidate_status_transition_record=get_candidate_status_transition_record,
+    )
+
+
+@lru_cache(maxsize=1)
+def _candidate_max_rollout_runtime() -> SimpleNamespace:
+    from backend.apps.admin_ui.services.max_rollout import (
+        get_candidate_max_rollout_snapshots,
+        get_candidate_max_rollout_summary,
+    )
+
+    return SimpleNamespace(
+        get_candidate_max_rollout_snapshots=get_candidate_max_rollout_snapshots,
+        get_candidate_max_rollout_summary=get_candidate_max_rollout_summary,
+    )
+
+
+async def _safe_get_candidate_max_rollout_snapshots(candidate_ids: Sequence[int]) -> dict[int, dict[str, Any]]:
+    try:
+        runtime = _candidate_max_rollout_runtime()
+    except ImportError:
+        logger.warning("admin_ui.max_rollout_unavailable_for_list", exc_info=True)
+        return {}
+    return await runtime.get_candidate_max_rollout_snapshots(candidate_ids)
+
+
+async def _safe_get_candidate_max_rollout_summary(candidate_id: int) -> dict[str, Any] | None:
+    try:
+        runtime = _candidate_max_rollout_runtime()
+    except ImportError:
+        logger.warning("admin_ui.max_rollout_unavailable_for_detail", exc_info=True)
+        return None
+    return await runtime.get_candidate_max_rollout_summary(candidate_id)
+
+
+async def _load_cached_ai_fit_map(
+    session,
+    *,
+    candidate_ids: Sequence[int],
+) -> dict[int, dict[str, Optional[object]]]:
+    if not candidate_ids:
+        return {}
+    ai_sq = (
+        select(
+            AIOutput.scope_id.label("candidate_id"),
+            AIOutput.payload_json.label("payload_json"),
+            AIOutput.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=AIOutput.scope_id,
+                order_by=AIOutput.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(
+            AIOutput.scope_type == "candidate",
+            AIOutput.kind == "candidate_summary_v1",
+            AIOutput.scope_id.in_(candidate_ids),
+            AIOutput.expires_at > datetime.now(timezone.utc),
+        )
+    ).subquery()
+    ai_rows = await session.execute(
+        select(ai_sq.c.candidate_id, ai_sq.c.payload_json, ai_sq.c.created_at).where(ai_sq.c.rn == 1)
+    )
+    ai_fit_map: dict[int, dict[str, Optional[object]]] = {}
+    for candidate_id, payload_json, created_at in ai_rows:
+        candidate_id = int(candidate_id)
+        scorecard = payload_json.get("scorecard") if isinstance(payload_json, dict) else None
+        fit = payload_json.get("fit") if isinstance(payload_json, dict) else None
+        recommendation = None
+        risk_hint = None
+        if isinstance(scorecard, dict):
+            raw_recommendation = scorecard.get("recommendation")
+            if isinstance(raw_recommendation, str):
+                recommendation = raw_recommendation.strip().lower() or None
+            source_items = list(scorecard.get("blockers") or []) or list(scorecard.get("missing_data") or [])
+            if source_items and isinstance(source_items[0], dict):
+                risk_hint = str(
+                    source_items[0].get("label")
+                    or source_items[0].get("evidence")
+                    or ""
+                ).strip() or None
+        fit = fit if isinstance(fit, dict) else {}
+        raw_score = scorecard.get("final_score") if isinstance(scorecard, dict) else fit.get("score")
+        score: Optional[int] = None
+        if isinstance(raw_score, (int, float)):
+            score = max(0, min(100, int(raw_score)))
+        raw_level = fit_level_from_score(score) if score is not None else fit.get("level")
+        level = raw_level.lower().strip() if isinstance(raw_level, str) else None
+        if level not in {"high", "medium", "low", "unknown"}:
+            level = None
+        ai_fit_map[candidate_id] = {
+            "score": score,
+            "level": level,
+            "updated_at": created_at.isoformat() if created_at else None,
+            "recommendation": recommendation,
+            "risk_hint": risk_hint,
+        }
+    return ai_fit_map
 
 
 @dataclass
@@ -1604,8 +1817,13 @@ async def list_candidates(
     if principal is None:
         raise RuntimeError("principal is required for list_candidates")
 
+    ai_fit_map: Dict[int, Dict[str, Optional[object]]] = {}
     async with async_session() as session:
         conditions: List[Any] = []
+        conditions.append(
+            func.lower(func.coalesce(cast(User.lifecycle_state, String), literal("active")))
+            != literal(LIFECYCLE_DRAFT)
+        )
 
         city_names: List[str] = []
         if city_ids:
@@ -1708,24 +1926,6 @@ async def list_candidates(
             .correlate(User)
         )
 
-        success_outcome_expr = exists(
-            select(1)
-            .where(
-                Slot.candidate_id == User.candidate_id,
-                Slot.interview_outcome == 'success',
-            )
-            .correlate(User)
-        )
-
-        reject_outcome_expr = exists(
-            select(1)
-            .where(
-                Slot.candidate_id == User.candidate_id,
-                Slot.interview_outcome == 'reject',
-            )
-            .correlate(User)
-        )
-
         pending_slot_expr = exists(
             select(1)
             .where(
@@ -1756,19 +1956,6 @@ async def list_candidates(
             .correlate(User)
         )
 
-        past_slot_expr = exists(
-            select(1)
-            .where(
-                Slot.candidate_id == User.candidate_id,
-                Slot.start_utc < now,
-                func.lower(Slot.status).in_(
-                    [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
-                ),
-                Slot.interview_outcome.is_(None),
-            )
-            .correlate(User)
-        )
-
         slot_pipeline_expr = (
             Slot.purpose == 'intro_day'
             if is_intro_pipeline
@@ -1780,15 +1967,6 @@ async def list_candidates(
             .where(
                 Slot.candidate_id == User.candidate_id,
                 slot_pipeline_expr,
-            )
-            .correlate(User)
-        )
-
-        has_intro_day_slot_expr = exists(
-            select(1)
-            .where(
-                Slot.candidate_id == User.candidate_id,
-                Slot.purpose == 'intro_day',
             )
             .correlate(User)
         )
@@ -2176,9 +2354,18 @@ async def list_candidates(
         ratings = await _distinct_ratings(session)
         cities = await _distinct_cities(session)
         analytics = await _collect_candidate_analytics(session, now)
+        ai_fit_map = await _load_cached_ai_fit_map(
+            session,
+            candidate_ids=[int(user.id) for user in users if getattr(user, "id", None) is not None],
+        )
+
+    max_rollout_snapshots = await _safe_get_candidate_max_rollout_snapshots(
+        [int(user.id) for user in users if getattr(user, "id", None) is not None]
+    )
 
     items: List[CandidateRow] = []
     candidate_cards: List[Dict[str, Any]] = []
+    missing_ai_candidate_ids: List[int] = []
     active_intro_day_statuses = {
         SlotStatus.BOOKED,
         SlotStatus.PENDING,
@@ -2202,6 +2389,10 @@ async def list_candidates(
             reschedule_intent=pending_slot_request,
             responsible_recruiter=responsible_recruiter,
             upcoming_slot=upcoming_slot,
+        )
+        display_pending_slot_request = _display_pending_slot_request(
+            user,
+            candidate_journey.get('pending_slot_request'),
         )
         status_slug = status_by_user.get(user.id, 'new')
         # Фолбэк в interview_scheduled применяем только к ранним/interview-статусам.
@@ -2329,14 +2520,60 @@ async def list_candidates(
                 recruiter_name = responsible_recruiter.name
                 recruiter_id_value = responsible_recruiter.id
 
+        preferred_channel = str(
+            getattr(user, "messenger_platform", "") or ""
+        ).strip().lower()
+        if preferred_channel not in {"telegram", "max"}:
+            preferred_channel = (
+                "max"
+                if str(getattr(user, "max_user_id", "") or "").strip()
+                else "telegram"
+                if (user.telegram_id or user.telegram_user_id)
+                else None
+            )
+        ai_fit = ai_fit_map.get(int(user.id), {})
+        ai_score = ai_fit.get("score") if isinstance(ai_fit, dict) else None
+        if ai_score is None:
+            missing_ai_candidate_ids.append(int(user.id))
+        actions_payload = []
+        for action in candidate_actions:
+            url_pattern = getattr(action, "url_pattern", None)
+            resolved_url = None
+            if isinstance(url_pattern, str):
+                resolved_url = url_pattern.replace("{id}", str(user.id))
+            actions_payload.append(
+                {
+                    "key": getattr(action, "key", None),
+                    "label": getattr(action, "label", None),
+                    "url_pattern": url_pattern,
+                    "url": resolved_url,
+                    "icon": getattr(action, "icon", None),
+                    "variant": getattr(action, "variant", None),
+                    "method": getattr(action, "method", None) or "GET",
+                    "target_status": getattr(action, "target_status", None),
+                    "confirmation": getattr(action, "confirmation", None),
+                    "requires_slot": bool(getattr(action, "requires_slot", False)),
+                    "requires_test2_passed": bool(getattr(action, "requires_test2_passed", False)),
+                }
+            )
+
         candidate_cards.append(
             {
                 'id': user.id,
                 'candidate_id': user.candidate_id,
                 'telegram_id': user.telegram_id,
-                 'telegram_user_id': user.telegram_user_id or user.telegram_id,
-                 'telegram_username': user.telegram_username or user.username,
-                 'telegram_linked_at': user.telegram_linked_at,
+                'telegram_user_id': user.telegram_user_id or user.telegram_id,
+                'telegram_username': user.telegram_username or user.username,
+                'telegram_linked_at': user.telegram_linked_at,
+                'linked_channels': {
+                    'telegram': bool(user.telegram_id or user.telegram_user_id),
+                    'max': bool(str(getattr(user, 'max_user_id', '') or '').strip()),
+                },
+                'max': {
+                    'linked': bool(str(getattr(user, 'max_user_id', '') or '').strip()),
+                },
+                'preferred_channel': preferred_channel,
+                'max_rollout': max_rollout_snapshots.get(int(user.id)),
                 'fio': user.fio,
                 'city': user.city,
                 'status': {
@@ -2350,7 +2587,7 @@ async def list_candidates(
                 'archive': candidate_journey.get('archive'),
                 'final_outcome': candidate_journey.get('final_outcome'),
                 'final_outcome_reason': candidate_journey.get('final_outcome_reason'),
-                'pending_slot_request': candidate_journey.get('pending_slot_request'),
+                'pending_slot_request': display_pending_slot_request,
                 'manual_mode': candidate_journey.get('manual_mode'),
                 'state_contract_version': state_contract.get('version'),
                 'lifecycle_summary': state_contract.get('lifecycle_summary'),
@@ -2389,8 +2626,15 @@ async def list_candidates(
                     'id': recruiter_id_value,
                     'name': recruiter_name,
                 } if recruiter_id_value is not None else None,
+                'candidate_actions': actions_payload,
+                'ai_relevance_score': ai_fit.get('score') if isinstance(ai_fit, dict) else None,
+                'ai_relevance_level': ai_fit.get('level') if isinstance(ai_fit, dict) else None,
+                'ai_relevance_updated_at': ai_fit.get('updated_at') if isinstance(ai_fit, dict) else None,
             }
         )
+
+    if missing_ai_candidate_ids:
+        schedule_warm_candidates_ai_outputs(missing_ai_candidate_ids[: min(len(missing_ai_candidate_ids), per_page)], principal=principal, refresh=False)
 
     candidate_cards = [card for card in candidate_cards if card['status']['slug'] in allowed_with_terminal]
     items = [row for row in items if row.status_slug in allowed_with_terminal]
@@ -2910,6 +3154,65 @@ async def _recruiter_can_access_candidate(
     return city_record.id in allowed_city_ids
 
 
+def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _build_candidate_status_dual_write_request(
+    *,
+    candidate_id: int,
+    status_from: str | None,
+    status_to: CandidateStatus,
+    previous_status_changed_at: datetime | None,
+    reason: str | None,
+    comment: str | None,
+    principal: Optional[Principal],
+    idempotency_key: str | None,
+    correlation_id: str | None,
+    source_ref: str,
+) -> CandidateStatusDualWriteRequest:
+    runtime = _candidate_dual_write_runtime()
+    principal_type = getattr(principal, "type", None)
+    principal_id = getattr(principal, "id", None)
+    normalized_reason = _normalize_optional_text(reason)
+    normalized_comment = _normalize_optional_text(comment)
+    resolved_idempotency_key = (
+        _normalize_optional_text(idempotency_key)
+        or runtime.build_candidate_status_fallback_idempotency_key(
+            candidate_id=candidate_id,
+            status_from=status_from,
+            status_to=status_to,
+            reason=normalized_reason,
+            comment=normalized_comment,
+            principal_type=principal_type,
+            principal_id=principal_id,
+            previous_status_changed_at=previous_status_changed_at,
+            source_ref=source_ref,
+        )
+    )
+    resolved_correlation_id = (
+        _normalize_optional_text(correlation_id)
+        or f"candidate-status-{secrets.token_hex(12)}"
+    )
+    return runtime.CandidateStatusDualWriteRequest(
+        idempotency_key=resolved_idempotency_key,
+        correlation_id=resolved_correlation_id,
+        payload_fingerprint=runtime.build_candidate_status_payload_fingerprint(
+            candidate_id=candidate_id,
+            status_to=status_to,
+            reason=normalized_reason,
+            comment=normalized_comment,
+            principal_type=principal_type,
+            principal_id=principal_id,
+            source_ref=source_ref,
+        ),
+        principal_type=principal_type,
+        principal_id=principal_id,
+        source_ref=source_ref,
+    )
+
+
 async def update_candidate_status(
     candidate_id: int,
     status_slug: str,
@@ -2918,6 +3221,9 @@ async def update_candidate_status(
     principal: Optional[Principal] = None,
     reason: Optional[str] = None,
     comment: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    source_ref: str = "admin_ui:candidate_status_update",
 ) -> Tuple[bool, str, Optional[str], Optional[object]]:
     """Update candidate workflow status via slot updates or outcomes."""
 
@@ -2950,23 +3256,15 @@ async def update_candidate_status(
                 user.responsible_recruiter_id = principal.id
         if user.telegram_id is None and normalized not in STATUS_DEFINITIONS:
             return False, "Для кандидата не указан Telegram ID", None, None
-        
-        # Store reason/comment if provided
-        if reason:
-            user.rejection_reason = reason
-        if comment:
-            # Append comment to existing manual_slot_comment or similar if appropriate, 
-            # or just set it if we have a specific field. 
-            # For now, let's just use rejection_reason if it's a rejection.
-            if not user.rejection_reason and normalized in {"interview_declined", "test2_failed", "not_hired", "intro_day_declined_day_of"}:
-                user.rejection_reason = comment
-            elif comment:
-                 user.manual_slot_comment = (user.manual_slot_comment or "") + f"\n{comment}"
+
+        normalized_reason = _normalize_optional_text(reason)
+        normalized_comment = _normalize_optional_text(comment)
 
         previous_status = getattr(user, "candidate_status", None)
         previous_status_slug = getattr(previous_status, "value", None) if previous_status else None
         if previous_status_slug is None and isinstance(previous_status, str):
             previous_status_slug = previous_status
+        previous_status_changed_at = getattr(user, "status_changed_at", None)
 
         status_slot_filters = [Slot.candidate_id == user.candidate_id]
         if user.telegram_id is not None:
@@ -3062,66 +3360,180 @@ async def update_candidate_status(
             except ValueError:
                 target_status = None
 
-            if target_status == CandidateStatus.TEST2_SENT:
-                if target_slot is None:
-                    return False, "Для кандидата не найден подходящий слот", None, None
-                from backend.apps.admin_ui.services.slots import set_slot_outcome
-                ok, message, _, dispatch = await set_slot_outcome(
-                    target_slot.id,
-                    "success",
-                    bot_service=bot_service,
+            if target_status is None:
+                return False, "Некорректный статус", None, None
+
+            if previous_status_slug == target_status.value and idempotency_key:
+                dual_write_runtime = _candidate_dual_write_runtime()
+                replay_request = _build_candidate_status_dual_write_request(
+                    candidate_id=candidate_id,
+                    status_from=previous_status_slug,
+                    status_to=target_status,
+                    previous_status_changed_at=previous_status_changed_at,
+                    reason=normalized_reason,
+                    comment=normalized_comment,
                     principal=principal,
+                    idempotency_key=idempotency_key,
+                    correlation_id=correlation_id,
+                    source_ref=source_ref,
                 )
-                if not ok:
-                    return False, message or "Не удалось отправить Тест 2.", None, None
-
-            if target_status == user.candidate_status:
-                user.status_changed_at = datetime.now(timezone.utc)
-                status_changed = False
-            else:
-                status_changed = await _candidate_status_service.force(
-                    user,
-                    target_status,
-                    reason="admin manual status update",
-                )
-
-            if target_status in STATUSES_RELEASE_INTRO_DAY_SLOTS:
-                await _release_intro_day_slots_for_candidate(
+                existing_record = await dual_write_runtime.get_candidate_status_transition_record(
                     session,
-                    candidate_uuid=user.candidate_id,
-                    candidate_tg_id=user.telegram_user_id or user.telegram_id,
+                    replay_request,
                 )
-                user.is_active = False
-            elif target_status in STATUSES_ARCHIVE_ON_DECLINE:
-                user.is_active = False
+                if existing_record is not None:
+                    if existing_record.payload_fingerprint != replay_request.payload_fingerprint:
+                        return False, "Конфликт идемпотентности для обновления статуса", None, None
+                    return True, "Статус обновлён", target_status.value, None
 
-            # hh.ru sync: enqueue CRM-master outbound sync when enabled
-            if get_settings().hh_sync_enabled and target_status is not None:
-                try:
-                    from backend.domain.hh_integration.outbound import enqueue_candidate_status_sync
+            dual_write_enabled = (
+                get_settings().candidate_status_dual_write_enabled
+                and previous_status_slug != target_status.value
+            )
+            dual_write_request = (
+                _build_candidate_status_dual_write_request(
+                    candidate_id=candidate_id,
+                    status_from=previous_status_slug,
+                    status_to=target_status,
+                    previous_status_changed_at=previous_status_changed_at,
+                    reason=normalized_reason,
+                    comment=normalized_comment,
+                    principal=principal,
+                    idempotency_key=idempotency_key,
+                    correlation_id=correlation_id,
+                    source_ref=source_ref,
+                )
+                if dual_write_enabled
+                else None
+            )
+            target_slot_id = target_slot.id if target_slot is not None else None
 
-                    await enqueue_candidate_status_sync(
+            if session.in_transaction():
+                await session.rollback()
+
+            async with session.begin():
+                user = await session.get(User, candidate_id)
+                if user is None:
+                    return False, "Кандидат не найден", None, None
+                if principal and principal.type == "recruiter" and user.responsible_recruiter_id is None:
+                    user.responsible_recruiter_id = principal.id
+
+                dual_write_claim = None
+                if dual_write_request is not None:
+                    dual_write_runtime = _candidate_dual_write_runtime()
+                    try:
+                        dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                            session,
+                            dual_write_request,
+                        )
+                    except PersistentIdempotencyConflictError:
+                        return False, "Конфликт идемпотентности для обновления статуса", None, None
+                    if dual_write_claim.reused:
+                        return True, "Статус обновлён", target_status.value, None
+
+                if normalized_reason:
+                    user.rejection_reason = normalized_reason
+                if normalized_comment:
+                    if (
+                        not user.rejection_reason
+                        and normalized in {
+                            "interview_declined",
+                            "test2_failed",
+                            "not_hired",
+                            "intro_day_declined_day_of",
+                        }
+                    ):
+                        user.rejection_reason = normalized_comment
+                    else:
+                        existing_comment = (user.manual_slot_comment or "").strip()
+                        user.manual_slot_comment = (
+                            f"{existing_comment}\n{normalized_comment}".strip()
+                            if existing_comment
+                            else normalized_comment
+                        )
+
+                if target_status == CandidateStatus.TEST2_SENT:
+                    if target_slot_id is None:
+                        await session.rollback()
+                        return False, "Для кандидата не найден подходящий слот", None, None
+                    from backend.apps.admin_ui.services.slots import set_slot_outcome
+                    ok, message, _, dispatch = await set_slot_outcome(
+                        target_slot_id,
+                        "success",
+                        bot_service=bot_service,
+                        principal=principal,
+                    )
+                    if not ok:
+                        await session.rollback()
+                        return False, message or "Не удалось отправить Тест 2.", None, None
+
+                if target_status == user.candidate_status:
+                    user.status_changed_at = datetime.now(timezone.utc)
+                else:
+                    await _candidate_status_service.force(
+                        user,
+                        target_status,
+                        reason="admin manual status update",
+                    )
+
+                if target_status in STATUSES_RELEASE_INTRO_DAY_SLOTS:
+                    await _release_intro_day_slots_for_candidate(
                         session,
-                        candidate=user,
-                        target_status=target_status,
+                        candidate_uuid=user.candidate_id,
+                        candidate_tg_id=user.telegram_user_id or user.telegram_id,
                     )
-                except Exception:
-                    logger.exception(
-                        "hh_sync: failed to enqueue direct HH status sync",
-                        extra={"candidate_id": user.id, "status": normalized},
+                    user.is_active = False
+                elif target_status in STATUSES_ARCHIVE_ON_DECLINE:
+                    user.is_active = False
+
+                if get_settings().hh_sync_enabled:
+                    try:
+                        from backend.domain.hh_integration.outbound import (
+                            enqueue_candidate_status_sync,
+                        )
+
+                        await enqueue_candidate_status_sync(
+                            session,
+                            candidate=user,
+                            target_status=target_status,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "hh_sync: failed to enqueue direct HH status sync",
+                            extra={"candidate_id": user.id, "status": normalized},
+                        )
+
+                if dual_write_request is not None and dual_write_claim is not None:
+                    await dual_write_runtime.finalize_candidate_status_dual_write(
+                        session,
+                        candidate_id=candidate_id,
+                        status_from=previous_status_slug,
+                        status_to=target_status.value,
+                        reason=normalized_reason,
+                        comment=normalized_comment,
+                        request=dual_write_request,
                     )
 
-            await session.commit()
+            if target_slot_id is not None:
+                target_slot = await session.scalar(
+                    select(Slot)
+                    .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                    .where(Slot.id == target_slot_id)
+                )
+
             stored_rejection_reason = (getattr(user, "rejection_reason", None) or "").strip()
             rejection_reason = (
-                (reason or "").strip()
-                or (comment or "").strip()
+                normalized_reason
+                or normalized_comment
                 or stored_rejection_reason
                 or None
             )
             if dispatch is None and target_status in STATUSES_ARCHIVE_ON_DECLINE and user.telegram_id is not None:
                 try:
-                    from backend.apps.admin_ui.services.slots import BotDispatch, BotDispatchPlan
+                    from backend.apps.admin_ui.services.slots import (
+                        BotDispatch,
+                        BotDispatchPlan,
+                    )
 
                     template_key = get_settings().rejection_template_key or "candidate_rejection"
                     if template_key == "rejection_generic":
@@ -3213,11 +3625,12 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         
         if not user:
             return None
+        if str(getattr(user, "lifecycle_state", "") or "").strip().lower() == LIFECYCLE_DRAFT:
+            return None
         if principal and principal.type == "recruiter":
             if not await _recruiter_can_access_candidate(session, user, principal.id):
                 return None
 
-        interview_note = await _load_interview_note(session, user_id)
         test_results = sorted(user.test_results, key=lambda r: (r.created_at or datetime.min, r.id), reverse=True)
 
         answers_by_result: Dict[int, List[QuestionAnswer]] = {
@@ -3300,6 +3713,19 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             and slot.start_utc >= intro_day_cutoff
             for slot in slots
         )
+        # Keep detail rendering resilient even when candidate data is incomplete
+        # or the read path is executed against partially repaired runtime state.
+        test2_status = "not_started"
+        latest_test2_result = _latest_test_result_by_rating(test_results, "TEST2")
+        latest_test2_sent = _latest_test2_sent(slots)
+        if latest_test2_result:
+            if TEST2_TOTAL_QUESTIONS:
+                test2_passed_by_result = (latest_test2_result.raw_score or 0) >= TEST2_MIN_CORRECT
+            else:
+                test2_passed_by_result = (latest_test2_result.final_score or 0) >= 0
+            test2_status = "passed" if test2_passed_by_result else "failed"
+        else:
+            test2_status = "in_progress" if latest_test2_sent else "not_started"
         test2_passed_early = _has_passed_test2(test_results)
         interview_feedback_rows = (
             await session.execute(
@@ -3405,8 +3831,6 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             test_sections_map["test2"]["report_url"] = (
                 f"/candidates/{user.id}/reports/test2" if getattr(user, "test2_report_url", None) else None
             )
-        test2_status = (test_sections_map.get("test2", {}).get("status") or "").lower()
-        has_test2_result = test2_status in {"passed", "failed"}
         test_sections_list = list(test_sections_map.values())
 
         telemost_url, telemost_source = _resolve_telemost_url(slots)
@@ -3486,6 +3910,10 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
             reschedule_intent=reschedule_intent,
             responsible_recruiter=responsible_recruiter,
             upcoming_slot=upcoming_slot,
+        )
+        display_pending_slot_request = _display_pending_slot_request(
+            user,
+            candidate_journey.get("pending_slot_request"),
         )
         if candidate_status_display is None:
             candidate_status_display = candidate_journey.get("state_label") or journey_state_label(
@@ -3567,7 +3995,7 @@ async def get_candidate_detail(user_id: int, principal: Optional[Principal] = No
         "archive": candidate_journey.get("archive"),
         "final_outcome": candidate_journey.get("final_outcome"),
         "final_outcome_reason": candidate_journey.get("final_outcome_reason"),
-        "pending_slot_request": candidate_journey.get("pending_slot_request"),
+        "pending_slot_request": display_pending_slot_request,
         "manual_mode": candidate_journey.get("manual_mode"),
         "state_contract_version": state_contract.get("version"),
         "lifecycle_summary": state_contract.get("lifecycle_summary"),
@@ -3670,6 +4098,7 @@ async def upsert_candidate(
     last_activity: Optional[datetime] = None,
     source: str = "manual_call",
     initial_status: Optional[CandidateStatus] = CandidateStatus.LEAD,
+    dual_write: CandidateCreateDualWriteRequest | None = None,
 ) -> User:
     clean_fio = fio.strip()
     clean_city = city.strip() if city else None
@@ -3680,54 +4109,86 @@ async def upsert_candidate(
     async with async_session() as session:
         user = None
         created = False
-        if telegram_id is not None:
-            result = await session.execute(
-                select(User).where(User.telegram_id == telegram_id)
+        async with session.begin():
+            dual_write_runtime = _candidate_dual_write_runtime() if dual_write is not None else None
+            claim_result = (
+                await dual_write_runtime.claim_candidate_create(session, dual_write)
+                if dual_write is not None
+                else None
             )
-            user = result.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        last_activity_value = last_activity or now
-
-        if user:
-            user.fio = clean_fio
-            user.city = clean_city
-            user.phone = clean_phone
-            user.is_active = is_active
-            user.last_activity = last_activity_value
-            if responsible_recruiter_id is not None:
-                user.responsible_recruiter_id = responsible_recruiter_id
-            if manual_slot_from is not None:
-                user.manual_slot_from = manual_slot_from
-            if manual_slot_to is not None:
-                user.manual_slot_to = manual_slot_to
-            if manual_slot_timezone is not None:
-                user.manual_slot_timezone = manual_slot_timezone
-        else:
-            created = True
-            user = User(
-                telegram_id=telegram_id,
-                fio=clean_fio,
-                city=clean_city,
-                phone=clean_phone,
-                responsible_recruiter_id=responsible_recruiter_id,
-                manual_slot_from=manual_slot_from,
-                manual_slot_to=manual_slot_to,
-                manual_slot_timezone=manual_slot_timezone,
-                is_active=is_active,
-                last_activity=last_activity_value,
-                source=source,
-            )
-            session.add(user)
-            await session.flush()
-            if initial_status:
-                await _candidate_status_service.force(
-                    user,
-                    initial_status,
-                    reason="candidate creation",
+            if telegram_id is not None:
+                result = await session.execute(
+                    select(User).where(User.telegram_id == telegram_id)
                 )
-                user.status_changed_at = last_activity_value
+                user = result.scalar_one_or_none()
+            if claim_result is not None and claim_result.reused:
+                candidate_id = claim_result.record.candidate_id
+                if candidate_id is None:
+                    raise RuntimeError(
+                        "candidate create dual-write reused an unlinked idempotency record"
+                    )
+                if user is not None and int(user.id) != candidate_id:
+                    raise RuntimeError(
+                        "candidate create dual-write reused an idempotency record for a different candidate"
+                    )
+                reused_user = await session.get(User, candidate_id)
+                if reused_user is None:
+                    raise RuntimeError(
+                        "candidate create dual-write reused an idempotency record without candidate row"
+                    )
+                user = reused_user
+            else:
+                now = datetime.now(timezone.utc)
+                last_activity_value = last_activity or now
+                if dual_write is not None and user is not None:
+                    raise dual_write_runtime.CandidateCreateDuplicateError("duplicate_candidate")
 
-        await session.commit()
+                if user:
+                    user.fio = clean_fio
+                    user.city = clean_city
+                    user.phone = clean_phone
+                    user.is_active = is_active
+                    user.last_activity = last_activity_value
+                    if responsible_recruiter_id is not None:
+                        user.responsible_recruiter_id = responsible_recruiter_id
+                    if manual_slot_from is not None:
+                        user.manual_slot_from = manual_slot_from
+                    if manual_slot_to is not None:
+                        user.manual_slot_to = manual_slot_to
+                    if manual_slot_timezone is not None:
+                        user.manual_slot_timezone = manual_slot_timezone
+                else:
+                    created = True
+                    user = User(
+                        telegram_id=telegram_id,
+                        fio=clean_fio,
+                        city=clean_city,
+                        phone=clean_phone,
+                        responsible_recruiter_id=responsible_recruiter_id,
+                        manual_slot_from=manual_slot_from,
+                        manual_slot_to=manual_slot_to,
+                        manual_slot_timezone=manual_slot_timezone,
+                        is_active=is_active,
+                        last_activity=last_activity_value,
+                        source=source,
+                    )
+                    session.add(user)
+                    await session.flush()
+                    if initial_status:
+                        await _candidate_status_service.force(
+                            user,
+                            initial_status,
+                            reason="candidate creation",
+                        )
+                        user.status_changed_at = last_activity_value
+                if dual_write is not None:
+                    await dual_write_runtime.finalize_candidate_create_dual_write(
+                        session,
+                        candidate_id=int(user.id),
+                        source=source,
+                        initial_status=initial_status,
+                        request=dual_write,
+                    )
         await session.refresh(user)
     if created:
         schedule_warm_candidate_ai_outputs(int(user.id), principal=admin_principal(), refresh=True)
@@ -3920,7 +4381,7 @@ async def delete_all_candidates() -> int:
             "candidates_bulk_deleted",
             "candidate",
             None,
-            changes={"deleted": removed},
+            changes={"deleted": removed, "affected_count": removed},
         )
         return removed
 
@@ -3930,7 +4391,9 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
     detail = await get_candidate_detail(candidate_id, principal=principal_ctx.get())
     if not detail:
         return None
-    from backend.apps.admin_ui.services.messenger_health import get_candidate_channel_health
+    from backend.apps.admin_ui.services.messenger_health import (
+        get_candidate_channel_health,
+    )
 
     user: User = detail["user"]
     tests: list[TestResult] = list(detail.get("tests", []) or [])
@@ -3950,6 +4413,25 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         if cleaned.startswith("@"):
             cleaned = cleaned[1:]
         return cleaned or None
+
+    source_value = str(getattr(user, "source", "") or "").strip().lower() or None
+    source_labels = {
+        "telegram": "Telegram",
+        "bot": "Telegram",
+        "max": "MAX",
+        "hh": "HH.ru",
+        "headhunter": "HH.ru",
+        "manual": "Ручной ввод",
+        "manual_call": "Ручной ввод",
+        "manual_silent": "Ручной ввод",
+        "candidate_access": "Candidate Access",
+    }
+    source_label = source_labels.get(source_value or "", (source_value or "Не указан").upper() if source_value else "Не указан")
+    messenger_platform = str(getattr(user, "messenger_platform", "") or "").strip().lower() or None
+    linked_channels = {
+        "telegram": bool(getattr(user, "telegram_id", None) or getattr(user, "telegram_user_id", None)),
+        "max": bool(str(getattr(user, "max_user_id", "") or "").strip()),
+    }
 
     test_results_payload: Dict[str, Dict[str, Any]] = {}
     for slug, section in sections_map.items():
@@ -4077,14 +4559,16 @@ async def api_candidate_detail_payload(candidate_id: int) -> Optional[Dict[str, 
         "hh_vacancy_id": getattr(user, "hh_vacancy_id", None),
         "hh_sync_status": getattr(user, "hh_sync_status", None),
         "hh_sync_error": getattr(user, "hh_sync_error", None),
-        "messenger_platform": getattr(user, "messenger_platform", "telegram"),
-        "max_user_id": getattr(user, "max_user_id", None),
+        "source": source_value,
+        "source_label": source_label,
+        "messenger_platform": messenger_platform,
+        "linked_channels": linked_channels,
+        "max": {
+            "linked": linked_channels["max"],
+            "max_user_id": str(getattr(user, "max_user_id", "") or "").strip() or None,
+        },
+        "max_rollout": await _safe_get_candidate_max_rollout_summary(int(user.id)),
         "channel_health": await get_candidate_channel_health(int(user.id)),
-        "candidate_portal_url": build_candidate_portal_url(
-            candidate_uuid=user.candidate_id,
-            entry_channel="admin",
-            source_channel="admin",
-        ),
         "test1_report_url": f"/candidates/{user.id}/reports/test1"
         if getattr(user, "test1_report_url", None)
         else None,

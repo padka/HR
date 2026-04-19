@@ -1,20 +1,32 @@
 import logging
 import secrets
-from datetime import date as date_type, datetime, time, timezone, timedelta
+from datetime import date as date_type
+from datetime import datetime, time, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, List, Optional
-from urllib.parse import quote
+from types import SimpleNamespace
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.encoders import jsonable_encoder
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select, or_
+from pydantic import BaseModel
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.responses import FileResponse
+from starlette_wtf import csrf_token
 
 from backend.apps.admin_ui.perf.cache import keys as cache_keys
 from backend.apps.admin_ui.perf.cache.readthrough import get_cached, get_or_compute
@@ -30,7 +42,6 @@ from backend.apps.admin_ui.security import (
     require_csrf_token,
     require_principal,
 )
-from backend.apps.admin_ui.services.cities import api_city_owners_payload, invalidate_city_caches
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.calendar_events import (
     get_calendar_events,
@@ -40,15 +51,32 @@ from backend.apps.admin_ui.services.calendar_tasks import (
     delete_calendar_task,
     update_calendar_task,
 )
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    get_workspace as get_candidate_chat_workspace,
+)
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    list_threads as list_candidate_chat_threads,
+)
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    mark_read as mark_candidate_chat_read,
+)
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    set_archived as set_candidate_chat_archived,
+)
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    update_workspace as update_candidate_chat_workspace,
+)
+from backend.apps.admin_ui.services.candidate_chat_threads import (
+    wait_for_thread_updates as wait_candidate_chat_updates,
+)
 from backend.apps.admin_ui.services.candidates import (
     api_candidate_detail_payload,
     assign_candidate_recruiter,
     delete_candidate,
     get_candidate_cohort_comparison,
-    get_candidate_detail,
     list_candidates,
-    upsert_candidate,
     update_candidate_status,
+    upsert_candidate,
 )
 from backend.apps.admin_ui.services.candidates.write_intents import (
     execute_candidate_action_intent,
@@ -61,25 +89,25 @@ from backend.apps.admin_ui.services.chat import (
     send_chat_message,
     wait_for_chat_history_updates,
 )
-from backend.apps.admin_ui.services.candidate_chat_threads import (
-    get_workspace as get_candidate_chat_workspace,
-    list_threads as list_candidate_chat_threads,
-    mark_read as mark_candidate_chat_read,
-    set_archived as set_candidate_chat_archived,
-    update_workspace as update_candidate_chat_workspace,
-    wait_for_thread_updates as wait_candidate_chat_updates,
+from backend.apps.admin_ui.services.cities import (
+    api_city_owners_payload,
+    invalidate_city_caches,
 )
 from backend.apps.admin_ui.services.dashboard import (
     DASHBOARD_COUNTS_CACHE_STALE_SECONDS,
     DASHBOARD_COUNTS_CACHE_TTL_SECONDS,
     DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
     DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
-    WAITING_CANDIDATES_DEFAULT_LIMIT,
+    WAITING_CANDIDATES_DEFAULT_PAGE,
+    WAITING_CANDIDATES_DEFAULT_PAGE_SIZE,
     dashboard_counts,
     get_bot_funnel_stats,
     get_recruiter_leaderboard,
-    get_waiting_candidates,
+    get_waiting_candidates_payload,
+    normalize_waiting_candidates_payload_shape,
     normalize_waiting_candidates_limit,
+    normalize_waiting_candidates_page,
+    normalize_waiting_candidates_page_size,
 )
 from backend.apps.admin_ui.services.dashboard_calendar import (
     dashboard_calendar_snapshot,
@@ -98,8 +126,8 @@ from backend.apps.admin_ui.services.recruiter_plan import (
     get_recruiter_plan,
 )
 from backend.apps.admin_ui.services.slots import (
-    assign_existing_candidate_slot_silent,
     approve_slot_booking,
+    assign_existing_candidate_slot_silent,
     delete_slot,
     execute_bot_dispatch,
     reject_slot_booking,
@@ -114,68 +142,83 @@ from backend.apps.admin_ui.services.slots.core import (
 )
 from backend.apps.admin_ui.services.staff_chat import (
     add_thread_members as staff_add_thread_members,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     create_group_thread,
     create_or_get_direct_thread,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     decide_candidate_task as staff_decide_candidate_task,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     get_attachment as staff_get_attachment,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     list_messages as staff_list_messages,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     list_thread_members as staff_list_thread_members,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     list_threads as staff_list_threads,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     mark_read as staff_mark_read,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     remove_thread_member as staff_remove_thread_member,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     send_candidate_task as staff_send_candidate_task,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     send_message as staff_send_message,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     wait_for_message_updates as staff_wait_message_updates,
+)
+from backend.apps.admin_ui.services.staff_chat import (
     wait_for_thread_updates as staff_wait_thread_updates,
 )
 from backend.apps.admin_ui.timezones import timezone_options
-from backend.apps.admin_ui.utils import norm_status, parse_optional_int, recruiter_time_to_utc, status_filter
-from backend.core.audit import log_audit_action
-from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
-from backend.core.db import async_session
-from backend.core.guards import ensure_slot_scope
-from backend.core.messenger.channel_state import mark_messenger_channel_healthy
-from backend.core.messenger.protocol import InlineButton, MessengerPlatform
-from backend.core.messenger.registry import get_registry
-from backend.core.sanitizers import sanitize_plain_text
-from backend.core.settings import get_settings
-from backend.domain.candidates.models import (
-    CandidateInviteToken,
-    CandidateJourneySession,
-    ChatMessage,
-    ChatMessageDirection,
-    ChatMessageStatus,
-    User,
-)
-from backend.domain.candidates.state_contract import LEGACY_KANBAN_COLUMN_BY_STATUS
-from backend.domain.candidates.services import issue_candidate_invite_token
-from backend.domain.candidates.portal_service import (
-    CandidatePortalError,
-    build_candidate_entry_options,
-    build_candidate_portal_journey,
-    build_candidate_shared_portal_url,
-    build_candidate_public_max_mini_app_url_async,
-    build_candidate_public_portal_url,
-    bump_candidate_portal_session_version,
-    ensure_candidate_portal_session,
-    get_candidate_portal_max_entry_status_async,
-    get_candidate_portal_public_status,
-    restart_candidate_portal_journey,
-)
-from backend.domain.hh_integration import HHApiClient, HHApiError, decrypt_access_token, get_connection_for_principal
-from backend.domain.hh_integration.models import CandidateExternalIdentity, HHNegotiation
-from backend.domain.hh_integration.summary import build_candidate_hh_summary
-from backend.domain.models import ActionToken, City, Recruiter, Slot, SlotAssignment, SlotStatus, recruiter_city_association
-from backend.domain.slot_service import (
-    approve_slot as approve_domain_slot,
-    reserve_slot as reserve_domain_slot,
+from backend.apps.admin_ui.utils import (
+    norm_status,
+    parse_optional_int,
+    recruiter_time_to_utc,
+    status_filter,
 )
 from backend.apps.bot.runtime_config import (
     get_reminder_policy_config,
     save_reminder_policy_config,
 )
-from backend.core.messenger.bootstrap import bootstrap_messenger_adapters
-from starlette_wtf import csrf_token
+from backend.core.audit import log_audit_action
+from backend.core.content_updates import KIND_REMINDERS_CHANGED, publish_content_update
+from backend.core.db import async_session
+from backend.core.guards import ensure_slot_scope
+from backend.core.messenger.channel_state import mark_messenger_channel_healthy
+from backend.core.sanitizers import sanitize_plain_text
+from backend.core.settings import get_settings
+from backend.domain.candidates.models import (
+    User,
+)
+from backend.domain.candidates.state_contract import LEGACY_KANBAN_COLUMN_BY_STATUS
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.hh_integration.summary import build_candidate_hh_summary
+from backend.domain.models import (
+    ActionToken,
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotStatus,
+    recruiter_city_association,
+)
+from backend.domain.slot_service import (
+    approve_slot as approve_domain_slot,
+)
+from backend.domain.slot_service import (
+    reserve_slot as reserve_domain_slot,
+)
 
 router = APIRouter(prefix="/api", tags=["api"])
 router.include_router(directory_router)
@@ -187,6 +230,21 @@ CANDIDATE_CREATE_LIMIT = "30/minute"
 # Backward-compatible re-exports for tests that import handlers directly.
 list_known_template_keys = content_api.list_known_template_keys
 known_template_presets = content_api.known_template_presets
+
+
+@lru_cache(maxsize=1)
+def _max_rollout_runtime() -> SimpleNamespace:
+    from backend.apps.admin_ui.services.max_rollout import (
+        MaxInviteRolloutDisabledError,
+        issue_candidate_max_rollout,
+        revoke_candidate_max_rollout,
+    )
+
+    return SimpleNamespace(
+        MaxInviteRolloutDisabledError=MaxInviteRolloutDisabledError,
+        issue_candidate_max_rollout=issue_candidate_max_rollout,
+        revoke_candidate_max_rollout=revoke_candidate_max_rollout,
+    )
 
 
 async def api_template_keys():
@@ -256,8 +314,11 @@ class ManualSlotBookingPayload(BaseModel):
     comment: Optional[str] = None
 
 
-class CandidateSharedPortalBulkPayload(BaseModel):
-    candidate_ids: list[int] = Field(min_length=1, max_length=200)
+class CandidateMaxRolloutIssuePayload(BaseModel):
+    application_id: int | None = None
+    dry_run: bool = False
+    send: bool = False
+    reuse_policy: str = "reuse_active"
 
 
 @router.get("/csrf")
@@ -354,28 +415,93 @@ async def api_dashboard_summary(
     return JSONResponse(await dashboard_counts(principal=principal))
 
 
-@router.get("/dashboard/incoming")
+class DashboardIncomingResponse(BaseModel):
+    items: list[dict[str, object]]
+    queue_total: int
+    total: int
+    page: int
+    page_size: int
+    returned_count: int
+    has_next: bool
+    has_prev: bool
+    sort: str
+
+
+@router.get("/dashboard/incoming", response_model=DashboardIncomingResponse)
 async def api_dashboard_incoming(
     request: Request,
-    limit: int = Query(default=WAITING_CANDIDATES_DEFAULT_LIMIT, ge=1, le=2000),
+    limit: Optional[int] = Query(default=None, ge=1, le=2000),
+    page: int = Query(default=WAITING_CANDIDATES_DEFAULT_PAGE, ge=1),
+    page_size: Optional[int] = Query(default=None, ge=1, le=200),
+    search: Optional[str] = Query(default=None),
+    city_id: Optional[int] = Query(default=None, ge=1),
+    status: str = Query(default="all"),
+    owner: str = Query(default="all"),
+    waiting: str = Query(default="all"),
+    ai_level: str = Query(default="all"),
+    sort: str = Query(default="priority"),
     principal: Principal = Depends(require_principal),
 ) -> JSONResponse:
-    """Candidates who passed test1 and are waiting for a free interview slot."""
-    normalized_limit = normalize_waiting_candidates_limit(limit)
+    """Unified incoming queue with server-driven paging, filtering, and advisory AI signals."""
+    normalized_page = normalize_waiting_candidates_page(page)
+    normalized_page_size = (
+        normalize_waiting_candidates_page_size(page_size, limit=limit)
+        if page_size is not None or limit is not None
+        else WAITING_CANDIDATES_DEFAULT_PAGE_SIZE
+    )
+    normalized_limit = normalize_waiting_candidates_limit(limit) if limit is not None else None
     if not getattr(request.app.state, "db_available", True):
-        cache_key = cache_keys.dashboard_incoming(principal=principal, limit=normalized_limit).value
+        cache_key = cache_keys.dashboard_incoming(
+            principal=principal,
+            limit=normalized_limit,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            city_id=city_id,
+            status=status,
+            owner=owner,
+            waiting=waiting,
+            ai_level=ai_level,
+            sort=sort,
+            search=search,
+        ).value
         cached_payload = await get_cached(
             cache_key,
-            expected_type=list,
+            expected_type=dict,
             ttl_seconds=DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
             stale_seconds=DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
         )
-        if cached_payload is not None and isinstance(cached_payload[0], list):
-            return JSONResponse({"items": cached_payload[0]})
+        if cached_payload is not None and isinstance(cached_payload[0], dict):
+            return JSONResponse(
+                normalize_waiting_candidates_payload_shape(
+                    cached_payload[0],
+                    page=normalized_page,
+                    page_size=normalized_page_size,
+                    sort=sort,
+                )
+            )
         return JSONResponse({"status": "degraded", "reason": "database_unavailable"}, status_code=503)
 
-    payload = await get_waiting_candidates(limit=normalized_limit, principal=principal)
-    return JSONResponse({"items": payload})
+    payload = await get_waiting_candidates_payload(
+        limit=normalized_limit,
+        page=normalized_page,
+        page_size=normalized_page_size,
+        search=search,
+        city_id=city_id,
+        status=status,
+        owner=owner,
+        waiting=waiting,
+        ai_level=ai_level,
+        sort=sort,
+        principal=principal,
+    )
+    return JSONResponse(
+        normalize_waiting_candidates_payload_shape(
+            payload,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort=sort,
+        )
+    )
 
 
 @router.get("/dashboard/recruiter-performance")
@@ -1854,7 +1980,9 @@ async def api_notifications_feed(
 ):
     if getattr(request.app.state, "db_available", True) is False:
         return JSONResponse({"items": [], "latest_id": after_id, "degraded": True})
-    from backend.apps.admin_ui.services.notifications_ops import list_outbox_notifications
+    from backend.apps.admin_ui.services.notifications_ops import (
+        list_outbox_notifications,
+    )
 
     payload = await list_outbox_notifications(
         after_id=after_id,
@@ -1928,7 +2056,9 @@ async def api_notifications_retry(
     _: Principal = Depends(require_admin),
 ):
     _ = await require_csrf_token(request)
-    from backend.apps.admin_ui.services.notifications_ops import retry_outbox_notification
+    from backend.apps.admin_ui.services.notifications_ops import (
+        retry_outbox_notification,
+    )
 
     ok, error = await retry_outbox_notification(notification_id)
     if not ok:
@@ -1950,7 +2080,9 @@ async def api_notifications_cancel(
     _: Principal = Depends(require_admin),
 ):
     _ = await require_csrf_token(request)
-    from backend.apps.admin_ui.services.notifications_ops import cancel_outbox_notification
+    from backend.apps.admin_ui.services.notifications_ops import (
+        cancel_outbox_notification,
+    )
 
     ok, error = await cancel_outbox_notification(notification_id)
     if not ok:
@@ -2216,297 +2348,6 @@ async def _get_accessible_candidate(candidate_id: int, principal: Principal) -> 
         return user
 
 
-def _iter_hh_actions_snapshot(actions_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    actions = actions_snapshot.get("actions")
-    if not isinstance(actions, list):
-        return []
-    return [item for item in actions if isinstance(item, dict)]
-
-
-def _flatten_hh_actions(actions_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    flattened: list[dict[str, Any]] = []
-    for action in _iter_hh_actions_snapshot(actions_snapshot):
-        flattened.append(action)
-        for sub_action in action.get("sub_actions") or []:
-            if isinstance(sub_action, dict):
-                merged = dict(sub_action)
-                merged.setdefault("arguments", action.get("arguments") or [])
-                merged.setdefault("resulting_employer_state", action.get("resulting_employer_state") or {})
-                flattened.append(merged)
-    return flattened
-
-
-def _hh_message_argument_name(action: dict[str, Any]) -> str | None:
-    arguments = action.get("arguments")
-    if not isinstance(arguments, list):
-        return None
-    allowed = ("message", "text", "body", "comment")
-    for item in arguments:
-        if not isinstance(item, dict):
-            continue
-        arg_id = str(item.get("id") or "").strip().lower()
-        if arg_id in allowed:
-            return arg_id
-    return None
-
-
-def _select_hh_entry_action(actions_snapshot: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    ranked: list[tuple[int, dict[str, Any], str]] = []
-    for action in _flatten_hh_actions(actions_snapshot):
-        if action.get("enabled") is False or action.get("hidden") is True:
-            continue
-        method = str(action.get("method") or "").strip().upper()
-        action_url = str(action.get("url") or "").strip()
-        if not method or not action_url:
-            continue
-        message_arg = _hh_message_argument_name(action)
-        if not message_arg:
-            continue
-        name = str(action.get("name") or "").strip().lower()
-        score = 0
-        if "сообщ" in name or "message" in name or "напис" in name:
-            score += 4
-        if "приглаш" in name or "invite" in name:
-            score += 3
-        if "interview" in name or "собесед" in name:
-            score += 2
-        ranked.append((score, action, message_arg))
-    if not ranked:
-        return None, None
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    _, action, arg_name = ranked[0]
-    return action, arg_name
-
-
-async def _build_hh_entry_delivery_summary(
-    session,
-    *,
-    candidate: User,
-    principal: Principal,
-) -> dict[str, Any]:
-    journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
-    options = await build_candidate_entry_options(
-        session,
-        candidate=candidate,
-        journey=journey,
-        source_channel="hh",
-    )
-    cabinet_url = str(options.get("web", {}).get("launch_url") or "").strip() or None
-    shared_portal_url = build_candidate_shared_portal_url() or None
-    journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
-    connection = await get_connection_for_principal(session, principal)
-    blocked_reason = None
-    if connection is None:
-        blocked_reason = "hh_connection_missing"
-    elif not shared_portal_url:
-        blocked_reason = "portal_entry_not_ready"
-    elif not str(candidate.phone_normalized or "").strip():
-        blocked_reason = "shared_portal_phone_missing"
-
-    action = None
-    if blocked_reason is None:
-        identity = (
-            await session.execute(
-                select(CandidateExternalIdentity).where(
-                    CandidateExternalIdentity.candidate_id == int(candidate.id),
-                    CandidateExternalIdentity.source == "hh",
-                )
-            )
-        ).scalar_one_or_none()
-        if identity is None:
-            blocked_reason = "hh_identity_not_linked"
-        else:
-            negotiation = (
-                await session.execute(
-                    select(HHNegotiation)
-                    .where(HHNegotiation.candidate_identity_id == identity.id)
-                    .order_by(HHNegotiation.updated_at.desc(), HHNegotiation.id.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if negotiation is None:
-                blocked_reason = "hh_negotiation_missing"
-            elif not isinstance(negotiation.actions_snapshot, dict):
-                blocked_reason = "hh_actions_missing"
-            else:
-                action, _ = _select_hh_entry_action(negotiation.actions_snapshot)
-                if action is None:
-                    blocked_reason = "hh_message_action_missing"
-
-    return {
-        "ready": blocked_reason is None and action is not None,
-        "blocked_reason": blocked_reason,
-        "hh_entry_url": shared_portal_url,
-        "shared_portal_url": shared_portal_url,
-        "shared_portal_ready": bool(shared_portal_url),
-        "cabinet_url": cabinet_url,
-        "last_sent_at": journey_meta.get("shared_portal_last_sent_at") or journey_meta.get("hh_entry_last_sent_at"),
-        "last_status": journey_meta.get("shared_portal_delivery_status") or journey_meta.get("hh_delivery_status"),
-        "last_block_reason": journey_meta.get("shared_portal_block_reason") or journey_meta.get("hh_delivery_block_reason"),
-        "last_action_name": journey_meta.get("hh_delivery_action_name"),
-        "last_otp_delivery_channel": journey_meta.get("shared_portal_last_delivery_channel"),
-        "selected_channel": journey_meta.get("last_entry_channel") or journey.entry_channel,
-        "fallback_channel_options": [key for key, item in options.items() if bool(item.get("enabled"))],
-        "channels": options,
-    }
-
-
-async def _send_candidate_shared_portal_to_hh(
-    session,
-    *,
-    candidate: User,
-    principal: Principal,
-) -> tuple[dict[str, Any], int]:
-    delivery_summary = await _build_hh_entry_delivery_summary(
-        session,
-        candidate=candidate,
-        principal=principal,
-    )
-    journey = await ensure_candidate_portal_session(session, candidate, entry_channel="web")
-    journey_meta = dict(journey.payload_json or {}) if isinstance(journey.payload_json, dict) else {}
-    cabinet_url = str(delivery_summary.get("cabinet_url") or "").strip() or None
-    shared_portal_url = str(
-        delivery_summary.get("shared_portal_url")
-        or delivery_summary.get("hh_entry_url")
-        or ""
-    ).strip() or None
-
-    if not delivery_summary.get("ready"):
-        blocked_reason = str(delivery_summary.get("blocked_reason") or "shared_portal_delivery_blocked")
-        journey_meta["shared_portal_delivery_status"] = "blocked"
-        journey_meta["shared_portal_block_reason"] = blocked_reason
-        journey_meta["hh_delivery_status"] = "blocked"
-        journey_meta["hh_delivery_block_reason"] = blocked_reason
-        journey.payload_json = journey_meta
-        return (
-            {
-                "ok": False,
-                "sent": False,
-                "blocked_reason": blocked_reason,
-                "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
-                "cabinet_url": cabinet_url,
-                "shared_portal_url": shared_portal_url,
-                "hh_entry_url": shared_portal_url,
-                "channels": delivery_summary.get("channels") or {},
-            },
-            status.HTTP_409_CONFLICT,
-        )
-
-    connection = await get_connection_for_principal(session, principal)
-    if connection is None:
-        raise HTTPException(status_code=404, detail={"message": "HH connection is not configured"})
-    identity = (
-        await session.execute(
-            select(CandidateExternalIdentity).where(
-                CandidateExternalIdentity.candidate_id == int(candidate.id),
-                CandidateExternalIdentity.source == "hh",
-            )
-        )
-    ).scalar_one_or_none()
-    if identity is None:
-        raise HTTPException(status_code=404, detail={"message": "HH identity is not linked"})
-    negotiation = (
-        await session.execute(
-            select(HHNegotiation)
-            .where(HHNegotiation.candidate_identity_id == identity.id)
-            .order_by(HHNegotiation.updated_at.desc(), HHNegotiation.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if negotiation is None:
-        raise HTTPException(status_code=404, detail={"message": "HH negotiation is not imported"})
-
-    action, message_arg_name = _select_hh_entry_action(negotiation.actions_snapshot or {})
-    if action is None or not message_arg_name:
-        journey_meta["shared_portal_delivery_status"] = "blocked"
-        journey_meta["shared_portal_block_reason"] = "hh_message_action_missing"
-        journey_meta["hh_delivery_status"] = "blocked"
-        journey_meta["hh_delivery_block_reason"] = "hh_message_action_missing"
-        journey.payload_json = journey_meta
-        return (
-            {
-                "ok": False,
-                "sent": False,
-                "blocked_reason": "hh_message_action_missing",
-                "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
-                "cabinet_url": cabinet_url,
-                "shared_portal_url": shared_portal_url,
-                "hh_entry_url": shared_portal_url,
-                "channels": delivery_summary.get("channels") or {},
-            },
-            status.HTTP_409_CONFLICT,
-        )
-
-    action_url = str(action.get("url") or "").strip()
-    method = str(action.get("method") or "").strip().upper()
-    if not action_url or not method:
-        raise HTTPException(status_code=409, detail={"message": "HH action payload is incomplete"})
-
-    next_action = "Откройте кабинет, чтобы продолжить путь в компании."
-    journey_payload = await build_candidate_portal_journey(
-        session,
-        candidate,
-        entry_channel=str(journey.entry_channel or "web"),
-        journey=journey,
-    )
-    next_action = str(journey_payload["journey"].get("next_action") or next_action)
-    message_text = "\n".join(
-        [
-            f"{candidate.fio or 'Здравствуйте'}!",
-            next_action,
-            "Откройте единый портал кандидата и продолжите через Web, MAX или Telegram.",
-            f"Портал кандидата: {shared_portal_url}",
-        ]
-    )
-
-    client = HHApiClient()
-    try:
-        provider_payload = await client.execute_negotiation_action(
-            decrypt_access_token(connection),
-            action_url=action_url,
-            method=method,
-            manager_account_id=connection.manager_account_id,
-            arguments={message_arg_name: message_text},
-        )
-    except HHApiError as exc:
-        journey_meta["shared_portal_delivery_status"] = "failed"
-        journey_meta["shared_portal_block_reason"] = str(exc)
-        journey_meta["hh_delivery_status"] = "failed"
-        journey_meta["hh_delivery_block_reason"] = str(exc)
-        journey.payload_json = journey_meta
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"message": str(exc), "status_code": exc.status_code, "payload": exc.payload},
-        ) from exc
-
-    now = datetime.now(timezone.utc).isoformat()
-    journey_meta["shared_portal_delivery_status"] = "sent"
-    journey_meta["shared_portal_block_reason"] = None
-    journey_meta["shared_portal_last_sent_at"] = now
-    journey_meta["hh_delivery_status"] = "sent"
-    journey_meta["hh_delivery_block_reason"] = None
-    journey_meta["hh_entry_last_sent_at"] = now
-    journey_meta["hh_delivery_action_id"] = action.get("id")
-    journey_meta["hh_delivery_action_name"] = action.get("name")
-    journey.payload_json = journey_meta
-
-    return (
-        {
-            "ok": True,
-            "sent": True,
-            "action_id": action.get("id"),
-            "action_name": action.get("name"),
-            "resulting_employer_state": action.get("resulting_employer_state") or {},
-            "provider_payload": provider_payload,
-            "cabinet_url": cabinet_url,
-            "shared_portal_url": shared_portal_url,
-            "hh_entry_url": shared_portal_url,
-            "fallback_channel_options": delivery_summary.get("fallback_channel_options") or [],
-        },
-        status.HTTP_200_OK,
-    )
-
-
 @router.get("/candidates/{candidate_id}/chat")
 async def api_chat_history(
     candidate_id: int,
@@ -2601,6 +2442,12 @@ async def api_chat_quick_action(
         target_status,
         bot_service=bot_service,
         principal=principal,
+        idempotency_key=(
+            request.headers.get("idempotency-key")
+            or request.headers.get("x-idempotency-key")
+        ),
+        correlation_id=request.headers.get("x-request-id"),
+        source_ref="api:candidate_chat_quick_action",
     )
     if not ok:
         return JSONResponse({"ok": False, "message": message}, status_code=400)
@@ -2659,626 +2506,6 @@ async def api_chat_retry(
     return JSONResponse(result)
 
 
-async def _candidate_portal_link_errors_async() -> list[str]:
-    portal_status = get_candidate_portal_public_status()
-    max_status = await get_candidate_portal_max_entry_status_async()
-    errors = []
-    if portal_status.get("message"):
-        errors.append(str(portal_status["message"]))
-    if max_status.get("message") and str(max_status["message"]) not in errors:
-        errors.append(str(max_status["message"]))
-    return errors
-
-
-async def _ensure_max_access_adapter():
-    adapter = get_registry().get(MessengerPlatform.MAX)
-    if adapter is not None:
-        return adapter
-
-    settings = get_settings()
-    if not settings.max_bot_enabled or not settings.max_bot_token:
-        return None
-
-    try:
-        await bootstrap_messenger_adapters(
-            bot=None,
-            max_bot_enabled=settings.max_bot_enabled,
-            max_bot_token=settings.max_bot_token,
-        )
-    except Exception:
-        logger.exception("candidate_portal.max_adapter_bootstrap_failed")
-        return None
-    return get_registry().get(MessengerPlatform.MAX)
-
-
-def _candidate_portal_entry_buttons(*, browser_link: str | None, mini_app_link: str | None) -> list[list[InlineButton]] | None:
-    buttons: list[list[InlineButton]] = []
-    if mini_app_link:
-        buttons.append([InlineButton(text="Открыть кабинет", url=mini_app_link, kind="web_app")])
-    if browser_link:
-        buttons.append([InlineButton(text="Открыть в браузере", url=browser_link, kind="link")])
-    return buttons or None
-
-
-def _candidate_portal_access_message(
-    *,
-    candidate_name: str,
-    status_label: str,
-    next_action: str,
-    restarted: bool,
-    browser_link: str | None,
-    mini_app_link: str | None,
-) -> str:
-    lines = [
-        "Личный кабинет кандидата обновлён." if not restarted else "Кабинет сброшен и готов к повторному прохождению.",
-        f"Кандидат: <b>{candidate_name}</b>",
-        f"Статус: <b>{status_label}</b>",
-        next_action,
-    ]
-    if mini_app_link:
-        lines.append("Откройте кабинет в MAX.")
-    elif browser_link:
-        lines.append("Откройте кабинет в браузере по новой ссылке.")
-    return "\n".join(lines)
-
-
-async def _record_candidate_portal_access_message(
-    *,
-    candidate_id: int,
-    channel: str,
-    text: str,
-    success: bool,
-    error: str | None = None,
-    payload_meta: dict[str, Any] | None = None,
-) -> None:
-    async with async_session() as session:
-        async with session.begin():
-            payload = {"kind": "portal_access_package"}
-            if payload_meta:
-                payload.update(payload_meta)
-            session.add(
-                ChatMessage(
-                    candidate_id=int(candidate_id),
-                    direction=ChatMessageDirection.OUTBOUND.value,
-                    channel=channel,
-                    text=text,
-                    status=ChatMessageStatus.SENT.value if success else ChatMessageStatus.FAILED.value,
-                    error=error,
-                    author_label="System",
-                    payload_json=payload,
-                    created_at=datetime.now(timezone.utc),
-                )
-            )
-
-
-async def _audit_candidate_portal_access_delivery(
-    *,
-    candidate_id: int,
-    invite_id: int,
-    journey_id: int,
-    session_version: int,
-    restarted: bool,
-    delivery: dict[str, Any],
-) -> None:
-    delivery_status = str(delivery.get("status") or "unknown")
-    if delivery_status == "sent":
-        action = "candidate_portal_access_delivery_sent"
-    elif delivery_status.startswith("skipped") or delivery_status in {"not_linked", "adapter_unavailable"}:
-        action = "candidate_portal_access_delivery_skipped"
-    else:
-        action = "candidate_portal_access_delivery_failed"
-    await log_audit_action(
-        action,
-        "candidate",
-        candidate_id,
-        changes={
-            "channel": "max",
-            "invite_id": invite_id,
-            "journey_id": journey_id,
-            "session_version": session_version,
-            "restarted": restarted,
-            "delivery_status": delivery_status,
-            "attempted": bool(delivery.get("attempted")),
-            "sent": bool(delivery.get("sent")),
-            "skipped_reason": delivery.get("skipped_reason"),
-            "error": delivery.get("error"),
-        },
-    )
-
-
-async def _deliver_candidate_portal_access_package(
-    *,
-    candidate: User,
-    text: str,
-    browser_link: str | None,
-    mini_app_link: str | None,
-    invite_id: int,
-    journey_id: int,
-    session_version: int,
-    restarted: bool,
-    delivery_allowed: bool,
-    skip_reason: str | None = None,
-) -> dict[str, Any]:
-    base_payload = {
-        "channel": "max",
-        "invite_id": invite_id,
-        "journey_id": journey_id,
-        "session_version": session_version,
-        "restarted": restarted,
-    }
-    if not delivery_allowed:
-        return {
-            **base_payload,
-            "status": "skipped_by_preflight",
-            "sent": False,
-            "attempted": False,
-            "error": None,
-            "skipped_reason": skip_reason,
-        }
-    if not browser_link and not mini_app_link:
-        return {
-            **base_payload,
-            "status": "skipped_no_entry",
-            "sent": False,
-            "attempted": False,
-            "error": "Нет публичной ссылки кабинета",
-            "skipped_reason": skip_reason or "candidate_portal_entry_missing",
-        }
-    if not str(candidate.max_user_id or "").strip():
-        return {
-            **base_payload,
-            "status": "not_linked",
-            "sent": False,
-            "attempted": False,
-            "error": "MAX ID не привязан",
-            "skipped_reason": skip_reason or "max_not_linked",
-        }
-
-    adapter = await _ensure_max_access_adapter()
-    if adapter is None:
-        return {
-            **base_payload,
-            "status": "adapter_unavailable",
-            "sent": False,
-            "attempted": False,
-            "error": "MAX bot не готов",
-            "skipped_reason": skip_reason or "max_adapter_unavailable",
-        }
-
-    correlation_id = f"candidate-portal-access:{candidate.id}:{journey_id}:{session_version}:{invite_id}"
-    try:
-        result = await adapter.send_message(
-            str(candidate.max_user_id),
-            text,
-            buttons=_candidate_portal_entry_buttons(browser_link=browser_link, mini_app_link=mini_app_link),
-            parse_mode="HTML",
-            correlation_id=correlation_id,
-        )
-    except Exception as exc:
-        logger.exception(
-            "candidate_portal.max_delivery_failed",
-            extra={
-                "candidate_id": candidate.id,
-                "invite_id": invite_id,
-                "journey_id": journey_id,
-                "session_version": session_version,
-                "restarted": restarted,
-            },
-        )
-        await _record_candidate_portal_access_message(
-            candidate_id=int(candidate.id),
-            channel="max",
-            text=text,
-            success=False,
-            error=str(exc),
-            payload_meta={
-                **base_payload,
-                "delivery_status": "failed",
-                "skipped_reason": None,
-                "correlation_id": correlation_id,
-            },
-        )
-        return {
-            **base_payload,
-            "status": "failed",
-            "sent": False,
-            "attempted": True,
-            "error": str(exc),
-            "skipped_reason": None,
-            "correlation_id": correlation_id,
-        }
-
-    success = bool(getattr(result, "success", False) or getattr(result, "ok", False))
-    error = None if success else str(getattr(result, "error", None) or "delivery_failed")
-    await _record_candidate_portal_access_message(
-        candidate_id=int(candidate.id),
-        channel="max",
-        text=text,
-        success=success,
-        error=error,
-        payload_meta={
-            **base_payload,
-            "delivery_status": "sent" if success else "failed",
-            "skipped_reason": None,
-            "correlation_id": correlation_id,
-        },
-    )
-    return {
-        **base_payload,
-        "status": "sent" if success else "failed",
-        "sent": success,
-        "attempted": True,
-        "error": error,
-        "skipped_reason": None,
-        "correlation_id": correlation_id,
-    }
-
-
-async def _build_candidate_portal_access_delivery_text(
-    *,
-    candidate_id: int,
-    journey_id: int,
-    restarted: bool,
-    browser_link: str | None,
-    mini_app_link: str | None,
-) -> str:
-    async with async_session() as session:
-        candidate = await session.get(User, int(candidate_id))
-        journey = await session.get(CandidateJourneySession, int(journey_id))
-        if candidate is None or journey is None:
-            return "Личный кабинет кандидата обновлён. Откройте его по новой ссылке."
-        journey_payload = await build_candidate_portal_journey(
-            session,
-            candidate,
-            entry_channel="max",
-            journey=journey,
-        )
-    return _candidate_portal_access_message(
-        candidate_name=str(candidate.fio or f"#{candidate.id}"),
-        status_label=str(journey_payload["candidate"].get("status_label") or "В обработке"),
-        next_action=str(journey_payload["journey"].get("next_action") or "Откройте кабинет, чтобы продолжить."),
-        restarted=restarted,
-        browser_link=browser_link,
-        mini_app_link=mini_app_link,
-    )
-
-
-async def _candidate_portal_access_payload(
-    *,
-    session,
-    candidate: User,
-    journey: CandidateJourneySession,
-    invite: CandidateInviteToken,
-    rotated: bool,
-    restarted: bool = False,
-) -> dict[str, Any]:
-    portal_status = get_candidate_portal_public_status()
-    max_status = await get_candidate_portal_max_entry_status_async()
-    browser_link = build_candidate_public_portal_url(
-        candidate_uuid=str(candidate.candidate_id) if candidate.candidate_id else None,
-        telegram_id=int(candidate.telegram_id) if candidate.telegram_id is not None and not candidate.candidate_id else None,
-        entry_channel="max",
-        source_channel="max_browser" if not restarted else "max_browser_restart",
-        journey_session_id=int(journey.id),
-        session_version=int(journey.session_version or 1),
-    )
-    mini_app_link = await build_candidate_public_max_mini_app_url_async(
-        candidate_uuid=str(candidate.candidate_id),
-        journey_session_id=int(journey.id),
-        session_version=int(journey.session_version or 1),
-        source_channel="max_app_restart" if restarted else "max_app",
-    )
-
-    public_link = str(max_status.get("url") or "").strip().rstrip("/")
-    deep_link = ""
-    if public_link and invite.token:
-        separator = "&" if "?" in public_link else "?"
-        deep_link = f"{public_link}{separator}start={quote(str(invite.token), safe='')}"
-    delivery_block_reason = None
-    if not portal_status.get("ready"):
-        delivery_block_reason = str(portal_status.get("error") or "candidate_portal_public_url_invalid")
-    elif not max_status.get("ready"):
-        delivery_block_reason = str(max_status.get("error") or "max_entry_blocked")
-    elif not str(candidate.max_user_id or "").strip():
-        delivery_block_reason = "max_not_linked"
-    delivery_ready = delivery_block_reason is None
-
-    return {
-        "public_link": public_link,
-        "portal_public_url": portal_status.get("url"),
-        "portal_entry_ready": bool(portal_status.get("ready")),
-        "max_entry_ready": bool(max_status.get("ready")),
-        "token_valid": max_status.get("token_valid"),
-        "bot_profile_resolved": bool(max_status.get("bot_profile_resolved")),
-        "bot_profile_name": max_status.get("bot_profile_name"),
-        "max_link_base_resolved": bool(max_status.get("max_link_base_resolved")),
-        "max_link_base_source": max_status.get("max_link_base_source"),
-        "browser_link": browser_link or None,
-        "invite_token": str(invite.token or ""),
-        "deep_link": deep_link or None,
-        "mini_app_link": mini_app_link or None,
-        "invite": {
-            "channel": "max",
-            "status": "active",
-            "rotated": bool(rotated),
-        },
-        "issued_at": invite.created_at.isoformat() if invite.created_at else None,
-        "journey": {
-            "id": int(journey.id),
-            "session_version": int(journey.session_version or 1),
-            "restarted": bool(restarted),
-        },
-        "config_errors": await _candidate_portal_link_errors_async(),
-        "delivery_ready": delivery_ready,
-        "delivery_block_reason": delivery_block_reason,
-        "readiness_reason": delivery_block_reason or None,
-    }
-
-
-@router.post("/candidates/{candidate_id}/channels/max-link")
-async def api_candidate_max_link(
-    candidate_id: int,
-    principal: Principal = Depends(require_principal),
-    _: None = Depends(require_csrf_token),
-) -> JSONResponse:
-    candidate = await _get_accessible_candidate(candidate_id, principal)
-    portal_status = get_candidate_portal_public_status()
-    if not portal_status["ready"]:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": portal_status["message"]},
-        )
-
-    async with async_session() as session:
-        async with session.begin():
-            stored_candidate = await session.get(User, candidate.id)
-            if stored_candidate is None or not stored_candidate.candidate_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"message": "Не удалось выпустить MAX-ссылку"},
-                )
-            previous_invite = await session.scalar(
-                select(CandidateInviteToken)
-                .where(
-                    CandidateInviteToken.candidate_id == stored_candidate.candidate_id,
-                    CandidateInviteToken.channel == "max",
-                    CandidateInviteToken.status == "active",
-                )
-                .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
-                .limit(1)
-            )
-            invite, superseded_ids = await issue_candidate_invite_token(
-                stored_candidate.candidate_id,
-                channel="max",
-                rotate_active=True,
-                session=session,
-            )
-            invite_id = int(invite.id)
-            journey = await ensure_candidate_portal_session(
-                session,
-                stored_candidate,
-                entry_channel="max",
-            )
-            await bump_candidate_portal_session_version(session, candidate_id=int(stored_candidate.id))
-            await session.refresh(journey)
-            previous_invite_id = int(previous_invite.id) if previous_invite is not None else None
-            payload = await _candidate_portal_access_payload(
-                session=session,
-                candidate=stored_candidate,
-                journey=journey,
-                invite=invite,
-                rotated=bool(previous_invite is not None or superseded_ids),
-            )
-            delivery_candidate = stored_candidate
-
-    delivery_text = await _build_candidate_portal_access_delivery_text(
-        candidate_id=int(delivery_candidate.id),
-        journey_id=int(payload["journey"]["id"]),
-        restarted=False,
-        browser_link=payload.get("browser_link"),
-        mini_app_link=payload.get("mini_app_link"),
-    )
-    payload["delivery"] = await _deliver_candidate_portal_access_package(
-        candidate=delivery_candidate,
-        text=delivery_text,
-        browser_link=payload.get("browser_link"),
-        mini_app_link=payload.get("mini_app_link"),
-        invite_id=invite_id,
-        journey_id=int(payload["journey"]["id"]),
-        session_version=int(payload["journey"]["session_version"]),
-        restarted=False,
-        delivery_allowed=bool(payload.get("delivery_ready")),
-        skip_reason=str(payload.get("delivery_block_reason") or "") or None,
-    )
-    logger.info(
-        "candidate_portal.max_delivery_result",
-        extra={
-            "candidate_id": candidate_id,
-            "invite_id": invite_id,
-            "journey_id": int(payload["journey"]["id"]),
-            "session_version": int(payload["journey"]["session_version"]),
-            "restarted": False,
-            "delivery_status": payload["delivery"].get("status"),
-            "attempted": bool(payload["delivery"].get("attempted")),
-            "sent": bool(payload["delivery"].get("sent")),
-            "skipped_reason": payload["delivery"].get("skipped_reason"),
-            "error": payload["delivery"].get("error"),
-        },
-    )
-    await _audit_candidate_portal_access_delivery(
-        candidate_id=candidate_id,
-        invite_id=invite_id,
-        journey_id=int(payload["journey"]["id"]),
-        session_version=int(payload["journey"]["session_version"]),
-        restarted=False,
-        delivery=payload["delivery"],
-    )
-
-    await log_audit_action(
-        "invite_issued",
-        "candidate",
-        candidate_id,
-        changes={"channel": "max", "invite_id": invite_id},
-    )
-    if previous_invite is not None or superseded_ids:
-        await log_audit_action(
-            "invite_superseded",
-            "candidate",
-            candidate_id,
-            changes={
-                "channel": "max",
-                "previous_invite_id": previous_invite_id,
-                "superseded_ids": superseded_ids,
-            },
-        )
-    await log_audit_action(
-        "candidate_portal_reissued",
-        "candidate",
-        candidate_id,
-        changes={
-            "channel": "max",
-            "journey_id": payload["journey"]["id"],
-            "session_version": payload["journey"]["session_version"],
-            "delivered": bool((payload.get("delivery") or {}).get("sent")),
-        },
-    )
-    return JSONResponse(payload)
-
-
-@router.post("/candidates/{candidate_id}/portal/restart")
-async def api_candidate_portal_restart(
-    candidate_id: int,
-    principal: Principal = Depends(require_principal),
-    _: None = Depends(require_csrf_token),
-) -> JSONResponse:
-    candidate = await _get_accessible_candidate(candidate_id, principal)
-    portal_status = get_candidate_portal_public_status()
-    if not portal_status["ready"]:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": portal_status["message"]},
-        )
-
-    async with async_session() as session:
-        async with session.begin():
-            stored_candidate = await session.get(User, candidate.id)
-            if stored_candidate is None or not stored_candidate.candidate_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"message": "Не удалось перезапустить кабинет кандидата"},
-                )
-            previous_invite = await session.scalar(
-                select(CandidateInviteToken)
-                .where(
-                    CandidateInviteToken.candidate_id == stored_candidate.candidate_id,
-                    CandidateInviteToken.channel == "max",
-                    CandidateInviteToken.status == "active",
-                )
-                .order_by(CandidateInviteToken.created_at.desc(), CandidateInviteToken.id.desc())
-                .limit(1)
-            )
-            try:
-                journey, released_slot_id = await restart_candidate_portal_journey(
-                    session,
-                    stored_candidate,
-                    entry_channel="max",
-                )
-            except CandidatePortalError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={"message": str(exc)},
-                ) from exc
-            invite, superseded_ids = await issue_candidate_invite_token(
-                stored_candidate.candidate_id,
-                channel="max",
-                rotate_active=True,
-                session=session,
-            )
-            previous_invite_id = int(previous_invite.id) if previous_invite is not None else None
-            payload = await _candidate_portal_access_payload(
-                session=session,
-                candidate=stored_candidate,
-                journey=journey,
-                invite=invite,
-                rotated=bool(previous_invite is not None or superseded_ids),
-                restarted=True,
-            )
-            delivery_candidate = stored_candidate
-
-    delivery_text = await _build_candidate_portal_access_delivery_text(
-        candidate_id=int(delivery_candidate.id),
-        journey_id=int(payload["journey"]["id"]),
-        restarted=True,
-        browser_link=payload.get("browser_link"),
-        mini_app_link=payload.get("mini_app_link"),
-    )
-    payload["delivery"] = await _deliver_candidate_portal_access_package(
-        candidate=delivery_candidate,
-        text=delivery_text,
-        browser_link=payload.get("browser_link"),
-        mini_app_link=payload.get("mini_app_link"),
-        invite_id=int(invite.id),
-        journey_id=int(payload["journey"]["id"]),
-        session_version=int(payload["journey"]["session_version"]),
-        restarted=True,
-        delivery_allowed=bool(payload.get("delivery_ready")),
-        skip_reason=str(payload.get("delivery_block_reason") or "") or None,
-    )
-    logger.info(
-        "candidate_portal.max_delivery_result",
-        extra={
-            "candidate_id": candidate_id,
-            "invite_id": int(invite.id),
-            "journey_id": int(payload["journey"]["id"]),
-            "session_version": int(payload["journey"]["session_version"]),
-            "restarted": True,
-            "delivery_status": payload["delivery"].get("status"),
-            "attempted": bool(payload["delivery"].get("attempted")),
-            "sent": bool(payload["delivery"].get("sent")),
-            "skipped_reason": payload["delivery"].get("skipped_reason"),
-            "error": payload["delivery"].get("error"),
-        },
-    )
-    await _audit_candidate_portal_access_delivery(
-        candidate_id=candidate_id,
-        invite_id=int(invite.id),
-        journey_id=int(payload["journey"]["id"]),
-        session_version=int(payload["journey"]["session_version"]),
-        restarted=True,
-        delivery=payload["delivery"],
-    )
-
-    await log_audit_action(
-        "candidate_portal_restarted",
-        "candidate",
-        candidate_id,
-        changes={
-            "journey_id": payload["journey"]["id"],
-            "session_version": payload["journey"]["session_version"],
-            "released_slot_id": released_slot_id,
-            "delivered": bool((payload.get("delivery") or {}).get("sent")),
-        },
-    )
-    await log_audit_action(
-        "invite_issued",
-        "candidate",
-        candidate_id,
-        changes={"channel": "max", "invite_id": int(invite.id)},
-    )
-    if previous_invite is not None or superseded_ids:
-        await log_audit_action(
-            "invite_superseded",
-            "candidate",
-            candidate_id,
-            changes={
-                "channel": "max",
-                "previous_invite_id": previous_invite_id,
-                "superseded_ids": superseded_ids,
-            },
-        )
-    return JSONResponse(payload)
-
-
 @router.get("/candidates/{candidate_id}/channel-health")
 async def api_candidate_channel_health(
     candidate_id: int,
@@ -3303,6 +2530,75 @@ async def api_candidate(
     return JSONResponse(jsonable_encoder(detail))
 
 
+@router.post("/candidates/{candidate_id}/max-rollout/issue")
+@router.post("/candidates/{candidate_id}/max-launch-invite")
+async def api_candidate_max_rollout_issue(
+    candidate_id: int,
+    payload: CandidateMaxRolloutIssuePayload,
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+):
+    await _get_accessible_candidate(candidate_id, principal)
+    try:
+        runtime = _max_rollout_runtime()
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "MAX pilot runtime недоступен на текущем контуре. Повторите после согласованного deploy preflight.",
+                "error": "max_rollout_unavailable",
+            },
+        ) from None
+    try:
+        result = await runtime.issue_candidate_max_rollout(
+            candidate_id,
+            principal=principal,
+            application_id=payload.application_id,
+            dry_run=payload.dry_run,
+            send=payload.send,
+            reuse_policy=payload.reuse_policy,
+        )
+    except runtime.MaxInviteRolloutDisabledError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "error": "max_rollout_disabled"},
+        ) from exc
+    return JSONResponse(jsonable_encoder({"ok": True, **result}))
+
+
+@router.post("/candidates/{candidate_id}/max-rollout/revoke")
+@router.post("/candidates/{candidate_id}/max-launch-invite/revoke")
+async def api_candidate_max_rollout_revoke(
+    candidate_id: int,
+    application_id: int | None = Query(default=None),
+    principal: Principal = Depends(require_principal),
+    _: None = Depends(require_csrf_token),
+):
+    await _get_accessible_candidate(candidate_id, principal)
+    try:
+        runtime = _max_rollout_runtime()
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "MAX pilot runtime недоступен на текущем контуре. Повторите после согласованного deploy preflight.",
+                "error": "max_rollout_unavailable",
+            },
+        ) from None
+    try:
+        result = await runtime.revoke_candidate_max_rollout(
+            candidate_id,
+            principal=principal,
+            application_id=application_id,
+        )
+    except runtime.MaxInviteRolloutDisabledError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "error": "max_rollout_disabled"},
+        ) from exc
+    return JSONResponse(jsonable_encoder(result))
+
+
 @router.get("/candidates/{candidate_id}/hh")
 async def api_candidate_hh_summary(
     candidate_id: int,
@@ -3310,127 +2606,8 @@ async def api_candidate_hh_summary(
 ):
     await _get_accessible_candidate(candidate_id, principal)
     async with async_session() as session:
-        candidate = await session.get(User, candidate_id)
         summary = await build_candidate_hh_summary(session, candidate_id=candidate_id)
-        if candidate is not None:
-            summary["entry_delivery"] = await _build_hh_entry_delivery_summary(
-                session,
-                candidate=candidate,
-                principal=principal,
-            )
     return JSONResponse(jsonable_encoder(summary))
-
-
-@router.post("/candidates/{candidate_id}/hh/send-entry-link")
-async def api_candidate_hh_send_entry_link(
-    candidate_id: int,
-    principal: Principal = Depends(require_principal),
-    _: None = Depends(require_csrf_token),
-):
-    await _get_accessible_candidate(candidate_id, principal)
-    async with async_session() as session:
-        async with session.begin():
-            candidate = await session.get(User, candidate_id)
-            if candidate is None:
-                raise HTTPException(status_code=404, detail={"message": "Кандидат не найден"})
-            payload, status_code = await _send_candidate_shared_portal_to_hh(
-                session,
-                candidate=candidate,
-                principal=principal,
-            )
-
-    if payload.get("sent"):
-        await log_audit_action(
-            "candidate_shared_portal_sent",
-            "candidate",
-            candidate_id,
-            changes={"action_id": payload.get("action_id"), "action_name": payload.get("action_name")},
-        )
-    return JSONResponse(payload, status_code=status_code)
-
-
-@router.post("/candidates/hh/send-shared-portal")
-async def api_candidates_hh_send_shared_portal(
-    payload: CandidateSharedPortalBulkPayload,
-    principal: Principal = Depends(require_principal),
-    _: None = Depends(require_csrf_token),
-):
-    unique_candidate_ids: list[int] = []
-    seen_ids: set[int] = set()
-    for candidate_id in payload.candidate_ids:
-        normalized_id = int(candidate_id)
-        if normalized_id in seen_ids:
-            continue
-        seen_ids.add(normalized_id)
-        unique_candidate_ids.append(normalized_id)
-
-    sent: list[dict[str, Any]] = []
-    blocked: list[dict[str, Any]] = []
-    skipped: list[dict[str, Any]] = []
-
-    for candidate_id in unique_candidate_ids:
-        try:
-            await _get_accessible_candidate(candidate_id, principal)
-        except HTTPException:
-            skipped.append({"candidate_id": candidate_id, "reason": "candidate_not_accessible"})
-            continue
-
-        current_candidate: User | None = None
-        try:
-            async with async_session() as session:
-                async with session.begin():
-                    current_candidate = await session.get(User, candidate_id)
-                    if current_candidate is None:
-                        skipped.append({"candidate_id": candidate_id, "reason": "candidate_not_found"})
-                        continue
-                    response_payload, response_status = await _send_candidate_shared_portal_to_hh(
-                        session,
-                        candidate=current_candidate,
-                        principal=principal,
-                    )
-        except HTTPException as exc:
-            blocked.append(
-                {
-                    "candidate_id": candidate_id,
-                    "fio": str(current_candidate.fio or "").strip() or None if current_candidate is not None else None,
-                    "reason": str((exc.detail or {}).get("message") if isinstance(exc.detail, dict) else exc.detail or "shared_portal_send_failed"),
-                }
-            )
-            continue
-
-        candidate_row = {
-            "candidate_id": candidate_id,
-            "fio": str(current_candidate.fio or "").strip() or None if current_candidate is not None else None,
-            "shared_portal_url": response_payload.get("shared_portal_url"),
-            "cabinet_url": response_payload.get("cabinet_url"),
-        }
-        if response_status == status.HTTP_200_OK and response_payload.get("sent"):
-            sent.append({**candidate_row, "action_id": response_payload.get("action_id")})
-            await log_audit_action(
-                "candidate_shared_portal_sent",
-                "candidate",
-                candidate_id,
-                changes={"action_id": response_payload.get("action_id"), "action_name": response_payload.get("action_name")},
-            )
-        elif response_status == status.HTTP_409_CONFLICT:
-            blocked.append({**candidate_row, "reason": response_payload.get("blocked_reason")})
-        else:
-            skipped.append({**candidate_row, "reason": response_payload.get("blocked_reason") or "shared_portal_send_failed"})
-
-    return JSONResponse(
-        {
-            "ok": True,
-            "sent": sent,
-            "blocked": blocked,
-            "skipped": skipped,
-            "summary": {
-                "requested": len(unique_candidate_ids),
-                "sent": len(sent),
-                "blocked": len(blocked),
-                "skipped": len(skipped),
-            },
-        }
-    )
 
 
 @router.get("/candidates/{candidate_id}/cohort-comparison")
@@ -3665,6 +2842,14 @@ async def api_create_candidate(
 ):
     """Create a new candidate (JSON API). Slot scheduling is a separate action."""
     from backend.apps.admin_ui.services.candidates import upsert_candidate
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateCreateDualWriteRequest,
+        CandidateCreateDuplicateError,
+        build_candidate_create_payload_fingerprint,
+    )
+    from backend.domain.applications.persistent_idempotency import (
+        PersistentIdempotencyConflictError,
+    )
 
     data = await request.json()
     if not isinstance(data, dict):
@@ -3717,15 +2902,51 @@ async def api_create_candidate(
             telegram_id_value = int(telegram_id_raw)
         except (TypeError, ValueError):
             return JSONResponse({"ok": False, "error": "invalid_telegram_id"}, status_code=400)
-        async with async_session() as session:
-            existing = await session.scalar(select(User).where(User.telegram_id == telegram_id_value))
-            if existing is not None:
-                return JSONResponse({"ok": False, "error": "duplicate_candidate"}, status_code=409)
 
     # Get city name for candidate
     candidate_city = None
     if interview_city:
         candidate_city = getattr(interview_city, "name_plain", None) or interview_city.name
+
+    settings = get_settings()
+    dual_write: CandidateCreateDualWriteRequest | None = None
+    if settings.candidate_create_dual_write_enabled:
+        raw_idempotency_key = (
+            request.headers.get("idempotency-key")
+            or request.headers.get("x-idempotency-key")
+            or f"auto-{secrets.token_hex(12)}"
+        )
+        correlation_id = (
+            request.headers.get("x-request-id")
+            or request.headers.get("x-correlation-id")
+            or f"corr-{secrets.token_hex(16)}"
+        )
+        dual_write = CandidateCreateDualWriteRequest(
+            idempotency_key=raw_idempotency_key,
+            correlation_id=correlation_id,
+            payload_fingerprint=build_candidate_create_payload_fingerprint(
+                fio=fio,
+                city=candidate_city,
+                phone=phone,
+                telegram_id=telegram_id_value,
+                recruiter_id=recruiter_id_value,
+                source="manual_call",
+                initial_status=CandidateStatus.LEAD,
+                is_active=True,
+            ),
+            principal_type=principal.type,
+            principal_id=principal.id,
+        )
+    elif telegram_id_value is not None:
+        async with async_session() as session:
+            existing = await session.scalar(
+                select(User).where(User.telegram_id == telegram_id_value)
+            )
+            if existing is not None:
+                return JSONResponse(
+                    {"ok": False, "error": "duplicate_candidate"},
+                    status_code=409,
+                )
 
     # Create candidate
     try:
@@ -3739,7 +2960,12 @@ async def api_create_candidate(
             manual_slot_from=None,
             manual_slot_to=None,
             manual_slot_timezone=None,
+            dual_write=dual_write,
         )
+    except CandidateCreateDuplicateError:
+        return JSONResponse({"ok": False, "error": "duplicate_candidate"}, status_code=409)
+    except PersistentIdempotencyConflictError:
+        return JSONResponse({"ok": False, "error": "idempotency_conflict"}, status_code=409)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": "validation_error", "message": str(exc)}, status_code=400)
     except IntegrityError:
@@ -3849,10 +3075,10 @@ async def api_schedule_slot(
 ):
     """Schedule a slot for an existing candidate (JSON API)."""
     from backend.apps.admin_ui.services.slots import (
+        ManualSlotError,
         assign_existing_candidate_slot_silent,
         schedule_manual_candidate_slot,
         schedule_manual_candidate_slot_silent,
-        ManualSlotError,
     )
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
     from backend.core.time_utils import ensure_aware_utc, parse_form_datetime
@@ -4223,21 +3449,21 @@ async def api_schedule_intro_day(
     principal: Principal = Depends(require_principal),
 ):
     """Schedule intro day for a candidate (JSON API)."""
+    from sqlalchemy.orm import selectinload
+
     from backend.apps.admin_ui.services.candidates import (
         build_intro_day_template_context,
         get_candidate_detail,
         render_intro_day_invitation,
         resolve_intro_day_template_source,
     )
-    from backend.apps.admin_ui.services.max_sales_handoff import (
-        IntroDayHandoffContext,
-        dispatch_intro_day_handoff_to_max,
-    )
     from backend.apps.admin_ui.services.slots import recruiter_time_to_utc
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
-    from backend.domain.repositories import find_city_by_plain_name, add_outbox_notification
-    from backend.domain.models import Slot, SlotStatus, DEFAULT_INTRO_DAY_DURATION_MIN
-    from sqlalchemy.orm import selectinload
+    from backend.domain.models import DEFAULT_INTRO_DAY_DURATION_MIN, Slot, SlotStatus
+    from backend.domain.repositories import (
+        add_outbox_notification,
+        find_city_by_plain_name,
+    )
 
     data = await request.json()
     if not isinstance(data, dict):
@@ -4434,7 +3660,9 @@ async def api_schedule_intro_day(
     }
     old_interview_slot_ids: List[int] = []
     try:
-        from backend.domain.slot_assignment_service import cancel_active_interview_slots_for_candidate
+        from backend.domain.slot_assignment_service import (
+            cancel_active_interview_slots_for_candidate,
+        )
 
         cleanup_result = await cancel_active_interview_slots_for_candidate(
             candidate_id=user.candidate_id,
@@ -4493,7 +3721,9 @@ async def api_schedule_intro_day(
 
         # Update candidate status
         try:
-            from backend.domain.candidates.status_service import set_status_intro_day_scheduled
+            from backend.domain.candidates.status_service import (
+                set_status_intro_day_scheduled,
+            )
             await set_status_intro_day_scheduled(candidate_tg_id, force=True)
         except Exception:
             pass
@@ -4521,37 +3751,9 @@ async def api_schedule_intro_day(
         except Exception as exc:
             logger.warning("Failed to schedule reminders for intro day: %s", exc)
 
-    hh_profile_url = None
-    hh_resume_id = (getattr(user, "hh_resume_id", None) or "").strip()
-    if hh_resume_id:
-        hh_profile_url = f"https://hh.ru/resume/{hh_resume_id}"
-
-    base_url = str(request.base_url).rstrip("/")
-    candidate_card_url = f"{base_url}/app/candidates/{candidate_id}" if base_url else None
-    max_handoff: dict[str, object]
-    try:
-        max_handoff = await dispatch_intro_day_handoff_to_max(
-            IntroDayHandoffContext(
-                candidate_id=user.id,
-                candidate_fio=user.fio or f"Кандидат #{user.id}",
-                slot_id=slot.id,
-                slot_start_utc=slot.start_utc,
-                slot_tz=slot_tz,
-                recruiter_id=getattr(recruiter, "id", None),
-                recruiter_name=getattr(recruiter, "name", None),
-                city_id=getattr(city_record, "id", None),
-                city_name=getattr(city_record, "name", None),
-                candidate_card_url=candidate_card_url,
-                hh_profile_url=hh_profile_url,
-            ),
-            bot=getattr(request.app.state, "bot", None),
-        )
-    except Exception:
-        logger.exception(
-            "Failed to dispatch intro day handoff to Max",
-            extra={"candidate_id": candidate_id, "slot_id": slot.id},
-        )
-        max_handoff = {"ok": False, "status": "error"}
+    # Legacy Max sales handoff was removed with the historical runtime cleanup.
+    # Keep the response field for API compatibility without depending on deleted code.
+    max_handoff: dict[str, object] = {"ok": False, "status": "not_supported"}
 
     return JSONResponse({
         "ok": True,
@@ -4669,7 +3871,10 @@ async def api_get_vacancy_questions(
     test_id: str,
 ) -> JSONResponse:
     _ = await require_principal(request)
-    from backend.apps.admin_ui.services.vacancies import get_vacancy, get_vacancy_questions
+    from backend.apps.admin_ui.services.vacancies import (
+        get_vacancy,
+        get_vacancy_questions,
+    )
 
     vacancy = await get_vacancy(vacancy_id)
     if vacancy is None:

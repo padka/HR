@@ -13,6 +13,7 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
 )
+from pydantic import BaseModel
 from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -55,7 +56,6 @@ from backend.apps.admin_ui.services.slots import (
     schedule_manual_candidate_slot_silent,
     ManualSlotError,
     recruiters_for_slot_form,
-    _trigger_test2,
     recruiter_time_to_utc,
 )
 from backend.apps.bot.services import approve_slot_and_notify, cancel_slot_reminders
@@ -80,6 +80,11 @@ from backend.domain.repositories import find_city_by_plain_name
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 logger = logging.getLogger(__name__)
 CANDIDATE_CREATE_LIMIT = "30/minute"
+CANDIDATES_DELETE_ALL_CONFIRMATION = "DELETE ALL CANDIDATES"
+
+
+class CandidatesBulkDeletePayload(BaseModel):
+    confirmation: str = ""
 
 
 # Module-level wrapper for status service (allows monkeypatching in tests)
@@ -124,6 +129,26 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _request_accepts_json(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+    content_type = (request.headers.get("content-type") or "").lower()
+    return "application/json" in accept or "application/json" in content_type
+
+
+async def _request_payload_dict(request: Request) -> dict[str, Any]:
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    try:
+        return dict(await request.form())
+    except Exception:
+        return {}
 
 
 async def _load_city_with_recruiters(city_name: Optional[str]) -> Optional[City]:
@@ -194,21 +219,6 @@ async def candidates_list(
     if request.url.query:
         target = f"{target}?{request.url.query}"
     return RedirectResponse(url=target, status_code=302)
-
-@router.get("/detailization", response_class=HTMLResponse)
-async def candidates_detailization(
-    request: Request,
-    status: Optional[str] = Query(default=None, description="hired or not_hired"),
-    q: Optional[str] = Query(default=None, alias="search"),
-    page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=100, ge=5, le=200),
-    principal: Principal = Depends(require_principal),
-) -> HTMLResponse:
-    target = "/app/candidates"
-    if request.url.query:
-        target = f"{target}?{request.url.query}"
-    return RedirectResponse(url=target, status_code=302)
-
 
 @router.get("/new", response_class=HTMLResponse)
 async def candidates_new(
@@ -487,12 +497,6 @@ async def candidates_set_status(
             status_code=303,
         )
 
-    if normalized_slug == "interview_declined":
-        async with async_session() as session:
-            user = await session.get(User, candidate_id)
-        if user and user.telegram_id is not None:
-            await set_status_interview_declined(user.telegram_id)
-
     ok, message, stored_status, dispatch = await update_candidate_status(
         candidate_id,
         normalized_slug,
@@ -500,6 +504,16 @@ async def candidates_set_status(
         principal=principal,
         reason=reject_reason,
         comment=reject_comment,
+        idempotency_key=(
+            request.headers.get("idempotency-key")
+            or request.headers.get("x-idempotency-key")
+        ),
+        correlation_id=request.headers.get("x-request-id"),
+        source_ref=(
+            "candidates:form_status_update"
+            if is_form_submission
+            else "candidates:json_status_update"
+        ),
     )
 
     bot_header = "skipped:not_applicable"
@@ -586,98 +600,21 @@ async def candidates_set_status(
     return response
 
 
-@router.get("/{candidate_id}/resend-test2")
+@router.get("/{candidate_id}/resend-test2", include_in_schema=False)
 async def candidates_resend_test2(
     request: Request,
     candidate_id: int,
-    bot_service: BotService = Depends(provide_bot_service),
     principal: Principal = Depends(require_principal),
 ) -> Response:
-    """Resend Test 2 invite to a candidate via bot."""
-
-    accept_json = "application/json" in (request.headers.get("accept") or "").lower()
-    async with async_session() as session:
-        user = await session.get(User, candidate_id)
-        if not user:
-            payload = {"ok": False, "message": "Кандидат не найден"}
-            if accept_json:
-                return JSONResponse(payload, status_code=404)
-            return RedirectResponse(
-                url="/candidates?error=candidate_not_found",
-                status_code=303,
-            )
-
-        ensure_candidate_scope(user, principal)
-
-        telegram_id = user.telegram_user_id or user.telegram_id
-        if not telegram_id:
-            payload = {"ok": False, "message": "У кандидата нет Telegram ID"}
-            if accept_json:
-                return JSONResponse(payload, status_code=400)
-            return RedirectResponse(
-                url=f"/candidates/{candidate_id}?error=missing_telegram",
-                status_code=303,
-            )
-
-        slot = await session.scalar(
-            select(Slot)
-            .where(
-                or_(
-                    Slot.candidate_id == user.candidate_id,
-                    Slot.candidate_tg_id == telegram_id,
-                )
-            )
-            .order_by(Slot.start_utc.desc(), Slot.id.desc())
-        )
-
-        candidate_city_id = (
-            getattr(slot, "candidate_city_id", None)
-            or getattr(slot, "city_id", None)
-            or getattr(user, "city_id", None)
-        )
-        candidate_tz = (
-            getattr(slot, "candidate_tz", None)
-            or getattr(user, "tz_name", None)
-            or DEFAULT_TZ
-        )
-        scheduled_at = datetime.now(timezone.utc)
-        if slot:
-            slot.test2_sent_at = scheduled_at
-            await session.commit()
-
-    result = await _trigger_test2(
-        int(telegram_id),
-        candidate_tz,
-        candidate_city_id,
-        user.fio or getattr(user, "name", "") or "Кандидат",
-        bot_service=bot_service,
-        required=get_settings().test2_required,
-        slot_id=slot.id if slot else None,
+    _ = principal
+    message = (
+        "Mutating GET /candidates/{candidate_id}/resend-test2 is disabled. "
+        "Use POST /api/candidates/{candidate_id}/actions/resend_test2 with CSRF."
     )
-
-    # Ensure status reflects the resend attempt
-    if result.ok:
-        await update_candidate_status(
-            candidate_id, "test2_sent", bot_service=bot_service
-        )
-
-    payload = {
-        "ok": result.ok,
-        "status": result.status,
-        "message": result.message or result.error or "",
-    }
-    status_code = 200 if result.ok else 400
-
-    if accept_json:
-        return JSONResponse(payload, status_code=status_code)
-
-    query = f"?test2_resend={result.status}"
-    if result.error:
-        query += f"&error_message={quote_plus(result.error)}"
-    return RedirectResponse(
-        url=f"/candidates/{candidate_id}{query}",
-        status_code=303,
-    )
+    payload = {"ok": False, "deprecated": True, "message": message}
+    if _request_accepts_json(request):
+        return JSONResponse(payload, status_code=410)
+    return PlainTextResponse(message, status_code=410)
 
 
 @router.post("/{candidate_id}/interview-notes")
@@ -869,8 +806,46 @@ async def candidates_delete(candidate_id: int, principal: Principal = Depends(re
 
 
 @router.post("/delete-all")
-async def candidates_delete_all(_: Principal = Depends(require_admin)):
+async def candidates_delete_all(
+    request: Request,
+    _: None = Depends(require_csrf_token),
+    principal: Principal = Depends(require_admin),
+):
+    payload = CandidatesBulkDeletePayload(**(await _request_payload_dict(request)))
+    accept_json = _request_accepts_json(request)
+    if not get_settings().allow_destructive_admin_actions:
+        await log_audit_action(
+            "candidates_bulk_delete_blocked",
+            "candidate",
+            None,
+            changes={"reason": "feature_disabled"},
+        )
+        message = "Bulk candidate deletion is disabled in this environment."
+        if accept_json:
+            return JSONResponse({"ok": False, "message": message}, status_code=403)
+        return RedirectResponse(url="/candidates?error=bulk_delete_disabled", status_code=303)
+
+    if payload.confirmation.strip() != CANDIDATES_DELETE_ALL_CONFIRMATION:
+        await log_audit_action(
+            "candidates_bulk_delete_blocked",
+            "candidate",
+            None,
+            changes={"reason": "confirmation_mismatch"},
+        )
+        message = "Typed confirmation is required to delete all candidates."
+        if accept_json:
+            return JSONResponse({"ok": False, "message": message}, status_code=400)
+        return RedirectResponse(url="/candidates?error=bulk_delete_confirmation", status_code=303)
+
     deleted = await delete_all_candidates()
+    await log_audit_action(
+        "candidates_bulk_delete_confirmed",
+        "candidate",
+        None,
+        changes={"affected_count": deleted},
+    )
+    if accept_json:
+        return JSONResponse({"ok": True, "deleted": deleted}, status_code=200)
     return RedirectResponse(
         url=f"/candidates?bulk_deleted={deleted}",
         status_code=303,
@@ -1084,10 +1059,6 @@ async def candidates_schedule_intro_day_submit(
 ) -> Response:
     """Create intro_day slot and send invitation to candidate"""
     from backend.domain.repositories import add_outbox_notification
-    from backend.apps.admin_ui.services.max_sales_handoff import (
-        IntroDayHandoffContext,
-        dispatch_intro_day_handoff_to_max,
-    )
 
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
@@ -1321,39 +1292,7 @@ async def candidates_schedule_intro_day_submit(
         except Exception:
             logger.exception("Failed to schedule reminders for intro day", extra={"slot_id": slot.id})
 
-    hh_profile_url = None
-    hh_resume_id = (getattr(user, "hh_resume_id", None) or "").strip()
-    if hh_resume_id:
-        hh_profile_url = f"https://hh.ru/resume/{hh_resume_id}"
-
-    base_url = str(request.base_url).rstrip("/")
-    candidate_card_url = f"{base_url}/app/candidates/{candidate_id}" if base_url else None
-    max_handoff: dict[str, object]
-    try:
-        max_handoff = await dispatch_intro_day_handoff_to_max(
-            IntroDayHandoffContext(
-                candidate_id=user.id,
-                candidate_fio=user.fio or f"Кандидат #{user.id}",
-                slot_id=slot.id,
-                slot_start_utc=slot.start_utc,
-                slot_tz=slot_tz,
-                recruiter_id=getattr(recruiter, "id", None),
-                recruiter_name=getattr(recruiter, "name", None),
-                city_id=getattr(city_record, "id", None) if city_record is not None else None,
-                city_name=getattr(city_record, "name", None) if city_record is not None else None,
-                candidate_card_url=candidate_card_url,
-                hh_profile_url=hh_profile_url,
-            ),
-            bot=getattr(request.app.state, "bot", None),
-        )
-    except Exception:
-        logger.exception(
-            "Failed to dispatch intro day handoff to Max",
-            extra={"candidate_id": candidate_id, "slot_id": slot.id},
-        )
-        max_handoff = {"ok": False, "status": "error"}
-
-    return JSONResponse({"ok": True, "slot_id": slot.id, "max_handoff": max_handoff})
+    return JSONResponse({"ok": True, "slot_id": slot.id})
 
 
 @router.post("/{candidate_id}/actions/{action_key}")

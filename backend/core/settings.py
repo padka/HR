@@ -107,18 +107,20 @@ class Settings:
     hh_oauth_state_ttl_seconds: int
     hh_webhook_base_url: str
     hh_auto_import_interval_seconds: int
-    # Messenger integration (VK Max)
-    max_bot_enabled: bool
+    allow_destructive_admin_actions: bool
+    candidate_create_dual_write_enabled: bool
+    candidate_status_dual_write_enabled: bool
+    test1_screening_decision_enabled: bool
+    auto_interview_offer_after_test1_enabled: bool
+    max_invite_rollout_enabled: bool
+    max_adapter_enabled: bool
     max_bot_token: str
-    max_webhook_url: str
+    max_public_bot_name: str
+    max_miniapp_url: str
+    max_bot_api_secret: str
     max_webhook_secret: str
-    max_bot_link_base: str
-    max_bot_allow_public_entry: bool
-    max_webapp_auth_max_age_seconds: int
-    candidate_portal_public_url: str
-    candidate_portal_token_ttl_seconds: int
-    candidate_portal_session_ttl_seconds: int
-
+    max_webhook_url: str
+    max_init_data_max_age_seconds: int
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
     raw = os.getenv(name)
@@ -176,6 +178,17 @@ def _get_bool_with_fallback(*names: str, default: bool = False) -> bool:
     for name in names:
         if os.getenv(name) is not None:
             return _get_bool(name)
+    return default
+
+
+def _get_str_with_fallback(*names: str, default: str = "") -> str:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        normalized = raw.strip()
+        if normalized:
+            return normalized
     return default
 
 
@@ -449,32 +462,6 @@ def _validate_production_settings(settings: Settings) -> None:
 
     if settings.session_cookie_secure is False:
         errors.append("SESSION_COOKIE_SECURE must be enabled in production.")
-
-    if settings.max_bot_enabled and not str(settings.max_webhook_secret or "").strip():
-        errors.append(
-            "Production MAX bot requires MAX_WEBHOOK_SECRET when MAX_BOT_ENABLED=true. "
-            "Set a provider-specific shared webhook secret before startup."
-        )
-    if settings.max_bot_enabled and not str(settings.max_bot_token or "").strip():
-        errors.append(
-            "Production MAX bot requires MAX_BOT_TOKEN when MAX_BOT_ENABLED=true. "
-            "Set a valid MAX bot token before startup."
-        )
-    if settings.max_bot_enabled and not _is_public_https_url(settings.max_webhook_url):
-        errors.append(
-            "Production MAX bot requires MAX_WEBHOOK_URL to be a public HTTPS URL when MAX_BOT_ENABLED=true. "
-            "Example: MAX_WEBHOOK_URL=https://max.example.com/webhook"
-        )
-    if settings.max_bot_enabled and not _is_public_https_url(settings.candidate_portal_public_url):
-        errors.append(
-            "Production MAX bot requires CANDIDATE_PORTAL_PUBLIC_URL to resolve to a public HTTPS URL when MAX_BOT_ENABLED=true. "
-            "Example: CANDIDATE_PORTAL_PUBLIC_URL=https://crm.example.com"
-        )
-    if settings.max_bot_link_base and not _is_public_https_url(settings.max_bot_link_base):
-        errors.append(
-            "MAX_BOT_LINK_BASE must be a public HTTPS URL when provided. "
-            "Example: MAX_BOT_LINK_BASE=https://max.ru/recruitsmartbot"
-        )
 
     # Print warnings to stderr
     if warnings:
@@ -849,34 +836,48 @@ def get_settings() -> Settings:
     hh_auto_import_interval_seconds = _get_int(
         "HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60
     )
-
-    # VK Max messenger integration
-    max_bot_enabled = _get_bool("MAX_BOT_ENABLED", default=False)
+    allow_destructive_admin_actions = _get_bool_with_fallback(
+        "ALLOW_DESTRUCTIVE_ADMIN_ACTIONS",
+        default=environment not in {"production", "staging"},
+    )
+    candidate_create_dual_write_enabled = _get_bool(
+        "CANDIDATE_CREATE_DUAL_WRITE_ENABLED",
+        default=False,
+    )
+    candidate_status_dual_write_enabled = _get_bool(
+        "CANDIDATE_STATUS_DUAL_WRITE_ENABLED",
+        default=False,
+    )
+    test1_screening_decision_enabled = _get_bool(
+        "TEST1_SCREENING_DECISION_ENABLED",
+        default=False,
+    )
+    auto_interview_offer_after_test1_enabled = _get_bool(
+        "AUTO_INTERVIEW_OFFER_AFTER_TEST1_ENABLED",
+        default=False,
+    )
+    max_invite_rollout_enabled = _get_bool(
+        "MAX_INVITE_ROLLOUT_ENABLED",
+        default=False,
+    )
+    max_adapter_enabled = _get_bool_with_fallback(
+        "MAX_ADAPTER_ENABLED",
+        "MAX_BOT_ENABLED",
+        default=False,
+    )
     max_bot_token = os.getenv("MAX_BOT_TOKEN", "").strip()
+    max_public_bot_name = os.getenv("MAX_PUBLIC_BOT_NAME", "").strip()
+    max_miniapp_url = os.getenv("MAX_MINIAPP_URL", "").strip()
+    max_bot_api_secret = _get_str_with_fallback(
+        "MAX_BOT_API_SECRET",
+        "MAX_WEBHOOK_SECRET",
+    )
+    max_webhook_secret = max_bot_api_secret
     max_webhook_url = os.getenv("MAX_WEBHOOK_URL", "").strip()
-    max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
-    max_bot_link_base = os.getenv("MAX_BOT_LINK_BASE", "").strip()
-    max_bot_allow_public_entry = _get_bool(
-        "MAX_BOT_ALLOW_PUBLIC_ENTRY",
-        default=environment != "production",
-    )
-    max_webapp_auth_max_age_seconds = _get_int(
-        "MAX_WEBAPP_AUTH_MAX_AGE_SECONDS",
-        900,
+    max_init_data_max_age_seconds = _get_int(
+        "MAX_INIT_DATA_MAX_AGE_SECONDS",
+        86400,
         minimum=60,
-    )
-    candidate_portal_public_url = os.getenv("CANDIDATE_PORTAL_PUBLIC_URL", "").strip()
-    if not candidate_portal_public_url:
-        candidate_portal_public_url = crm_public_url or bot_backend_url
-    candidate_portal_token_ttl_seconds = _get_int(
-        "CANDIDATE_PORTAL_TOKEN_TTL_SECONDS",
-        7 * 24 * 3600,
-        minimum=300,
-    )
-    candidate_portal_session_ttl_seconds = _get_int(
-        "CANDIDATE_PORTAL_SESSION_TTL_SECONDS",
-        7 * 24 * 3600,
-        minimum=1800,
     )
 
     settings = Settings(
@@ -970,16 +971,20 @@ def get_settings() -> Settings:
         hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
         hh_webhook_base_url=hh_webhook_base_url,
         hh_auto_import_interval_seconds=hh_auto_import_interval_seconds,
-        max_bot_enabled=max_bot_enabled,
+        allow_destructive_admin_actions=allow_destructive_admin_actions,
+        candidate_create_dual_write_enabled=candidate_create_dual_write_enabled,
+        candidate_status_dual_write_enabled=candidate_status_dual_write_enabled,
+        test1_screening_decision_enabled=test1_screening_decision_enabled,
+        auto_interview_offer_after_test1_enabled=auto_interview_offer_after_test1_enabled,
+        max_invite_rollout_enabled=max_invite_rollout_enabled,
+        max_adapter_enabled=max_adapter_enabled,
         max_bot_token=max_bot_token,
-        max_webhook_url=max_webhook_url,
+        max_public_bot_name=max_public_bot_name,
+        max_miniapp_url=max_miniapp_url,
+        max_bot_api_secret=max_bot_api_secret,
         max_webhook_secret=max_webhook_secret,
-        max_bot_link_base=max_bot_link_base,
-        max_bot_allow_public_entry=max_bot_allow_public_entry,
-        max_webapp_auth_max_age_seconds=max_webapp_auth_max_age_seconds,
-        candidate_portal_public_url=candidate_portal_public_url,
-        candidate_portal_token_ttl_seconds=candidate_portal_token_ttl_seconds,
-        candidate_portal_session_ttl_seconds=candidate_portal_session_ttl_seconds,
+        max_webhook_url=max_webhook_url,
+        max_init_data_max_age_seconds=max_init_data_max_age_seconds,
     )
 
     # Validate production configuration (fails fast with clear error messages)

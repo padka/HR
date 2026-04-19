@@ -1,4 +1,4 @@
-.PHONY: help test test-cov test-postgres-proof migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-max-bot dev-max-live dev-up gate-sprint12
+.PHONY: help test test-cov test-postgres-proof migrate docker-up docker-down docker-logs clean install dev dev-postgres ensure-venv dev-migrate dev-admin dev-bot dev-up gate-sprint12 openapi-export openapi-check
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -14,14 +14,14 @@ help:
 	@echo "  make dev-migrate      - Run dev migrations using .env.local(.example)"
 	@echo "  make dev-admin        - Start admin UI (dev)"
 	@echo "  make dev-bot          - Start bot (dev, polling)"
-	@echo "  make dev-max-bot      - Start MAX bot webhook service (dev)"
-	@echo "  make dev-max-live     - Start admin + MAX webhook with public HTTPS tunnels"
 	@echo "  make dev-up           - Print dev run instructions (admin + bot)"
 	@echo "  make gate-sprint12    - Run formal Sprint 1/2 gate and generate report"
 	@echo ""
 	@echo "  make test             - Run all tests (requires PostgreSQL test DB)"
 	@echo "  make test-cov         - Run all tests with coverage"
-	@echo "  make test-postgres-proof - Run critical PostgreSQL-backed proof subset"
+	@echo "  make test-postgres-proof - Run the existing PostgreSQL migration/idempotency proof subset"
+	@echo "  make openapi-export   - Export tracked OpenAPI from live admin_ui/admin_api and regenerate frontend schema"
+	@echo "  make openapi-check    - Fail if tracked OpenAPI drifts from live admin_ui/admin_api"
 	@echo ""
 	@echo "  make docker-up        - Start Redis services in background"
 	@echo "  make docker-down      - Stop Redis services"
@@ -81,6 +81,10 @@ test-cov: ensure-venv
 
 test-postgres-proof: ensure-venv
 	$(PYTHON) -m pip show pytest >/dev/null 2>&1 || $(PYTHON) -m pip install -r requirements-dev.txt
+	PG_PROOF_DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
+	DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
+	TEST_DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
+	$(PYTHON) scripts/reset_postgres_proof_db.py
 	TEST_USE_POSTGRES=1 \
 	DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
 	TEST_DATABASE_URL="$(PG_PROOF_DATABASE_URL)" \
@@ -95,7 +99,7 @@ test-postgres-proof: ensure-venv
 	SESSION_SECRET="test-session-secret-0123456789abcdef0123456789abcd" \
 	$(PYTHON) -m pytest -q \
 		tests/integration/test_migrations_postgres.py \
-		tests/integration/test_postgres_stateful_proof.py
+		tests/test_application_persistent_idempotency_repository.py
 
 # Docker management
 docker-up:
@@ -120,23 +124,22 @@ dev-admin:
 dev-bot:
 	./scripts/dev_bot.sh
 
-dev-max-bot:
-	./scripts/dev_max_bot.sh
-
-dev-max-live:
-	./scripts/dev_max_live.sh
-
 dev-up:
 	@echo "Run services in separate terminals:"
 	@echo "  make dev-migrate"
 	@echo "  make dev-admin"
 	@echo "  make dev-bot"
-	@echo "  make dev-max-bot"
-	@echo "  make dev-max-live    # admin + MAX + public HTTPS tunnels"
 	@echo "Using env file: $(DEV_ENV_FILE)"
 
 gate-sprint12: ensure-venv
 	$(PYTHON) scripts/formal_gate_sprint12.py
+
+openapi-export: ensure-venv
+	$(PYTHON) scripts/export_openapi.py
+	cd frontend/app && npx openapi-typescript openapi.json -o src/api/schema.ts
+
+openapi-check: ensure-venv
+	$(PYTHON) scripts/check_openapi_drift.py
 
 # Clean temporary files
 clean:
