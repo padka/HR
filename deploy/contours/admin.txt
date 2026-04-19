@@ -1,5 +1,7 @@
 # Paths that must stay in sync for the main CRM contour.
 backend/apps/admin_ui/
+backend/apps/admin_api/candidate_access/
+backend/core/messenger/
 backend/domain/candidates/
 backend/domain/applications/
 backend/core/settings.py
