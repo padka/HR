@@ -39,6 +39,7 @@ Last Verified: 2026-04-19
   - `save_candidate_manual_availability(...)` activates the waiting-slot path and notifies recruiters.
 - MAX chat path is `Partial`.
   - `backend/apps/admin_api/max_webhook.py` handles `bot_started`, text, and callbacks.
+  - Callback ingress normalizes bounded dialog callback envelopes (`callback_id|id`, `payload|data|value`) and can recover the candidate identity from dialog recipient data when the callback update does not include a top-level `user`.
   - `backend/apps/admin_api/max_candidate_chat.py` provides bounded shared-chat orchestration over candidate-access state.
   - Chat exists, but parity completeness across the full journey is not proven.
 - Handoff to chat is `Live / Bounded`.
@@ -57,6 +58,9 @@ Last Verified: 2026-04-19
 - MAX chat continuity across all non-happy-path branches is `Partial`.
 - Shared delivery routing is present, but downstream reminders/outbox remain Telegram-leaning in many paths.
 - Operator visibility for MAX progress exists through shared state/read models and rollout snapshots, but end-to-end parity observability is `Partial`.
+- Immediate `Test1 -> booking` progression is controlled by shared runtime flags, not MAX-only logic:
+  - `TEST1_SCREENING_DECISION_ENABLED`
+  - `AUTO_INTERVIEW_OFFER_AFTER_TEST1_ENABLED`
 
 ## Missing / Not Proven
 - MAX Test 2 candidate-facing flow is `Unknown / Not proven`.

@@ -94,10 +94,17 @@ def _update_type(payload: dict[str, Any]) -> str:
 
 
 def _extract_user(payload: dict[str, Any]) -> dict[str, Any]:
+    message = payload.get("message") or {}
+    callback = payload.get("callback") or {}
+    recipient = message.get("recipient") if isinstance(message, dict) else {}
     candidates = [
         payload.get("user"),
-        (payload.get("message") or {}).get("sender"),
-        (payload.get("callback") or {}).get("user"),
+        callback.get("user") if isinstance(callback, dict) else None,
+        callback.get("sender") if isinstance(callback, dict) else None,
+        recipient.get("dialog_with_user") if isinstance(recipient, dict) else None,
+        payload.get("sender"),
+        message.get("sender") if isinstance(message, dict) else None,
+        recipient if isinstance(recipient, dict) and recipient.get("user_id") is not None else None,
     ]
     for candidate in candidates:
         if isinstance(candidate, dict):
@@ -137,7 +144,10 @@ def _extract_display_name(payload: dict[str, Any]) -> str | None:
 def _extract_chat_id(payload: dict[str, Any]) -> str | None:
     raw = payload.get("chat_id")
     if raw is None and isinstance(payload.get("message"), dict):
-        raw = (payload["message"] or {}).get("chat_id")
+        message = payload["message"] or {}
+        raw = message.get("chat_id")
+        if raw is None and isinstance(message.get("recipient"), dict):
+            raw = (message.get("recipient") or {}).get("chat_id")
     if raw is None:
         return None
     normalized = str(raw).strip()
@@ -164,14 +174,32 @@ def _extract_callback(payload: dict[str, Any]) -> tuple[str | None, str | None]:
     callback = payload.get("callback")
     if not isinstance(callback, dict):
         callback = payload
-    callback_id = str(callback.get("callback_id") or "").strip() or None
+    callback_id = str(
+        callback.get("callback_id")
+        or callback.get("id")
+        or payload.get("callback_id")
+        or payload.get("id")
+        or ""
+    ).strip() or None
     callback_payload = str(
         callback.get("payload")
         or callback.get("data")
         or callback.get("value")
+        or callback.get("text")
+        or payload.get("payload")
+        or payload.get("data")
         or ""
     ).strip() or None
     return callback_id, callback_payload
+
+
+def _truncate_callback_payload(value: str | None, *, limit: int = 96) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
 
 
 def _build_startapp_url(settings: Settings, *, start_param: str) -> str | None:
@@ -566,7 +594,33 @@ async def _handle_message_created(payload: dict[str, Any], *, settings: Settings
 async def _handle_message_callback(payload: dict[str, Any], *, settings: Settings) -> MaxWebhookAck:
     callback_id, callback_payload = _extract_callback(payload)
     max_user_id = _extract_user_id(payload)
+    logger.info(
+        "max.webhook.callback_ingress",
+        extra={
+            "callback_id_present": bool(callback_id),
+            "callback_payload": _truncate_callback_payload(callback_payload),
+            "has_max_user_id": bool(max_user_id),
+            "update_keys": sorted(str(key) for key in payload.keys()),
+            "callback_keys": (
+                sorted(str(key) for key in (payload.get("callback") or {}).keys())
+                if isinstance(payload.get("callback"), dict)
+                else []
+            ),
+            "message_recipient_keys": (
+                sorted(
+                    str(key)
+                    for key in ((payload.get("message") or {}).get("recipient") or {}).keys()
+                )
+                if isinstance((payload.get("message") or {}).get("recipient"), dict)
+                else []
+            ),
+        },
+    )
     if not callback_id:
+        logger.warning(
+            "max.webhook.callback_ignored",
+            extra={"ignored_reason": "missing_callback_id"},
+        )
         return MaxWebhookAck(
             handled=False,
             update_type="message_callback",
@@ -586,6 +640,14 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
             logger.exception("max.webhook.callback_answer_failed", extra={"callback_id": callback_id})
 
     if not max_user_id:
+        logger.warning(
+            "max.webhook.callback_ignored",
+            extra={
+                "callback_id": callback_id,
+                "callback_payload": _truncate_callback_payload(callback_payload),
+                "ignored_reason": "missing_user",
+            },
+        )
         return MaxWebhookAck(
             update_type="message_callback",
             handled=False,
@@ -654,6 +716,14 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
 
     candidate = await _load_candidate_by_max_user_id(max_user_id)
     if candidate is None:
+        logger.warning(
+            "max.webhook.callback_ignored",
+            extra={
+                "callback_id": callback_id,
+                "callback_payload": _truncate_callback_payload(callback_payload),
+                "ignored_reason": "candidate_not_linked",
+            },
+        )
         return MaxWebhookAck(
             handled=False,
             update_type="message_callback",
@@ -700,6 +770,14 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
                 )
 
     if prompt is None:
+        logger.warning(
+            "max.webhook.callback_ignored",
+            extra={
+                "callback_id": callback_id,
+                "callback_payload": _truncate_callback_payload(callback_payload),
+                "ignored_reason": "unsupported_callback",
+            },
+        )
         return MaxWebhookAck(
             update_type="message_callback",
             handled=False,

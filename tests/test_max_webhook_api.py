@@ -413,6 +413,63 @@ def test_max_webhook_entry_start_chat_can_bootstrap_global_flow_without_existing
     assert asyncio.run(_count_chat_sessions("700105")) == 1
 
 
+def test_max_webhook_entry_start_chat_accepts_callback_aliases_and_dialog_user(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    monkeypatch.setenv("MAX_INVITE_ROLLOUT_ENABLED", "1")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_candidate_chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    callback = max_webhook_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_callback",
+            "timestamp": 2,
+            "message": {
+                "sender": {"user_id": "900001", "username": "recruitsmart_bot"},
+                "recipient": {
+                    "chat_id": "chat-dialog-700107",
+                    "dialog_with_user": {
+                        "user_id": "700107",
+                        "username": "dialog_callback",
+                        "name": "Dialog Callback User",
+                    },
+                },
+            },
+            "callback": {
+                "id": "cb-global-start-alias",
+                "data": "entry:start_chat",
+            },
+        },
+    )
+
+    assert callback.status_code == 200
+    assert adapter.answers[-1] == "cb-global-start-alias"
+    assert adapter.messages
+    assert "Шаг 1 из" in str(adapter.messages[0]["text"])
+    candidate = asyncio.run(_get_candidate_by_max_user_id("700107"))
+    assert candidate is not None
+    assert candidate.fio == "Dialog Callback User"
+    assert asyncio.run(_count_chat_sessions("700107")) == 1
+
+
 def test_max_webhook_entry_start_chat_bootstraps_questionnaire_without_miniapp_launch(
     monkeypatch: pytest.MonkeyPatch,
     max_webhook_client,
@@ -543,3 +600,46 @@ def test_max_webhook_manual_time_callback_marks_request(
     assert len(history) == 1
     assert history[0].direction == "outbound"
     assert history[0].channel == "max"
+
+
+def test_max_webhook_manual_time_callback_accepts_dialog_user_without_top_level_user(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    candidate_id = asyncio.run(_seed_max_candidate("max-user-4"))
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    response = max_webhook_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_callback",
+            "timestamp": 4,
+            "message": {
+                "sender": {"user_id": "900001", "username": "recruitsmart_bot"},
+                "recipient": {
+                    "chat_id": "chat-dialog-max-user-4",
+                    "dialog_with_user": {
+                        "user_id": "max-user-4",
+                        "username": "candidate_max_4",
+                        "name": "MAX Candidate",
+                    },
+                },
+            },
+            "callback": {"id": "cb-4", "data": "booking:manual_time"},
+        },
+    )
+
+    assert response.status_code == 200
+    candidate = asyncio.run(_get_candidate(candidate_id))
+    assert candidate is not None
+    assert candidate.manual_slot_requested_at is not None
+    assert adapter.answers == ["cb-4"]
