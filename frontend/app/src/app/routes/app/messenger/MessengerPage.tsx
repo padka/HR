@@ -20,6 +20,7 @@ import {
   groupedMessagesWithUnread,
   matchesChannelFilter,
   matchesQuickFilter,
+  matchesThreadSearch,
   sortThreadsForInbox,
 } from './messenger.utils'
 import { ThreadList } from './ThreadList'
@@ -35,13 +36,22 @@ export function MessengerPage() {
   const [activeFolder, setActiveFolder] = useState<MessengerStageFolder>('all')
   const [quickFilter, setQuickFilter] = useState<MessengerQuickFilter>('all')
   const [channelFilter, setChannelFilter] = useState<MessengerChannelFilter>('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [showContextPanel, setShowContextPanel] = useState(false)
   const [showTemplateTray, setShowTemplateTray] = useState(false)
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
   const { draft: messageText, setDraft: setMessageText } = useMessageDraft(activeCandidateId)
 
-  const { query: threadsQuery, threadQueryKey } = useMessengerThreads()
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(searchInput.trim())
+    }, 180)
+    return () => window.clearTimeout(handle)
+  }, [searchInput])
+
+  const { query: threadsQuery, threadQueryKey } = useMessengerThreads(debouncedSearch)
   const allThreads = useMemo(
     () => sortThreadsForInbox(threadsQuery.data?.threads || []),
     [threadsQuery.data?.threads],
@@ -54,22 +64,30 @@ export function MessengerPage() {
     () => buildFolderCounts(channelScopedThreads),
     [channelScopedThreads],
   )
+  const searchScopedThreads = useMemo(() => {
+    if (!searchInput.trim()) return channelScopedThreads
+    return sortThreadsForInbox(channelScopedThreads.filter((thread) => matchesThreadSearch(thread, searchInput)))
+  }, [channelScopedThreads, searchInput])
   const folderScopedThreads = useMemo(
-    () =>
-      sortThreadsForInbox(
+    () => {
+      if (searchInput.trim()) return searchScopedThreads
+      return sortThreadsForInbox(
         channelScopedThreads.filter((thread) => {
           if (activeFolder === 'all') return true
           return classifyThreadToFolder(thread) === activeFolder
         }),
-      ),
-    [activeFolder, channelScopedThreads],
+      )
+    },
+    [activeFolder, channelScopedThreads, searchInput, searchScopedThreads],
   )
   const visibleThreads = useMemo(
-    () =>
-      sortThreadsForInbox(
+    () => {
+      if (searchInput.trim()) return searchScopedThreads
+      return sortThreadsForInbox(
         folderScopedThreads.filter((thread) => matchesQuickFilter(thread, quickFilter)),
-      ),
-    [folderScopedThreads, quickFilter],
+      )
+    },
+    [folderScopedThreads, quickFilter, searchInput, searchScopedThreads],
   )
 
   useEffect(() => {
@@ -172,12 +190,14 @@ export function MessengerPage() {
             activeFolder={activeFolder}
             quickFilter={quickFilter}
             channelFilter={channelFilter}
+            searchValue={searchInput}
             isLoading={threadsQuery.isLoading}
             isError={threadsQuery.isError}
             archivePendingCandidateId={archiveMutation.isPending ? (archiveMutation.variables ?? null) : null}
             onFolderChange={setActiveFolder}
             onQuickFilterChange={setQuickFilter}
             onChannelFilterChange={setChannelFilter}
+            onSearchChange={setSearchInput}
             onRefresh={() => {
               void refreshThreads()
             }}

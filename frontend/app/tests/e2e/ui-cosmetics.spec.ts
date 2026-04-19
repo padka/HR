@@ -109,6 +109,7 @@ test.describe("ui cosmetics smoke (desktop)", () => {
 
     await expect(page.getByRole("complementary", { name: "Чаты кандидатов" })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("searchbox", { name: "Поиск по чатам" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /папки/i })).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-sidebar")).toBeVisible({ timeout: 10000 });
     await expect(page.locator(".messenger-chat")).toBeVisible({ timeout: 10000 });
 
@@ -138,6 +139,7 @@ test.describe("ui cosmetics smoke (desktop)", () => {
 
     await expect(page.getByRole("button", { name: "Детали" })).toHaveCount(0);
     await expect(page.locator(".background-scene")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
   });
 
   test("candidate detail insights drawer stays notes-first", async ({ page }) => {
@@ -235,7 +237,10 @@ test.describe("ui cosmetics smoke (mobile 390)", () => {
     await page.waitForTimeout(500);
 
     await expect(page.getByRole("complementary", { name: "Чаты кандидатов" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: /папки/i })).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: /папки/i }).click();
     await expect(page.getByTestId("messenger-folder-rail")).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: /закрыть меню папок/i }).click();
 
     const firstThread = page.locator('.messenger-thread-card[role="button"]').first();
     if (await firstThread.count()) {

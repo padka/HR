@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CandidateChatThread } from './messenger.types'
 import { ThreadList } from './ThreadList'
-import { buildFolderCounts, classifyThreadToFolder } from './messenger.utils'
+import { buildFolderCounts, classifyThreadToFolder, matchesThreadSearch } from './messenger.utils'
 
 const baseThread: CandidateChatThread = {
   id: 1,
@@ -42,12 +42,14 @@ describe('ThreadList inbox workspace', () => {
         activeFolder="all"
         quickFilter="all"
         channelFilter="all"
+        searchValue=""
         isLoading={false}
         isError={false}
         archivePendingCandidateId={null}
         onFolderChange={vi.fn()}
         onQuickFilterChange={vi.fn()}
         onChannelFilterChange={vi.fn()}
+        onSearchChange={vi.fn()}
         onRefresh={vi.fn()}
         onArchive={onArchive}
         onSelect={onSelect}
@@ -100,12 +102,14 @@ describe('ThreadList inbox workspace', () => {
         activeFolder="all"
         quickFilter="all"
         channelFilter="all"
+        searchValue=""
         isLoading={false}
         isError={false}
         archivePendingCandidateId={null}
         onFolderChange={vi.fn()}
         onQuickFilterChange={vi.fn()}
         onChannelFilterChange={vi.fn()}
+        onSearchChange={vi.fn()}
         onRefresh={vi.fn()}
         onArchive={vi.fn()}
         onSelect={vi.fn()}
@@ -113,15 +117,16 @@ describe('ThreadList inbox workspace', () => {
     )
 
     const folderRail = screen.getByTestId('messenger-folder-rail')
-    expect(within(folderRail).getByRole('button', { name: /Лиды/i })).toBeInTheDocument()
-    expect(within(folderRail).getByRole('button', { name: /Ожидают слот/i })).toBeInTheDocument()
-    expect(within(folderRail).getByRole('button', { name: /Собеседование/i })).toBeInTheDocument()
+    expect(within(folderRail).getByText('Лиды')).toBeInTheDocument()
+    expect(within(folderRail).getByText('Ожидают слот')).toBeInTheDocument()
+    expect(within(folderRail).getByText('Собеседование')).toBeInTheDocument()
   })
 
   it('emits folder and quick filter changes', () => {
     const onFolderChange = vi.fn()
     const onQuickFilterChange = vi.fn()
     const onChannelFilterChange = vi.fn()
+    const onSearchChange = vi.fn()
     const threads = [baseThread]
 
     render(
@@ -134,24 +139,38 @@ describe('ThreadList inbox workspace', () => {
         activeFolder="all"
         quickFilter="all"
         channelFilter="all"
+        searchValue=""
         isLoading={false}
         isError={false}
         archivePendingCandidateId={null}
         onFolderChange={onFolderChange}
         onQuickFilterChange={onQuickFilterChange}
         onChannelFilterChange={onChannelFilterChange}
+        onSearchChange={onSearchChange}
         onRefresh={vi.fn()}
         onArchive={vi.fn()}
         onSelect={vi.fn()}
       />,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: /папки/i }))
     fireEvent.click(within(screen.getByTestId('messenger-folder-rail')).getByRole('button', { name: /Ожидают слот/i }))
     fireEvent.click(within(screen.getByTestId('messenger-quick-filters')).getByRole('button', { name: /Нужен ответ/i }))
     fireEvent.click(screen.getByRole('button', { name: 'MAX' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Поиск по чатам' }), {
+      target: { value: 'Иван Петров' },
+    })
 
     expect(onFolderChange).toHaveBeenCalledWith('waiting_slot')
     expect(onQuickFilterChange).toHaveBeenCalledWith('needs_reply')
     expect(onChannelFilterChange).toHaveBeenCalledWith('max')
+    expect(onSearchChange).toHaveBeenCalledWith('Иван Петров')
+  })
+
+  it('matches fio tokens regardless of order', () => {
+    expect(matchesThreadSearch(baseThread, 'Иван Петров')).toBe(true)
+    expect(matchesThreadSearch(baseThread, 'Петров Иван')).toBe(true)
+    expect(matchesThreadSearch(baseThread, 'Петров Москва')).toBe(true)
+    expect(matchesThreadSearch(baseThread, 'Сидоров Иван')).toBe(false)
   })
 })

@@ -18,19 +18,27 @@ import {
 import { MESSAGE_LIMIT, THREAD_LIMIT } from './messenger.constants'
 import { readThreadCache, removeThreadFromCache } from './messenger.utils'
 
-type MessengerThreadQueryKey = readonly ['candidate-chat-threads', 'inbox']
+type MessengerThreadQueryKey = readonly ['candidate-chat-threads', 'inbox', string]
 
-export function useMessengerThreads() {
+export function useMessengerThreads(search = '') {
   const queryClient = useQueryClient()
-  const threadQueryKey = useMemo(() => ['candidate-chat-threads', 'inbox'] as const, [])
+  const normalizedSearch = search.trim()
+  const threadQueryKey = useMemo(
+    () => ['candidate-chat-threads', 'inbox', normalizedSearch] as const,
+    [normalizedSearch],
+  )
   const sinceRef = useRef<string | null>(null)
   const query = useQuery<CandidateChatThreadsPayload>({
     queryKey: threadQueryKey,
-    queryFn: () => fetchCandidateChatThreads({ folder: 'inbox', limit: THREAD_LIMIT }),
+    queryFn: () => fetchCandidateChatThreads({ folder: 'inbox', limit: THREAD_LIMIT, search: normalizedSearch || undefined }),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
+
+  useEffect(() => {
+    sinceRef.current = null
+  }, [normalizedSearch])
 
   useEffect(() => {
     sinceRef.current = query.data?.latest_event_at || null
@@ -48,6 +56,7 @@ export function useMessengerThreads() {
             timeout: 25,
             folder: 'inbox',
             limit: THREAD_LIMIT,
+            search: normalizedSearch || undefined,
             signal: controller.signal,
           })
           if (!active) return
@@ -67,7 +76,7 @@ export function useMessengerThreads() {
       active = false
       controller.abort()
     }
-  }, [queryClient, threadQueryKey])
+  }, [normalizedSearch, queryClient, threadQueryKey])
 
   return { query, threadQueryKey }
 }

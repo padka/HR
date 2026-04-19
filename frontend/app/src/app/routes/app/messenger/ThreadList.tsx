@@ -290,12 +290,14 @@ type ThreadListProps = {
   activeFolder: MessengerStageFolder
   quickFilter: MessengerQuickFilter
   channelFilter: MessengerChannelFilter
+  searchValue: string
   isLoading: boolean
   isError: boolean
   archivePendingCandidateId: number | null
   onFolderChange: (folder: MessengerStageFolder) => void
   onQuickFilterChange: (filter: MessengerQuickFilter) => void
   onChannelFilterChange: (filter: MessengerChannelFilter) => void
+  onSearchChange: (value: string) => void
   onRefresh: () => void
   onArchive: (candidateId: number) => void
   onSelect: (candidateId: number) => void
@@ -310,25 +312,49 @@ export function ThreadList({
   activeFolder,
   quickFilter,
   channelFilter,
+  searchValue,
   isLoading,
   isError,
   archivePendingCandidateId,
   onFolderChange,
   onQuickFilterChange,
   onChannelFilterChange,
+  onSearchChange,
   onRefresh,
   onArchive,
   onSelect,
 }: ThreadListProps) {
   const prefersReducedMotion = useReducedMotion()
-  const [search, setSearch] = useState('')
+  const [isFolderDrawerOpen, setIsFolderDrawerOpen] = useState(false)
   const [hasAnimatedOnce, setHasAnimatedOnce] = useState(false)
 
   useEffect(() => {
     setHasAnimatedOnce(true)
   }, [])
 
-  const searchValue = search.trim().toLowerCase()
+  useEffect(() => {
+    if (!isFolderDrawerOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFolderDrawerOpen(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFolderDrawerOpen])
+
+  useEffect(() => {
+    if (searchValue.trim()) setIsFolderDrawerOpen(false)
+  }, [searchValue])
+
+  const searchQuery = searchValue.trim()
+  const isSearching = searchQuery.length > 0
+  const activeFolderSummary = useMemo(
+    () => folderCounts.find((folder) => folder.key === activeFolder) || folderCounts[0],
+    [activeFolder, folderCounts],
+  )
+  const allFolderSummary = useMemo(
+    () => folderCounts.find((folder) => folder.key === 'all') || folderCounts[0],
+    [folderCounts],
+  )
   const quickFilterCounts = useMemo(
     () => ({
       all: folderScopedThreads.length,
@@ -338,39 +364,42 @@ export function ThreadList({
     }),
     [folderScopedThreads],
   )
-  const visibleThreads = useMemo(
-    () =>
-      threads.filter((thread) => {
-        if (!searchValue) return true
-        const haystack = [
-          thread.title,
-          thread.city,
-          thread.status_label,
-          thread.last_message_preview,
-          thread.last_message?.preview,
-          thread.last_message?.text,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(searchValue)
-      }),
-    [searchValue, threads],
-  )
-  const animationKey = `${searchValue}|${visibleThreads.length}`
+  const animationKey = `${searchQuery}|${threads.length}`
   const firstRenderAnimation = !hasAnimatedOnce && !prefersReducedMotion
+  const visibleCountLabel = isSearching ? `Найдено ${threads.length}` : `${threads.length} диалогов`
+  const scopeLabel = isSearching
+    ? 'Поиск по всем чатам'
+    : activeFolderSummary
+      ? `${activeFolderSummary.label} · ${activeFolderSummary.count}`
+      : 'Все чаты'
 
   return (
     <aside className="messenger-thread-list-panel messenger-sidebar messenger-inbox-rail" aria-label="Чаты кандидатов">
-      <div className="messenger-inbox-workspace">
-        <nav className="messenger-folder-rail" aria-label="Папки чатов">
+      <div className={`messenger-inbox-workspace ${isFolderDrawerOpen ? 'is-folder-drawer-open' : ''}`}>
+        <button
+          type="button"
+          className={`messenger-folder-backdrop ${isFolderDrawerOpen ? 'is-open' : ''}`}
+          onClick={() => setIsFolderDrawerOpen(false)}
+          aria-label="Закрыть меню папок"
+          tabIndex={isFolderDrawerOpen ? 0 : -1}
+        />
+
+        <nav
+          id="messenger-folder-drawer"
+          className="messenger-folder-rail"
+          aria-label="Папки чатов"
+          aria-hidden={!isFolderDrawerOpen}
+        >
           <div className="messenger-folder-rail__scroller" data-testid="messenger-folder-rail">
             {folderCounts.map((folder) => (
               <button
                 key={folder.key}
                 type="button"
                 className={`messenger-folder-pill ${folder.key === activeFolder ? 'is-active' : ''}`}
-                onClick={() => onFolderChange(folder.key)}
+                onClick={() => {
+                  onFolderChange(folder.key)
+                  setIsFolderDrawerOpen(false)
+                }}
                 aria-pressed={folder.key === activeFolder}
               >
                 <span className="messenger-folder-pill__label">{folder.label}</span>
@@ -387,24 +416,49 @@ export function ThreadList({
 
         <div className="messenger-inbox-shell">
           <div className="messenger-thread-list-header messenger-sidebar__toolbar">
+            <div className="messenger-thread-toolbar__row messenger-thread-toolbar__row--top">
+              <button
+                className={`messenger-folder-trigger ${isFolderDrawerOpen ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setIsFolderDrawerOpen((prev) => !prev)}
+                aria-expanded={isFolderDrawerOpen}
+                aria-controls="messenger-folder-drawer"
+              >
+                <span className="messenger-folder-trigger__eyebrow">Папки</span>
+                <span className="messenger-folder-trigger__body">
+                  <strong>{isSearching ? 'Все чаты' : activeFolderSummary?.label || 'Все'}</strong>
+                  <span>{scopeLabel}</span>
+                </span>
+                <span className="messenger-folder-trigger__count">
+                  {isSearching ? allFolderSummary?.count || allThreads.length : activeFolderSummary?.count || 0}
+                </span>
+              </button>
+              <button
+                className="ui-btn ui-btn--ghost ui-btn--sm messenger-sidebar__refresh"
+                onClick={onRefresh}
+                type="button"
+                aria-label="Обновить список чатов"
+              >
+                Обновить
+              </button>
+            </div>
+
             <div className="messenger-sidebar__search-slot">
               <input
                 className="thread-search"
                 type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Поиск по кандидату, городу или статусу"
+                value={searchValue}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Поиск по ФИО, городу или сообщению"
                 aria-label="Поиск по чатам"
               />
             </div>
-            <button
-              className="ui-btn ui-btn--ghost ui-btn--sm messenger-sidebar__refresh"
-              onClick={onRefresh}
-              type="button"
-              aria-label="Обновить список чатов"
-            >
-              Обновить
-            </button>
+
+            <div className="messenger-thread-toolbar__meta">
+              <strong>{visibleCountLabel}</strong>
+              <span>{scopeLabel}</span>
+            </div>
+
             <div className="messenger-thread-toolbar__row" data-testid="messenger-quick-filters">
               {MESSENGER_QUICK_FILTERS.map((item) => (
                 <button
@@ -413,6 +467,8 @@ export function ThreadList({
                   className={`messenger-filter-chip ${item.key === quickFilter ? 'is-active' : ''}`}
                   onClick={() => onQuickFilterChange(item.key)}
                   aria-pressed={item.key === quickFilter}
+                  disabled={isSearching}
+                  title={isSearching ? 'Фильтры временно отключены во время глобального поиска' : undefined}
                 >
                   <span>{item.label}</span>
                   <strong>{quickFilterCounts[item.key]}</strong>
@@ -437,14 +493,20 @@ export function ThreadList({
           <div className="messenger-thread-list-body">
             {isLoading && <p className="subtitle">Загрузка диалогов…</p>}
             {isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
-            {!isLoading && visibleThreads.length === 0 && (
+            {!isLoading && threads.length === 0 && (
               <div className="messenger-empty-state messenger-empty-state--compact">
-                <strong>{allThreads.length === 0 ? 'Диалоги пока не появились' : 'В текущей папке ничего не найдено'}</strong>
+                <strong>
+                  {isSearching
+                    ? 'По запросу ничего не найдено'
+                    : allThreads.length === 0
+                      ? 'Диалоги пока не появились'
+                      : 'В текущей папке ничего не найдено'}
+                </strong>
                 <span>
-                  {allThreads.length === 0
-                    ? 'Когда появятся новые сообщения кандидатов, они отобразятся здесь.'
-                    : searchValue
-                      ? 'Попробуйте другое имя, город или статус.'
+                  {isSearching
+                    ? 'Попробуйте другое ФИО, город или фрагмент сообщения.'
+                    : allThreads.length === 0
+                      ? 'Когда появятся новые сообщения кандидатов, они отобразятся здесь.'
                       : 'Смените папку или фильтр, чтобы увидеть другие диалоги.'}
                 </span>
               </div>
@@ -459,7 +521,7 @@ export function ThreadList({
                 animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
                 transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
               >
-                {visibleThreads.map((thread) => (
+                {threads.map((thread) => (
                   <motion.div key={thread.candidate_id} variants={firstRenderAnimation ? listItem : undefined}>
                     <SwipeableThreadRow
                       thread={thread}

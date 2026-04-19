@@ -133,6 +133,13 @@ export function previewText(thread?: CandidateChatThread | null): string {
   return thread?.last_message_preview?.trim() || thread?.last_message?.preview?.trim() || thread?.last_message?.text?.trim() || 'Переписка ещё не началась'
 }
 
+function normalizeSearchValue(value?: string | null): string {
+  return (value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function normalizedThreadStatus(thread: CandidateChatThread): string {
   return `${thread.status_slug || ''} ${thread.status_label || ''}`.trim().toLowerCase()
 }
@@ -204,6 +211,31 @@ export function matchesQuickFilter(thread: CandidateChatThread, quickFilter: Mes
 export function matchesChannelFilter(thread: CandidateChatThread, channelFilter: MessengerChannelFilter): boolean {
   if (channelFilter === 'all') return true
   return (thread.preferred_channel || '').toLowerCase() === channelFilter
+}
+
+export function matchesThreadSearch(thread: CandidateChatThread, rawQuery: string): boolean {
+  const query = normalizeSearchValue(rawQuery)
+  if (!query) return true
+
+  const queryTokens = query.split(' ').filter(Boolean)
+  const nameValue = normalizeSearchValue(thread.title)
+  const generalValue = normalizeSearchValue(
+    [
+      thread.title,
+      thread.city,
+      thread.status_label,
+      thread.last_message_preview,
+      thread.last_message?.preview,
+      thread.last_message?.text,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
+
+  if (nameValue.includes(query) || generalValue.includes(query)) return true
+
+  if (queryTokens.length === 0) return true
+  return queryTokens.every((token) => nameValue.includes(token) || generalValue.includes(token))
 }
 
 function latestActivityTs(thread: CandidateChatThread): number {
