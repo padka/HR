@@ -341,23 +341,36 @@
 
 .app-page--incoming .incoming-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  align-items: start;
   gap: var(--space-3);
 }
 
 .app-page--incoming .incoming-row {
   display: grid;
-  gap: 12px;
-  padding: 14px 16px;
+  align-content: start;
+  min-height: 100%;
+  gap: 10px;
+  padding: 13px 14px;
   background: linear-gradient(180deg, rgba(17, 26, 40, 0.94), rgba(11, 18, 28, 0.96));
   border-color: color-mix(in srgb, var(--border-default) 90%, rgba(90, 210, 196, 0.12));
-  transition: border-color var(--duration-fast) var(--ease-out);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .app-page--incoming .incoming-row:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 22%, var(--border-default));
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  }
 }
 
 .app-page--incoming .incoming-row__head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  gap: 8px;
 }
 
 .app-page--incoming .incoming-row__identity {
@@ -369,9 +382,8 @@
 .app-page--incoming .incoming-row__name-line {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .app-page--incoming .incoming-row__name {
@@ -379,7 +391,7 @@
   align-items: center;
   gap: 8px;
   color: var(--text-primary);
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: var(--font-semibold);
   line-height: var(--leading-tight);
 }
@@ -388,8 +400,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
+  width: 100%;
 }
 
 .app-page--incoming .incoming-row__waiting {
@@ -444,7 +457,7 @@
 
 .app-page--incoming .incoming-row__summary {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .app-page--incoming .incoming-row__status-strip,
@@ -490,21 +503,16 @@
 }
 
 .app-page--incoming .incoming-row__footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border-subtle);
 }
 
 .app-page--incoming .incoming-row__primary {
-  display: flex;
-  flex: 1 1 220px;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
   gap: var(--space-2);
+  width: 100%;
 }
 
 .app-page--incoming .incoming-ai__chip {
@@ -521,28 +529,33 @@
 }
 
 .app-page--incoming .incoming-row__assign {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: var(--space-2);
-  align-items: center;
+  width: 100%;
 }
 
 .app-page--incoming .incoming-row__assign select {
-  min-width: 180px;
+  min-width: 0;
+  width: 100%;
 }
 
 .app-page--incoming .incoming-row__actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-  align-items: center;
-  justify-content: flex-end;
+  width: 100%;
+}
+
+.app-page--incoming .incoming-row__primary .ui-btn,
+.app-page--incoming .incoming-row__actions .ui-btn,
+.app-page--incoming .incoming-row__actions .ui-btn[href] {
+  width: 100%;
 }
 
 .app-page--incoming .incoming-row__details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border-subtle);
 }
@@ -964,12 +977,15 @@
 
   .app-page--incoming .incoming-row__primary .ui-btn,
   .app-page--incoming .incoming-row__actions .ui-btn {
-    width: calc(50% - (var(--space-2) / 2));
+    width: 100%;
     min-width: 0;
   }
 
-  .app-page--incoming .incoming-row__primary .ui-btn:first-child,
-  .app-page--incoming .incoming-row__actions .ui-btn:first-child {
+  .app-page--incoming .incoming-row__actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-page--incoming .incoming-row__primary .ui-btn:first-child {
     width: 100%;
   }
 

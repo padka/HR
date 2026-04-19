@@ -13,7 +13,15 @@ import {
   useMessengerTemplates,
   useMessengerThreads,
 } from './messenger.api'
-import { groupedMessagesWithUnread } from './messenger.utils'
+import type { MessengerChannelFilter, MessengerQuickFilter, MessengerStageFolder } from './messenger.types'
+import {
+  buildFolderCounts,
+  classifyThreadToFolder,
+  groupedMessagesWithUnread,
+  matchesChannelFilter,
+  matchesQuickFilter,
+  sortThreadsForInbox,
+} from './messenger.utils'
 import { ThreadList } from './ThreadList'
 import { ThreadView } from './ThreadView'
 import { useMessageDraft } from './useMessageDraft'
@@ -24,6 +32,10 @@ export function MessengerPage() {
   const shouldStickToBottomRef = useRef(true)
 
   const [activeCandidateId, setActiveCandidateId] = useState<number | null>(null)
+  const [activeFolder, setActiveFolder] = useState<MessengerStageFolder>('all')
+  const [quickFilter, setQuickFilter] = useState<MessengerQuickFilter>('all')
+  const [channelFilter, setChannelFilter] = useState<MessengerChannelFilter>('all')
+  const [showContextPanel, setShowContextPanel] = useState(false)
   const [showTemplateTray, setShowTemplateTray] = useState(false)
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
@@ -31,15 +43,22 @@ export function MessengerPage() {
 
   const { query: threadsQuery, threadQueryKey } = useMessengerThreads()
   const allThreads = useMemo(
-    () =>
-      (threadsQuery.data?.threads || [])
-        .slice()
-        .sort((left, right) => {
-          const leftTs = new Date(left.last_message_at || left.created_at).getTime()
-          const rightTs = new Date(right.last_message_at || right.created_at).getTime()
-          return rightTs - leftTs
-        }),
+    () => sortThreadsForInbox(threadsQuery.data?.threads || []),
     [threadsQuery.data?.threads],
+  )
+  const folderCounts = useMemo(
+    () => buildFolderCounts(allThreads.filter((thread) => matchesChannelFilter(thread, channelFilter))),
+    [allThreads, channelFilter],
+  )
+  const visibleThreads = useMemo(
+    () =>
+      sortThreadsForInbox(
+        allThreads.filter((thread) => {
+          const inFolder = activeFolder === 'all' || classifyThreadToFolder(thread) === activeFolder
+          return inFolder && matchesQuickFilter(thread, quickFilter) && matchesChannelFilter(thread, channelFilter)
+        }),
+      ),
+    [activeFolder, allThreads, channelFilter, quickFilter],
   )
 
   useEffect(() => {
@@ -51,25 +70,26 @@ export function MessengerPage() {
   }, [])
 
   useEffect(() => {
-    if (activeCandidateId || !allThreads.length || isMobile) return
-    setActiveCandidateId(allThreads[0].candidate_id)
-  }, [activeCandidateId, allThreads, isMobile])
+    if (activeCandidateId || !visibleThreads.length || isMobile) return
+    setActiveCandidateId(visibleThreads[0].candidate_id)
+  }, [activeCandidateId, isMobile, visibleThreads])
 
   useEffect(() => {
     if (!activeCandidateId) return
-    if (allThreads.some((thread) => thread.candidate_id === activeCandidateId)) return
-    setActiveCandidateId(isMobile ? null : (allThreads[0]?.candidate_id ?? null))
-  }, [activeCandidateId, allThreads, isMobile])
+    if (visibleThreads.some((thread) => thread.candidate_id === activeCandidateId)) return
+    setActiveCandidateId(isMobile ? null : (visibleThreads[0]?.candidate_id ?? null))
+  }, [activeCandidateId, isMobile, visibleThreads])
 
   useEffect(() => {
     setSelectedTemplateKey('')
     setShowTemplateTray(false)
     setSendError(null)
+    setShowContextPanel(false)
   }, [activeCandidateId])
 
   const activeThread = useMemo(
-    () => allThreads.find((thread) => thread.candidate_id === activeCandidateId) || null,
-    [activeCandidateId, allThreads],
+    () => visibleThreads.find((thread) => thread.candidate_id === activeCandidateId) || null,
+    [activeCandidateId, visibleThreads],
   )
   const channelHealthQuery = useCandidateChannelHealth(activeCandidateId || 0, Boolean(activeCandidateId))
 
@@ -133,11 +153,19 @@ export function MessengerPage() {
       <div className={`page app-page app-page--ops messenger-page ${isMobile && activeCandidateId ? 'is-mobile-chat-open' : ''}`}>
         <div className="messenger-layout messenger-layout--workspace">
           <ThreadList
-            threads={allThreads}
+            threads={visibleThreads}
+            allThreads={allThreads}
+            folderCounts={folderCounts}
             activeCandidateId={activeCandidateId}
+            activeFolder={activeFolder}
+            quickFilter={quickFilter}
+            channelFilter={channelFilter}
             isLoading={threadsQuery.isLoading}
             isError={threadsQuery.isError}
             archivePendingCandidateId={archiveMutation.isPending ? (archiveMutation.variables ?? null) : null}
+            onFolderChange={setActiveFolder}
+            onQuickFilterChange={setQuickFilter}
+            onChannelFilterChange={setChannelFilter}
             onRefresh={() => {
               void refreshThreads()
             }}
@@ -161,6 +189,9 @@ export function MessengerPage() {
               shouldStickToBottomRef.current = gap < 80
             }}
             onBack={() => setActiveCandidateId(null)}
+            showContextPanel={showContextPanel}
+            onToggleContextPanel={() => setShowContextPanel((prev) => !prev)}
+            onCloseContextPanel={() => setShowContextPanel(false)}
             showTemplateTray={showTemplateTray}
             selectedTemplateKey={selectedTemplateKey}
             templates={templatesQuery.data?.items || []}
