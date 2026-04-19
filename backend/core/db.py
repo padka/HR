@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncIterator, Iterator
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
@@ -136,15 +136,18 @@ async def init_models() -> None:
         # For local dev/test we create the schema directly from ORM metadata and
         # best-effort repair legacy sqlite databases with missing columns.
         # Ensure all models are imported so metadata is fully populated.
-        from backend.domain import auth_account as _auth_account  # noqa: F401
-        from backend.domain import analytics_models as _analytics_models  # noqa: F401
-        from backend.domain import models as _models  # noqa: F401
-        from backend.domain.candidates import models as _candidate_models  # noqa: F401
-        from backend.domain.ai import models as _ai_models  # noqa: F401
-        from backend.domain.hh_integration import models as _hh_integration_models  # noqa: F401
-        from backend.domain.tests import models as _test_models  # noqa: F401
-        from backend.domain.base import Base
         from backend.core.sqlite_dev_schema import repair_sqlite_schema
+        from backend.domain import analytics_models as _analytics_models  # noqa: F401
+        from backend.domain import auth_account as _auth_account  # noqa: F401
+        from backend.domain import models as _models  # noqa: F401
+        from backend.domain.ai import models as _ai_models  # noqa: F401
+        from backend.domain.base import Base
+        from backend.domain.candidates import models as _candidate_models  # noqa: F401
+        from backend.domain.hh_integration import (
+            models as _hh_integration_models,  # noqa: F401
+        )
+        from backend.domain.messaging import models as _messaging_models  # noqa: F401
+        from backend.domain.tests import models as _test_models  # noqa: F401
 
         await asyncio.to_thread(repair_sqlite_schema, engine=sync_engine, metadata=Base.metadata)
         return

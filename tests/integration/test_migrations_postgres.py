@@ -1,6 +1,7 @@
 """Integration test to verify all migrations run successfully on clean PostgreSQL database."""
 
 import os
+
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -42,7 +43,7 @@ def test_migrations_on_clean_postgres():
         conn.commit()
 
     # Now run migrations from scratch
-    from backend.migrations.runner import upgrade_to_head
+    from backend.migrations.runner import _discover_migrations, upgrade_to_head
 
     try:
         upgrade_to_head(sync_db_url)
@@ -68,6 +69,23 @@ def test_migrations_on_clean_postgres():
             "cities",
             "slots",
             "message_templates",
+            "candidate_channel_identities",
+            "requisitions",
+            "applications",
+            "application_events",
+            "application_idempotency_keys",
+            "interviews",
+            "recruiter_tasks",
+            "dedup_candidate_pairs",
+            "ai_decision_records",
+            "candidate_access_tokens",
+            "candidate_access_sessions",
+            "message_threads",
+            "messages",
+            "message_deliveries",
+            "provider_receipts",
+            "candidate_contact_policies",
+            "channel_health_registry",
         ]
 
         for table_name in core_tables:
@@ -84,7 +102,7 @@ def test_migrations_on_clean_postgres():
         result = conn.execute(text("SELECT version_num FROM alembic_version"))
         version = result.scalar()
         assert version is not None, "No migration version recorded"
-        # We expect the last migration to be applied
-        assert version.startswith("00"), f"Unexpected migration version: {version}"
+        latest_revision = _discover_migrations()[-1].revision
+        assert version == latest_revision, f"Unexpected migration version: {version}"
 
     engine.dispose()

@@ -19,6 +19,10 @@ ignore = ["E203", "E266", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "E402"]
+# Legacy ORM monoliths still use historical Optional/List and timezone patterns.
+# Phase A schema stays additive-only; broader ORM modernization is a separate refactor.
+"backend/domain/models.py" = ["B904", "E402", "F401", "F821", "I001", "UP006", "UP017", "UP035", "UP037", "UP045"]
+"backend/domain/candidates/models.py" = ["I001", "UP006", "UP017", "UP035", "UP037", "UP045"]
 
 [tool.ruff.format]
 docstring-code-format = true

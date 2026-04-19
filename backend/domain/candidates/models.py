@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional, TYPE_CHECKING
 import uuid
+from typing import TYPE_CHECKING, List, Optional
 
-import backend.domain.models  # register shared tables (recruiters, cities, slots) for FK resolution
+import backend.domain.models  # noqa: F401 - register shared tables (recruiters, cities, slots) for FK resolution
 from sqlalchemy import (
     Boolean,
-    DateTime,
-    ForeignKey,
-    Integer,
     BigInteger,
+    DateTime,
+    Enum as SQLEnum,
+    ForeignKey,
     Float,
+    Index,
+    Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
-    Enum as SQLEnum,
-    JSON,
-    Index,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
@@ -26,10 +26,10 @@ from sqlalchemy.sql import func
 
 from backend.domain.base import Base
 from backend.domain.candidates.phones import normalize_candidate_phone
+from backend.domain.candidates.status import CandidateStatus
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     pass
-from backend.domain.candidates.status import CandidateStatus
 
 
 class User(Base):
@@ -522,10 +522,66 @@ class CandidateJourneyStepStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class CandidateJourneySurface(str, Enum):
+    STANDALONE_WEB = "standalone_web"
+    TELEGRAM_WEBAPP = "telegram_webapp"
+    MAX_MINIAPP = "max_miniapp"
+    MAX_CHAT = "max_chat"
+
+
+class CandidateAccessTokenKind(str, Enum):
+    INVITE = "invite"
+    LAUNCH = "launch"
+    RESUME = "resume"
+    OTP_CHALLENGE = "otp_challenge"
+
+
+class CandidateAccessAuthMethod(str, Enum):
+    TELEGRAM_INIT_DATA = "telegram_init_data"
+    MAX_INIT_DATA = "max_init_data"
+    SIGNED_LINK = "signed_link"
+    OTP = "otp"
+    ADMIN_INVITE = "admin_invite"
+
+
+class CandidateLaunchChannel(str, Enum):
+    TELEGRAM = "telegram"
+    MAX = "max"
+    SMS = "sms"
+    EMAIL = "email"
+    MANUAL = "manual"
+    HH = "hh"
+
+
+class CandidateAccessTokenPhoneVerificationState(str, Enum):
+    NOT_REQUIRED = "not_required"
+    PENDING = "pending"
+    VERIFIED = "verified"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
+class CandidateAccessSessionStatus(str, Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+    BLOCKED = "blocked"
+
+
+class CandidateAccessSessionPhoneVerificationState(str, Enum):
+    REQUIRED = "required"
+    PENDING = "pending"
+    VERIFIED = "verified"
+    BYPASSED = "bypassed"
+    EXPIRED = "expired"
+
+
 class CandidateJourneySession(Base):
     __tablename__ = "candidate_journey_sessions"
     __table_args__ = (
         Index("ix_candidate_journey_sessions_candidate_status", "candidate_id", "status"),
+        Index("ix_candidate_journey_sessions_application_status", "application_id", "status"),
+        Index("ix_candidate_journey_sessions_last_access_session", "last_access_session_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -538,6 +594,23 @@ class CandidateJourneySession(Base):
     journey_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
     entry_channel: Mapped[str] = mapped_column(String(32), nullable=False, default="web")
     current_step_key: Mapped[str] = mapped_column(String(64), nullable=False, default="profile")
+    application_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_access_session_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "candidate_access_sessions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_candidate_journey_sessions_last_access_session_id",
+        ),
+        nullable=True,
+    )
+    last_surface: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_auth_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=CandidateJourneySessionStatus.ACTIVE.value)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -564,6 +637,173 @@ class CandidateJourneySession(Base):
         return (
             f"<CandidateJourneySession {self.id} candidate={self.candidate_id} "
             f"step={self.current_step_key} status={self.status}>"
+        )
+
+
+class CandidateAccessToken(Base):
+    __tablename__ = "candidate_access_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_id", name="uq_candidate_access_tokens_token_id"),
+        UniqueConstraint("token_hash", name="uq_candidate_access_tokens_token_hash"),
+        Index(
+            "ix_candidate_access_tokens_candidate_token_kind_expires",
+            "candidate_id",
+            "token_kind",
+            "expires_at",
+        ),
+        Index(
+            "ix_candidate_access_tokens_application_token_kind_expires",
+            "application_id",
+            "token_kind",
+            "expires_at",
+        ),
+        Index(
+            "ix_candidate_access_tokens_journey_session_token_kind",
+            "journey_session_id",
+            "token_kind",
+        ),
+        Index(
+            "ix_candidate_access_tokens_launch_channel_auth_created",
+            "launch_channel",
+            "auth_method",
+            "created_at",
+        ),
+        Index(
+            "uq_candidate_access_tokens_start_param",
+            "start_param",
+            unique=True,
+            sqlite_where=text("start_param IS NOT NULL"),
+            postgresql_where=text("start_param IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    token_id: Mapped[str] = mapped_column(String(36), nullable=False, default=lambda: str(uuid.uuid4()))
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    application_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    journey_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("candidate_journey_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    token_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    journey_surface: Mapped[str] = mapped_column(String(24), nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(24), nullable=False)
+    launch_channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    launch_payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    start_param: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    provider_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    provider_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    session_version_snapshot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    phone_verification_state: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    phone_delivery_channel: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    secret_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    issued_by_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    issued_by_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateAccessToken {self.id} kind={self.token_kind} candidate={self.candidate_id}>"
+        )
+
+
+class CandidateAccessSession(Base):
+    __tablename__ = "candidate_access_sessions"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_candidate_access_sessions_session_id"),
+        Index(
+            "ix_candidate_access_sessions_candidate_status_expires",
+            "candidate_id",
+            "status",
+            "expires_at",
+        ),
+        Index(
+            "ix_candidate_access_sessions_application_status_expires",
+            "application_id",
+            "status",
+            "expires_at",
+        ),
+        Index("ix_candidate_access_sessions_journey_status", "journey_session_id", "status"),
+        Index(
+            "ix_candidate_access_sessions_provider_surface_issued",
+            "provider_user_id",
+            "journey_surface",
+            "issued_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False, default=lambda: str(uuid.uuid4()))
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    application_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    journey_session_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_journey_sessions.id"),
+        nullable=False,
+    )
+    origin_token_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("candidate_access_tokens.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    journey_surface: Mapped[str] = mapped_column(String(24), nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(24), nullable=False)
+    launch_channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider_session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    provider_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    session_version_snapshot: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    phone_verification_state: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    phone_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    phone_delivery_channel: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    csrf_nonce: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=CandidateAccessSessionStatus.ACTIVE.value
+    )
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    refreshed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateAccessSession {self.id} candidate={self.candidate_id} "
+            f"surface={self.journey_surface} status={self.status}>"
         )
 
 

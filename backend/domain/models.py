@@ -1,15 +1,19 @@
 from datetime import datetime, timezone, date, timedelta
+from decimal import Decimal
 from typing import Optional, List
+import uuid
 import html
 
 from sqlalchemy import (
     Column,
+    CheckConstraint,
     String,
     Integer,
     BigInteger,
     Boolean,
     Date,
     DateTime,
+    Numeric,
     Text,
     ForeignKey,
     Index,
@@ -18,6 +22,7 @@ from sqlalchemy import (
     Table,
     event,
     select,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates, object_session, reconstructor
 from markupsafe import Markup
@@ -25,6 +30,7 @@ from markupsafe import Markup
 from .base import Base
 # Ensure CityExpert/Executive are registered
 import backend.domain.cities.models  # noqa
+import backend.domain.ai.models  # noqa
 
 # Slot duration constraints and defaults (in minutes)
 DEFAULT_INTERVIEW_DURATION_MIN = 10  # Standard interview length
@@ -1256,3 +1262,368 @@ class AuditLog(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - repr helper
         return f"<AuditLog action={self.action} entity={self.entity_type}:{self.entity_id}>"
+
+
+class CandidateChannelIdentity(Base):
+    __tablename__ = "candidate_channel_identities"
+    __table_args__ = (
+        Index("ix_candidate_channel_identities_candidate_channel", "candidate_id", "channel"),
+        Index("ix_candidate_channel_identities_channel_external_user_id", "channel", "external_user_id"),
+        Index("ix_candidate_identity_delivery_updated", "candidate_id", "delivery_health", "updated_at"),
+        Index("ix_candidate_identity_reachability_updated", "candidate_id", "reachability_status", "updated_at"),
+        Index(
+            "uq_candidate_channel_identities_primary",
+            "candidate_id",
+            "channel",
+            unique=True,
+            sqlite_where=text("is_primary = 1"),
+            postgresql_where=text("is_primary = true"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    external_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    username_or_handle: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    linked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    reachability_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    delivery_health: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    last_successful_delivery_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_failed_delivery_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_hard_fail_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    consent_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    serviceability_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    cooldown_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Requisition(Base):
+    __tablename__ = "requisitions"
+    __table_args__ = (
+        Index("ix_requisitions_status_owner", "status", "owner_type", "owner_id"),
+        Index("ix_requisitions_vacancy_status", "vacancy_id", "status"),
+        Index("ix_requisitions_city_status", "city_id", "status"),
+        Index("ix_requisitions_opened_at", text("opened_at DESC")),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    vacancy_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("cities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    headcount: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    opened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_plan_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Application(Base):
+    __tablename__ = "applications"
+    __table_args__ = (
+        Index("ix_applications_candidate_created", "candidate_id", "created_at"),
+        Index("ix_applications_requisition_status", "requisition_id", "lifecycle_status"),
+        Index("ix_applications_recruiter_status", "recruiter_id", "lifecycle_status"),
+        Index("ix_applications_vacancy_status", "vacancy_id", "lifecycle_status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requisition_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("requisitions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    vacancy_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_detail: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    recruiter_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    lifecycle_status: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
+    lifecycle_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    final_outcome: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    final_outcome_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApplicationEvent(Base):
+    __tablename__ = "application_events"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_application_events_event_id"),
+        Index("ix_application_events_candidate_occurred", "candidate_id", text("occurred_at DESC")),
+        Index("ix_application_events_application_occurred", "application_id", text("occurred_at DESC")),
+        Index("ix_application_events_requisition_occurred", "requisition_id", text("occurred_at DESC")),
+        Index("ix_application_events_type_occurred", "event_type", text("occurred_at DESC")),
+        Index("ix_application_events_correlation_id", "correlation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, default=lambda: str(uuid.uuid4())
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    application_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    requisition_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("requisitions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status_from: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    status_to: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    channel: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ApplicationIdempotencyKey(Base):
+    __tablename__ = "application_idempotency_keys"
+    __table_args__ = (
+        UniqueConstraint(
+            "operation_kind",
+            "producer_family",
+            "idempotency_key",
+            name="uq_application_idempotency_keys_scope",
+        ),
+        Index("ix_application_idempotency_keys_candidate_id", "candidate_id"),
+        Index("ix_application_idempotency_keys_application_id", "application_id"),
+        Index("ix_application_idempotency_keys_requisition_id", "requisition_id"),
+        Index("ix_application_idempotency_keys_event_id", "event_id"),
+        Index("ix_application_idempotency_keys_correlation_id", "correlation_id"),
+        Index("ix_application_idempotency_keys_status_created_at", "status", "created_at"),
+        Index("ix_application_idempotency_keys_expires_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    operation_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    producer_family: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    payload_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    application_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True
+    )
+    requisition_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("requisitions.id", ondelete="SET NULL"), nullable=True
+    )
+    event_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_system: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="claimed")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class Interview(Base):
+    __tablename__ = "interviews"
+    __table_args__ = (
+        Index("ix_interviews_application_status", "application_id", "status"),
+        Index("ix_interviews_slot_assignment", "slot_assignment_id"),
+        Index("ix_interviews_scheduled_at", "scheduled_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    slot_assignment_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("slot_assignments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="scheduled")
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    no_show_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    result: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    result_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    interviewer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    feedback_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class RecruiterTask(Base):
+    __tablename__ = "recruiter_tasks"
+    __table_args__ = (
+        Index("ix_recruiter_tasks_owner_status_due", "owner_recruiter_id", "status", "due_at"),
+        Index("ix_recruiter_tasks_application_status", "application_id", "status"),
+        Index("ix_recruiter_tasks_candidate_status", "candidate_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    application_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_recruiter_id: Mapped[int] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_breached_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    origin_event_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("application_events.event_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DedupCandidatePair(Base):
+    __tablename__ = "dedup_candidate_pairs"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_a_id",
+            "candidate_b_id",
+            name="uq_dedup_candidate_pairs_normalized_pair",
+        ),
+        CheckConstraint(
+            "candidate_a_id < candidate_b_id",
+            name="ck_dedup_candidate_pairs_order",
+        ),
+        Index("ix_dedup_candidate_pairs_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_a_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_b_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    match_score: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    match_reasons_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    decided_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AIDecisionRecord(Base):
+    __tablename__ = "ai_decision_records"
+    __table_args__ = (
+        Index("ix_ai_decision_records_candidate_created", "candidate_id", "created_at"),
+        Index("ix_ai_decision_records_application_kind_created", "application_id", "kind", "created_at"),
+        Index("ix_ai_decision_records_human_action_created", "human_action", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    ai_request_log_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ai_request_logs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    ai_output_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ai_outputs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    application_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    recommendation_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    human_action: Mapped[str] = mapped_column(String(16), nullable=False, default="ignored")
+    final_action_event_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("application_events.event_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
