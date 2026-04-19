@@ -24,6 +24,7 @@ from backend.apps.admin_api.max_candidate_chat import (
     send_max_chat_prompt,
     wants_max_chat_handoff,
 )
+from backend.apps.admin_api.max_launch import MaxLaunchError
 from backend.apps.bot.services.broadcast import notify_recruiters_manual_availability
 from backend.apps.bot.services.slot_flow import _parse_manual_availability_window
 from backend.core.db import async_session
@@ -235,6 +236,14 @@ def _generic_welcome_text(*, invite_might_be_active: bool) -> str:
     )
 
 
+def _manual_review_welcome_text() -> str:
+    return (
+        "Здравствуйте!\n\n"
+        "Не удалось безопасно восстановить анкету автоматически. "
+        "RecruitSmart проверит данные и откроет следующий шаг вручную."
+    )
+
+
 async def _resolve_existing_chat_principal(max_user_id: str) -> tuple[str | None, Any | None]:
     normalized = str(max_user_id or "").strip()
     if not normalized:
@@ -331,6 +340,59 @@ async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) ->
 
     candidate_name = str(getattr(candidate, "fio", "") or "").strip() or None
     existing_name, existing_principal = await _resolve_existing_chat_principal(max_user_id)
+    if not start_param:
+        prompt = None
+        guidance_text = None
+        principal = existing_principal
+        try:
+            async with async_session() as session:
+                async with session.begin():
+                    if principal is None:
+                        principal = await bootstrap_max_chat_principal(
+                            session,
+                            settings=settings,
+                            max_user_id=max_user_id,
+                            provider_session_id=f"max-bot-started:{max_user_id}",
+                            display_name=_extract_display_name(payload),
+                            username=_extract_username(payload),
+                        )
+                    if principal is not None:
+                        prompt = await activate_max_chat_handoff(session, principal)
+        except MaxLaunchError as exc:
+            if exc.code == "launch_context_ambiguous":
+                guidance_text = _manual_review_welcome_text()
+            elif exc.code != "max_rollout_disabled":
+                logger.warning(
+                    "max.webhook.bot_started_global_bootstrap_failed",
+                    extra={"code": exc.code, "max_user_id": max_user_id},
+                )
+        if prompt is not None:
+            await send_max_chat_prompt(
+                settings=settings,
+                max_user_id=max_user_id,
+                prompt=prompt,
+                client_request_id=welcome_request_id,
+                payload={
+                    "origin_channel": "max",
+                    "kind": "candidate_chat_prompt",
+                    "bootstrap": "global_start",
+                },
+            )
+            return MaxWebhookAck(update_type="bot_started")
+        if guidance_text:
+            await _send_max_message(
+                settings=settings,
+                max_user_id=max_user_id,
+                text=guidance_text,
+                client_request_id=welcome_request_id,
+                payload={
+                    "origin_channel": "max",
+                    "kind": "start_manual_review",
+                    "active_context": existing_principal is not None,
+                },
+            )
+            return MaxWebhookAck(update_type="bot_started")
+
     if candidate_name or existing_principal is not None:
         welcome_text = _contextual_welcome_text(candidate_name or existing_name or "кандидат")
         buttons = _contextual_welcome_buttons(start_param=start_param if candidate is not None else None)
@@ -530,6 +592,66 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
             ignored_reason="missing_user",
         )
 
+    if str(callback_payload or "").startswith("entry:start_chat"):
+        prompt = None
+        guidance_text = None
+        async with async_session() as session:
+            async with session.begin():
+                context = await resolve_max_chat_context(session, max_user_id=max_user_id)
+                principal = context.principal if context is not None else None
+                if principal is None:
+                    raw_start_param = str(callback_payload or "").split(":", 2)
+                    start_param = raw_start_param[2].strip() if len(raw_start_param) == 3 else ""
+                    try:
+                        principal = await bootstrap_max_chat_principal(
+                            session,
+                            max_user_id=max_user_id,
+                            start_param=start_param,
+                            settings=settings,
+                            provider_session_id=f"max-start-chat:{max_user_id}:{callback_id}",
+                            display_name=_extract_display_name(payload),
+                            username=_extract_username(payload),
+                        )
+                    except MaxLaunchError as exc:
+                        if exc.code == "launch_context_ambiguous":
+                            guidance_text = _manual_review_welcome_text()
+                        else:
+                            guidance_text = (
+                                "Сейчас не удалось открыть анкету автоматически. "
+                                "Попробуйте ещё раз чуть позже."
+                                if exc.code == "max_rollout_disabled"
+                                else (
+                                    "Сейчас не удалось открыть анкету в чате. "
+                                    "Откройте мини-приложение через кнопку в шапке чата или попросите рекрутера помочь с доступом."
+                                )
+                            )
+                if principal is not None:
+                    prompt = await activate_max_chat_handoff(session, principal)
+                elif guidance_text is None:
+                    guidance_text = (
+                        "Сейчас не удалось открыть анкету в чате. "
+                        "Откройте мини-приложение через кнопку в шапке чата или попросите рекрутера помочь с доступом."
+                    )
+
+        if guidance_text:
+            await _send_max_message(
+                settings=settings,
+                max_user_id=max_user_id,
+                text=guidance_text,
+                client_request_id=_stable_client_request_id("chat-guidance", callback_id),
+                payload={"origin_channel": "max", "kind": "candidate_chat_guidance"},
+            )
+            return MaxWebhookAck(update_type="message_callback")
+
+        await send_max_chat_prompt(
+            settings=settings,
+            max_user_id=max_user_id,
+            prompt=prompt,
+            client_request_id=_stable_client_request_id("chat-start", callback_id),
+            payload={"origin_channel": "max", "kind": "candidate_chat_prompt"},
+        )
+        return MaxWebhookAck(update_type="message_callback")
+
     candidate = await _load_candidate_by_max_user_id(max_user_id)
     if candidate is None:
         return MaxWebhookAck(
@@ -552,49 +674,6 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
             ),
             client_request_id=_stable_client_request_id("manual-prompt", callback_id),
             payload={"origin_channel": "max", "kind": "manual_availability_prompt"},
-        )
-        return MaxWebhookAck(update_type="message_callback")
-
-    if str(callback_payload or "").startswith("entry:start_chat"):
-        prompt = None
-        guidance_text = None
-        async with async_session() as session:
-            async with session.begin():
-                context = await resolve_max_chat_context(session, max_user_id=max_user_id)
-                principal = context.principal if context is not None else None
-                if principal is None:
-                    raw_start_param = str(callback_payload or "").split(":", 2)
-                    start_param = raw_start_param[2].strip() if len(raw_start_param) == 3 else ""
-                    principal = await bootstrap_max_chat_principal(
-                        session,
-                        max_user_id=max_user_id,
-                        start_param=start_param,
-                        provider_session_id=f"max-start-chat:{max_user_id}:{callback_id}",
-                    )
-                if principal is not None:
-                    prompt = await activate_max_chat_handoff(session, principal)
-                else:
-                    guidance_text = (
-                        "Сейчас не удалось открыть анкету в чате. "
-                        "Откройте мини-приложение через кнопку в шапке чата или попросите рекрутера прислать новое приглашение."
-                    )
-
-        if guidance_text:
-            await _send_max_message(
-                settings=settings,
-                max_user_id=max_user_id,
-                text=guidance_text,
-                client_request_id=_stable_client_request_id("chat-guidance", callback_id),
-                payload={"origin_channel": "max", "kind": "candidate_chat_guidance"},
-            )
-            return MaxWebhookAck(update_type="message_callback")
-
-        await send_max_chat_prompt(
-            settings=settings,
-            max_user_id=max_user_id,
-            prompt=prompt,
-            client_request_id=_stable_client_request_id("chat-start", callback_id),
-            payload={"origin_channel": "max", "kind": "candidate_chat_prompt"},
         )
         return MaxWebhookAck(update_type="message_callback")
 

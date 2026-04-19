@@ -36,8 +36,11 @@ from backend.apps.admin_api.candidate_access.services import (
     reschedule_candidate_booking,
     save_candidate_booking_context,
     save_candidate_test1_answers,
-    submit_candidate_test2_answer,
     slot_duration_minutes,
+    submit_candidate_test2_answer,
+)
+from backend.apps.admin_api.max_launch import (
+    bootstrap_max_global_intake_token,
 )
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
@@ -299,20 +302,35 @@ async def bootstrap_max_chat_principal(
     session: AsyncSession,
     *,
     max_user_id: str,
-    start_param: str,
+    start_param: str | None = None,
+    settings: Settings | None = None,
     provider_session_id: str | None = None,
+    display_name: str | None = None,
+    username: str | None = None,
 ) -> CandidateAccessPrincipal | None:
     normalized_user_id = str(max_user_id or "").strip()
     normalized_start_param = str(start_param or "").strip()
-    if not normalized_user_id or not normalized_start_param:
+    if not normalized_user_id:
         return None
 
     now = _utcnow()
-    token = await _load_active_start_token(
-        session,
-        start_param=normalized_start_param,
-        now=now,
-    )
+    if normalized_start_param:
+        token = await _load_active_start_token(
+            session,
+            start_param=normalized_start_param,
+            now=now,
+        )
+    else:
+        if settings is None:
+            return None
+        token = await bootstrap_max_global_intake_token(
+            session,
+            settings=settings,
+            provider_user_id=normalized_user_id,
+            candidate_name=display_name,
+            username=username,
+            now=now,
+        )
     if token is None:
         return None
 

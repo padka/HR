@@ -13,6 +13,7 @@ from backend.core.messenger.protocol import (
 )
 from backend.domain.candidates.models import (
     CandidateAccessAuthMethod,
+    CandidateAccessSession,
     CandidateAccessToken,
     CandidateAccessTokenKind,
     CandidateJourneySurface,
@@ -131,6 +132,24 @@ async def _seed_max_candidate(max_user_id: str = "max-user-1") -> int:
 async def _get_candidate(candidate_id: int) -> User | None:
     async with async_session() as session:
         return await session.get(User, candidate_id)
+
+
+async def _get_candidate_by_max_user_id(max_user_id: str) -> User | None:
+    async with async_session() as session:
+        return await session.scalar(select(User).where(User.max_user_id == max_user_id).limit(1))
+
+
+async def _count_chat_sessions(max_user_id: str) -> int:
+    async with async_session() as session:
+        return int(
+            await session.scalar(
+                select(func.count(CandidateAccessSession.id)).where(
+                    CandidateAccessSession.provider_user_id == max_user_id,
+                    CandidateAccessSession.journey_surface == CandidateJourneySurface.MAX_CHAT.value,
+                )
+            )
+            or 0
+        )
 
 
 async def _chat_messages(candidate_id: int) -> list[ChatMessage]:
@@ -256,6 +275,142 @@ def test_max_webhook_generic_bot_started_sends_orientation_message(
     assert adapter.messages
     assert "Когда RecruitSmart откроет для вас следующий шаг" in str(adapter.messages[0]["text"])
     assert adapter.messages[0]["buttons"] == []
+
+
+def test_max_webhook_global_bot_started_bootstraps_chat_flow_when_rollout_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    monkeypatch.setenv("MAX_INVITE_ROLLOUT_ENABLED", "1")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_candidate_chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    response = max_webhook_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "bot_started",
+            "timestamp": 1,
+            "chat_id": "chat-global-start",
+            "user": {"user_id": 700104, "username": "global_max", "name": "Global User"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["handled"] is True
+    assert adapter.messages
+    assert "Шаг 1 из" in str(adapter.messages[0]["text"])
+    candidate = asyncio.run(_get_candidate_by_max_user_id("700104"))
+    assert candidate is not None
+    assert candidate.fio == "Global User"
+    assert asyncio.run(_count_chat_sessions("700104")) == 1
+    history = asyncio.run(_chat_messages(candidate.id))
+    assert len(history) == 1
+    assert history[0].direction == "outbound"
+    assert history[0].channel == "max"
+
+
+def test_max_webhook_global_bot_started_does_not_reissue_for_bound_non_self_serve_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    asyncio.run(_seed_max_candidate("700106"))
+    monkeypatch.setenv("MAX_INVITE_ROLLOUT_ENABLED", "1")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_candidate_chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    response = max_webhook_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "bot_started",
+            "timestamp": 1,
+            "chat_id": "chat-bound-no-self-serve",
+            "user": {"user_id": 700106, "username": "bound_max", "name": "Bound User"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["handled"] is True
+    assert adapter.messages
+    assert "Когда RecruitSmart откроет для вас следующий шаг" in str(adapter.messages[0]["text"])
+
+
+def test_max_webhook_entry_start_chat_can_bootstrap_global_flow_without_existing_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    monkeypatch.setenv("MAX_INVITE_ROLLOUT_ENABLED", "1")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_candidate_chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    callback = max_webhook_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_callback",
+            "timestamp": 2,
+            "user": {"user_id": "700105", "username": "global_callback", "name": "Callback User"},
+            "callback": {
+                "callback_id": "cb-global-start",
+                "payload": "entry:start_chat",
+            },
+        },
+    )
+
+    assert callback.status_code == 200
+    assert adapter.answers[-1] == "cb-global-start"
+    assert adapter.messages
+    assert "Шаг 1 из" in str(adapter.messages[0]["text"])
+    candidate = asyncio.run(_get_candidate_by_max_user_id("700105"))
+    assert candidate is not None
+    assert candidate.fio == "Callback User"
+    assert asyncio.run(_count_chat_sessions("700105")) == 1
 
 
 def test_max_webhook_entry_start_chat_bootstraps_questionnaire_without_miniapp_launch(

@@ -25,6 +25,7 @@ Last Verified: 2026-04-19
   - `backend/apps/admin_api/main.py` mounts `/api/max/launch`, `/api/max/webhook`, `/miniapp`, and `/api/candidate-access/*`.
   - `backend/apps/admin_api/max_auth.py` validates signed MAX `initData`.
   - `backend/apps/admin_api/max_launch.py` validates `start_param`, loads or creates launch context, and issues/accesses MAX candidate-access sessions.
+  - `backend/apps/admin_api/max_webhook.py` and `backend/apps/admin_api/max_candidate_chat.py` now reuse the same bounded global-intake bootstrap for plain bot `/start` without a personal invite when MAX rollout is enabled.
 - Identity/session model is `Live / Bounded`.
   - `candidate_access/auth.py` enforces MAX-only access with session id, provider user id, auth method, surface, and session version checks.
   - `max_launch.py` and `max_candidate_chat.py` use `CandidateAccessSession`, `CandidateAccessToken`, `CandidateJourneySession`, and `CandidateJourneySurface`.
@@ -42,6 +43,7 @@ Last Verified: 2026-04-19
   - Chat exists, but parity completeness across the full journey is not proven.
 - Handoff to chat is `Live / Bounded`.
   - Candidate-access `/chat-handoff` activates MAX chat prompt delivery when a MAX user id exists.
+  - Plain bot `/start` and `entry:start_chat` can bootstrap the same shared candidate-access questionnaire path without a personal invite, but still stay inside the bounded MAX rollout gate.
 - Operator rollout/invite surface is `Live / Bounded`.
   - `backend/apps/admin_ui/services/max_rollout.py` prepares preview/send/revoke and operator rollout state.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import uuid
@@ -380,11 +381,15 @@ def _chat_url(
     return f"https://max.ru/{public_bot_name}"
 
 
-def _candidate_display_name(init_data: MaxInitData) -> str:
-    full_name = str(init_data.user.full_name or "").strip()
+def _normalized_max_candidate_name(
+    *,
+    display_name: str | None,
+    provider_user_id: str,
+) -> str:
+    full_name = str(display_name or "").strip()
     if full_name:
         return full_name
-    return f"MAX {init_data.user.user_id}"
+    return f"MAX {provider_user_id}"
 
 
 async def _load_bound_candidate(
@@ -415,6 +420,21 @@ async def _load_bound_candidate(
     return candidate_rows[0]
 
 
+async def _acquire_max_identity_bootstrap_lock(
+    session: AsyncSession,
+    *,
+    provider_user_id: str,
+) -> None:
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    digest = hashlib.sha256(
+        f"max-global-bootstrap:{provider_user_id}".encode()
+    ).digest()
+    lock_key = int.from_bytes(digest[:8], "big", signed=True)
+    await session.execute(select(func.pg_advisory_xact_lock(lock_key)))
+
+
 async def _load_latest_journey_session(
     session: AsyncSession,
     *,
@@ -435,14 +455,19 @@ async def _load_latest_journey_session(
 async def _create_max_intake_draft_candidate(
     session: AsyncSession,
     *,
-    init_data: MaxInitData,
+    candidate_name: str | None,
+    username: str | None,
     provider_user_id: str,
     now: datetime,
 ) -> User:
+    normalized_username = str(username or "").strip() or None
     candidate = User(
-        fio=_candidate_display_name(init_data),
-        username=(str(init_data.user.username or "").strip() or None),
-        telegram_username=(str(init_data.user.username or "").strip() or None),
+        fio=_normalized_max_candidate_name(
+            display_name=candidate_name,
+            provider_user_id=provider_user_id,
+        ),
+        username=normalized_username,
+        telegram_username=normalized_username,
         messenger_platform="max",
         max_user_id=provider_user_id,
         source="max",
@@ -535,7 +560,8 @@ async def _issue_max_intake_launch_token(
 async def _resolve_or_create_global_intake_token(
     session: AsyncSession,
     *,
-    init_data: MaxInitData,
+    candidate_name: str | None,
+    username: str | None,
     provider_user_id: str,
     now: datetime,
 ) -> CandidateAccessToken:
@@ -546,7 +572,8 @@ async def _resolve_or_create_global_intake_token(
     if candidate is None:
         candidate = await _create_max_intake_draft_candidate(
             session,
-            init_data=init_data,
+            candidate_name=candidate_name,
+            username=username,
             provider_user_id=provider_user_id,
             now=now,
         )
@@ -560,6 +587,74 @@ async def _resolve_or_create_global_intake_token(
         candidate=candidate,
         provider_user_id=provider_user_id,
         now=now,
+    )
+
+
+async def _has_self_serve_max_history(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+) -> bool:
+    existing = await session.scalar(
+        select(CandidateAccessToken.id)
+        .where(
+            CandidateAccessToken.candidate_id == int(candidate_id),
+            CandidateAccessToken.launch_channel == CandidateLaunchChannel.MAX.value,
+            CandidateAccessToken.issued_by_type == "candidate_self_serve",
+        )
+        .limit(1)
+    )
+    return existing is not None
+
+
+async def bootstrap_max_global_intake_token(
+    session: AsyncSession,
+    *,
+    settings: Settings,
+    provider_user_id: str,
+    candidate_name: str | None,
+    username: str | None,
+    now: datetime | None = None,
+) -> CandidateAccessToken:
+    current_time = now or _utcnow()
+    await _acquire_max_identity_bootstrap_lock(
+        session,
+        provider_user_id=provider_user_id,
+    )
+    token = await _load_bound_launch_token(
+        session,
+        provider_user_id=provider_user_id,
+        now=current_time,
+    )
+    if token is not None:
+        return token
+    candidate = await _load_bound_candidate(
+        session,
+        provider_user_id=provider_user_id,
+    )
+    if candidate is not None:
+        is_draft = str(getattr(candidate, "lifecycle_state", "") or "").strip().lower() == LIFECYCLE_DRAFT
+        if not is_draft and not await _has_self_serve_max_history(
+            session,
+            candidate_id=int(candidate.id),
+        ):
+            raise MaxLaunchError(
+                "MAX launch context is not available for the current user.",
+                code="launch_context_missing",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+    if not bool(getattr(settings, "max_invite_rollout_enabled", False)):
+        raise MaxLaunchError(
+            "MAX launch rollout is disabled for unbound candidate entry.",
+            code="max_rollout_disabled",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    return await _resolve_or_create_global_intake_token(
+        session,
+        candidate_name=candidate_name,
+        username=username,
+        provider_user_id=provider_user_id,
+        now=current_time,
     )
 
 
@@ -660,15 +755,11 @@ async def bootstrap_max_launch(
                 )
             raise
         if token is None:
-            if not bool(getattr(settings, "max_invite_rollout_enabled", False)):
-                raise MaxLaunchError(
-                    "MAX launch rollout is disabled for unbound candidate entry.",
-                    code="max_rollout_disabled",
-                    status_code=status.HTTP_409_CONFLICT,
-                )
-            token = await _resolve_or_create_global_intake_token(
+            token = await bootstrap_max_global_intake_token(
                 session,
-                init_data=init_data,
+                settings=settings,
+                candidate_name=init_data.user.full_name,
+                username=init_data.user.username,
                 provider_user_id=provider_user_id,
                 now=now,
             )
@@ -885,4 +976,10 @@ async def launch_max_miniapp(
     )
 
 
-__all__ = ["router", "launch_max_miniapp", "bootstrap_max_launch"]
+__all__ = [
+    "router",
+    "launch_max_miniapp",
+    "bootstrap_max_launch",
+    "bootstrap_max_global_intake_token",
+    "MaxLaunchError",
+]
