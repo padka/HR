@@ -1,6 +1,7 @@
 # Paths that must stay in sync for the bounded MAX pilot contour.
 backend/apps/admin_api/
 backend/apps/admin_ui/
+backend/apps/bot/
 backend/core/messenger/
 backend/core/settings.py
 backend/domain/candidates/

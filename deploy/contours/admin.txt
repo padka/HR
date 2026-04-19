@@ -2,6 +2,7 @@
 backend/apps/admin_ui/
 backend/apps/admin_api/__init__.py
 backend/apps/admin_api/candidate_access/
+backend/apps/bot/
 backend/core/messenger/
 backend/domain/candidates/
 backend/domain/applications/
