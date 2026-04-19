@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
@@ -14,7 +14,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.apps.admin_api.candidate_access.auth import CandidateAccessPrincipal
 from backend.apps.bot.config import (
     MAX_ATTEMPTS,
     PASS_THRESHOLD,
@@ -72,6 +71,9 @@ from backend.domain.repositories import (
     reject_slot,
 )
 from backend.domain.slot_service import reserve_slot as reserve_domain_slot
+
+if TYPE_CHECKING:
+    from backend.apps.admin_api.candidate_access.auth import CandidateAccessPrincipal
 
 ACTIVE_INTERVIEW_SLOT_STATUSES = {
     SlotStatus.PENDING,
