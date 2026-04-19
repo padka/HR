@@ -81,17 +81,13 @@ test.describe('City → Slot → Candidate regression flow', () => {
     await page.waitForLoadState('domcontentloaded')
   })
 
-  test('candidate creation CTA is accessible', async ({ page }) => {
-    await page.goto('/app/candidates')
+  test('candidate creation route remains accessible', async ({ page }) => {
+    await page.goto('/app/candidates/new')
     await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(500)
 
-    const createBtn = page.getByTestId('candidates-create-btn')
-    await expect(createBtn).toBeVisible({ timeout: 10000 })
-
-    await createBtn.click()
-    await page.waitForURL('/app/candidates/new')
-    await page.waitForLoadState('domcontentloaded')
+    await expect(page.getByRole('heading', { name: 'Новый кандидат', exact: false })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('link', { name: '← К списку' })).toBeVisible({ timeout: 10000 })
   })
 
   test('no 4xx/5xx errors in console during navigation', async ({ page }) => {

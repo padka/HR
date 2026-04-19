@@ -769,12 +769,14 @@ export function DashboardPage() {
               <input
                 className="incoming-toolbar__search"
                 type="search"
+                aria-label="Поиск во входящих"
                 placeholder="Поиск: имя, город, TG, комментарий..."
                 value={incomingSearch}
                 onChange={(e) => setIncomingSearch(e.target.value)}
               />
               <select
                 className="incoming-toolbar__select"
+                aria-label="Фильтр входящих по городу"
                 value={incomingCityFilter}
                 onChange={(e) => setIncomingCityFilter(e.target.value)}
               >
@@ -787,6 +789,7 @@ export function DashboardPage() {
               </select>
               <select
                 className="incoming-toolbar__select"
+                aria-label="Фильтр входящих по статусу"
                 value={incomingFilter}
                 onChange={(e) => setIncomingFilter(e.target.value as IncomingFilter)}
               >
@@ -827,6 +830,7 @@ export function DashboardPage() {
               <span>Сортировка</span>
               <select
                 className="incoming-toolbar__select"
+                aria-label="Сортировка triage очереди"
                 value={incomingSort}
                 onChange={(e) => setIncomingSort(e.target.value as 'waiting' | 'recent' | 'name')}
               >
@@ -1068,12 +1072,14 @@ export function DashboardPage() {
                     <input
                       className="incoming-toolbar__search"
                       type="search"
+                      aria-label="Поиск по очереди входящих"
                       placeholder="Поиск: имя, город, TG, комментарий..."
                       value={incomingSearch}
                       onChange={(e) => setIncomingSearch(e.target.value)}
                     />
                     <select
                       className="incoming-toolbar__select"
+                      aria-label="Город во входящей очереди"
                       value={incomingCityFilter}
                       onChange={(e) => setIncomingCityFilter(e.target.value)}
                     >
@@ -1086,6 +1092,7 @@ export function DashboardPage() {
                     </select>
                     <select
                       className="incoming-toolbar__select"
+                      aria-label="Статус во входящей очереди"
                       value={incomingFilter}
                       onChange={(e) => setIncomingFilter(e.target.value as IncomingFilter)}
                     >
@@ -1120,6 +1127,7 @@ export function DashboardPage() {
                 <div className={`ui-filter-bar__advanced ui-filter ${showIncomingAdvancedFilters ? 'ui-filter-bar__advanced--open' : ''}`}>
                   <select
                     className="incoming-toolbar__select"
+                    aria-label="Сортировка входящей очереди"
                     value={incomingSort}
                     onChange={(e) => setIncomingSort(e.target.value as 'waiting' | 'recent' | 'name')}
                   >
@@ -1129,6 +1137,7 @@ export function DashboardPage() {
                   </select>
                   <select
                     className="incoming-toolbar__select"
+                    aria-label="Размер страницы входящей очереди"
                     value={String(incomingPageSize)}
                     onChange={(e) => setIncomingPageSize(Number(e.target.value))}
                   >

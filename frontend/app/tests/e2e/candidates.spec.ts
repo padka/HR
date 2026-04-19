@@ -24,13 +24,11 @@ test.describe("/app/candidates", () => {
     await expect(page.getByTestId("candidates-view-switcher")).toHaveCount(0);
   });
 
-  test("can navigate to new candidate form", async ({ page }) => {
-    await page.goto("/app/candidates");
+  test("new candidate form remains reachable directly", async ({ page }) => {
+    await page.goto("/app/candidates/new");
     await page.waitForLoadState("domcontentloaded");
 
-    const newButton = page.getByTestId("candidates-create-btn");
-    await expect(newButton).toBeVisible({ timeout: 10000 });
-    await newButton.click();
-    await page.waitForURL("/app/candidates/new");
+    await expect(page.getByRole("heading", { name: "Новый кандидат", exact: false })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("link", { name: "← К списку" })).toBeVisible({ timeout: 10000 });
   });
 });

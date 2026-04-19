@@ -9,9 +9,9 @@ test.describe("/app/recruiters", () => {
     await expect(page.getByRole("heading", { name: "Рекрутёры", exact: false })).toBeVisible({ timeout: 10000 });
 
     // Check for cards or empty state
-    const card = page.getByTestId("recruiter-card").first();
-    const empty = page.getByTestId("recruiters-empty-state");
-    await expect(card.or(empty)).toBeVisible({ timeout: 10000 });
+    const row = page.getByTestId("recruiter-row").first();
+    const empty = page.getByText("Реестр рекрутёров пока пуст");
+    await expect(row.or(empty)).toBeVisible({ timeout: 10000 });
   });
 
   test("can navigate to new recruiter form", async ({ page }) => {
