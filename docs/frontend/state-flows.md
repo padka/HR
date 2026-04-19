@@ -1,42 +1,47 @@
 # State Flows
 
 ## Purpose
-Описывает ключевые пользовательские и UI state flows: где state живет, как он меняется, какие запросы/мутации запускаются и что является источником истины.
+Описывает ключевые пользовательские и UI state flows для текущего supported frontend runtime.
+
+Важно:
+- legacy candidate portal implementation не является supported mounted runtime surface;
+- future standalone candidate web flow остаётся target state, но не описывается здесь как live route contract;
+- bounded MAX mini-app at `/miniapp` уже смонтирован и описывается здесь как guarded controlled-pilot flow;
+- full MAX runtime/channel rollout beyond the bounded pilot остаётся target state и не описывается здесь как production live contract.
 
 ## Owner
-Frontend platform / UI engineering.
+Frontend platform / UI engineering
 
 ## Status
-Canonical.
+Canonical
 
 ## Last Reviewed
-2026-03-28.
+2026-04-19
 
 ## Source Paths
 - `frontend/app/src/app/main.tsx`
 - `frontend/app/src/app/routes/__root.tsx`
 - `frontend/app/src/app/routes/app/candidate-detail/*`
-- `frontend/app/src/app/routes/candidate/*`
+- `frontend/app/src/app/routes/miniapp/*`
 - `frontend/app/src/app/routes/tg-app/*`
+- `backend/apps/admin_api/max_launch.py`
+- `backend/apps/admin_api/candidate_access/router.py`
 - `frontend/app/src/app/components/RoleGuard.tsx`
 
-## Related Diagrams
+## Related Docs
 - `docs/frontend/route-map.md`
 - `docs/frontend/screen-inventory.md`
-
-## Change Policy
-- Любой новый экран или значимый state transition должен получить описание здесь.
-- Если mutation влияет на несколько экранов, фиксируйте invalidate/refetch paths вместе с flow.
 
 ## State Ownership Model
 
 | State type | Owner | Source of truth | Examples |
 | --- | --- | --- | --- |
 | Server state | React Query | Backend API | Candidate detail, slots, dashboard, profile, messenger threads/messages |
-| Route state | TanStack Router | URL | `candidateId`, `token`, route selection |
+| Route state | TanStack Router | URL | `candidateId`, route selection |
 | Local UI state | React component | Component state | Open/close drawers, active tab, filters, modals, draft text |
-| Persistent browser state | `localStorage` / session storage / HttpOnly resume cookie | Browser | Theme, Liquid Glass override, persisted filters, candidate portal bootstrap token and short-lived portal resume cookie |
-| Shell runtime state | `RootLayout` | `__root.tsx` | Nav mode, unread chat count, mobile sheet state, motion mode |
+| Persistent browser state | `localStorage` / session storage | Browser | Theme, UI preferences, persisted filters |
+| Shell runtime state | `RootLayout` | `__root.tsx` | Nav mode, unread chat count, mobile sheet state |
+| MAX bridge runtime state | MAX WebApp bridge wrapper | MAX client runtime | `initData`, `BackButton`, contact capture, closing confirmation, `openMaxLink()` |
 
 ## Admin Shell Bootstrap
 
@@ -49,18 +54,13 @@ sequenceDiagram
   participant Page as Route page
 
   Browser->>Root: Load /app/*
-  Root->>Profile: fetch current principal (unless hidden routes)
+  Root->>Profile: fetch current principal
   Profile-->>Root: principal + recruiter/admin profile
-  Root->>Root: resolve theme, liquid glass, motion, mobile mode
+  Root->>Root: resolve theme, motion, mobile mode
   Root->>Router: render nav + outlet
   Router->>Page: mount route component
   Page->>Page: fetch page-specific server state with React Query
 ```
-
-### What matters
-- `__root.tsx` owns shell, navigation and unread chat polling.
-- Page components own their own queries and mutations.
-- `RoleGuard` is a page-level gate, not the primary routing mechanism.
 
 ## Candidate Detail Flow
 
@@ -71,126 +71,22 @@ sequenceDiagram
   participant DetailQ as useCandidateDetail
   participant ChannelQ as useCandidateChannelHealth
   participant Actions as useCandidateActions
-  participant AI as useCandidateAi
-  participant Drawer as CandidateDrawer/CandidateChatDrawer
-  participant Modal as CandidateModals
   participant Query as queryClient
 
   User->>Page: Open /app/candidates/$candidateId
   Page->>DetailQ: load detail payload
-  Page->>ChannelQ: load Telegram/MAX channel health
-  Page->>AI: load AI summary/coach queries
-  Page->>Page: build pipeline/tests/view model
-  User->>Drawer: open insights/chat/script surfaces
-  User->>Actions: reissue access / restart portal journey
-  User->>Modal: schedule slot / intro day / reject / report preview
-  Modal->>Actions: execute mutation
+  Page->>ChannelQ: load Telegram channel health summary
+  User->>Actions: execute supported mutation
   Actions-->>Page: success message
   Page->>DetailQ: refetch candidate detail
-  Page->>ChannelQ: refetch after MAX invite rotation / delivery change
+  Page->>ChannelQ: refetch channel state when delivery status changes
   Page->>Query: invalidate ['candidates'] list
 ```
 
 ### What matters
 - Detail screen keeps the canonical view model inside `CandidateDetailPage`.
 - Mutations must invalidate both detail and list views when they affect candidate status.
-- Channel-health UI is separate server state and must be invalidated together with MAX invite rotation or relink actions.
-- Drawer state is local; server truth remains in `useCandidateDetail`.
-
-## Candidate Portal Start Flow
-
-```mermaid
-sequenceDiagram
-  participant Browser
-  participant Start as CandidateStartPage
-  participant Token as portal token/session helpers
-  participant API as candidate portal API
-  participant Query as queryClient
-  participant Journey as CandidateJourneyPage
-
-  Browser->>Start: Open /candidate/start[/token]
-  alt hh entry chooser
-    Start->>API: GET /api/candidate/entry/resolve?entry=signed_hh_entry_token
-    API-->>Start: candidate summary + channel options
-    Start->>API: POST /api/candidate/entry/select
-    API-->>Start: launcher url for web / MAX / Telegram
-  else direct cabinet bootstrap
-    Start->>Token: resolve token route -> query -> MAX Bridge start_param -> stored token
-    Start->>API: exchangeCandidatePortalToken(token)
-    API-->>Start: journey payload
-  else resume existing cabinet
-    Start->>API: fetchCandidatePortalJourney()
-    API-->>Start: journey payload or error
-  end
-  Start->>Query: cache candidate-portal-journey
-  Start->>Journey: navigate to /candidate/journey
-```
-
-### What matters
-- `/candidate/start` is a bridge, not the main experience.
-- When `?entry=` is present, `/candidate/start` becomes an HH chooser, not a direct token exchange screen.
-- Bare `/candidate/start` is now the shared public candidate entry for mass outreach. A brand-new visitor sees the neutral shared-portal landing and can identify themselves by phone before any cabinet session is created.
-- The HH entry token is durable and is no longer rejected just because the active portal `session_version` changed. Its job is to reopen the chooser and re-issue a fresh launcher for the same candidate journey.
-- The public chooser selection endpoint accepts JSON, query-string, and form-encoded input so browser/webview quirks cannot strand the candidate on the launcher screen with a `422`.
-- Fresh MAX/browser entry must win over stale browser storage. If direct token exchange fails, the flow retries journey bootstrap only without the stored token so resume-cookie recovery cannot be poisoned by stale session storage.
-- The browser keeps a separate long-lived candidate entry token in persistent storage, but the neutral public start page no longer auto-opens that stored chooser for unrelated visitors. Stored entry recovery is used only as part of an explicit candidate resume path on the same device.
-- Shared public access now adds an OTP pre-auth step on `/candidate/start`: the candidate enters the phone number from the original application, receives a one-time code through a linked HH/Telegram/MAX channel, and only then receives the usual candidate portal session + chooser/journey bootstrap.
-- The phone step is anti-enumeration-safe: the UI always moves through the same `phone -> code -> cabinet/chooser` flow and only shows a masked delivery hint such as `HH`, `Telegram`, or `MAX`.
-- Candidate portal loads MAX Bridge lazily and only inside candidate routes; browser fallback does not wait indefinitely for bridge bootstrap.
-- Candidate portal uses its own CSS bundle and intentionally bypasses the admin shell.
-
-## Candidate Portal Journey Flow
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant Journey as CandidateJourneyPage
-  participant Query as useQuery(candidate-portal-journey)
-  participant Mut as portal mutations
-  participant API as candidate portal API
-
-  User->>Journey: Edit profile / screening / slot / message
-  Journey->>Mut: save profile or draft or reservation
-  Mut->>API: POST/PATCH action
-  API-->>Mut: next journey payload
-  Mut->>Query: replace cached journey
-  Journey->>User: render updated state
-```
-
-### What matters
-- Journey screen is now a persistent candidate cabinet, not just a step-by-step portal.
-- Each mutation returns a fresh journey snapshot and replaces cache state.
-- Cabinet navigation is local UI state; the source of truth stays in the shared journey payload sections: `dashboard`, `journey`, `tests`, `feedback`, `resources`.
-- The web inbox is the primary candidate conversation surface. External channels such as MAX or Telegram are delivery adapters and launch surfaces, not the source of truth for the conversation history.
-- Screen state must remain recoverable after refresh and after fresh-link entry, even when an older token is still present in browser storage.
-- The journey payload includes a durable candidate entry URL so the browser can keep a recovery anchor and route the candidate back to `Web / MAX / Telegram` without recruiter involvement.
-- Launching MAX or Telegram from inside the cabinet uses a session-authenticated switch mutation first; a shared-link candidate never needs a recruiter to mint a new unique URL just to continue the same flow.
-
-## Candidate Cabinet Surface Model
-
-```mermaid
-flowchart TD
-  JourneyPayload["CandidatePortalJourneyResponse"] --> Dashboard["dashboard"]
-  JourneyPayload --> Workflow["journey"]
-  JourneyPayload --> Tests["tests"]
-  JourneyPayload --> Inbox["messages + journey.inbox"]
-  JourneyPayload --> Company["company + resources"]
-  JourneyPayload --> Feedback["feedback"]
-  Dashboard --> HomeTab["Главная"]
-  Workflow --> PathTab["Мой путь"]
-  Tests --> TestsTab["Тесты и анкеты"]
-  Inbox --> InboxTab["Сообщения"]
-  Company --> CompanyTab["О компании"]
-  Feedback --> FeedbackTab["Обратная связь"]
-```
-
-### What matters
-- `/candidate/start` remains the bootstrap bridge; `/candidate/journey` is the actual cabinet.
-- Cabinet UX is channel-agnostic: candidate copy should refer to a fresh link from the recruiter, not require a specific messenger.
-- Messages written from recruiter CRM must appear in the candidate web inbox even when no external messenger binding exists.
-- The cabinet can now expose lightweight launchers for `web`, `MAX` and `Telegram` from the same journey payload. Switching launcher must not create a second candidate flow or split slot/message history.
-- Launcher switching from inside the cabinet goes through a session-authenticated mutation first, so `last_entry_channel` is persisted before the browser opens the next launcher.
-- Recruiter list/detail surfaces now treat the shared portal URL as the canonical mass-delivery web entry. HH bulk actions operate only on explicitly selected candidate IDs and summarize `sent / blocked / skipped` per batch.
+- Channel-health UI reflects current supported runtime only; it must not advertise historical MAX runtime as live behavior.
 
 ## System Delivery Flow
 
@@ -204,7 +100,7 @@ sequenceDiagram
   participant Mut as retryNotification/cancelNotification
 
   User->>Page: Open /app/system and switch to delivery tab
-  Page->>HealthQ: poll Telegram/MAX health snapshot
+  Page->>HealthQ: poll operator channel health snapshot
   Page->>OutboxQ: poll outbox feed with filters
   Page->>LogsQ: poll notification logs with filters
   User->>Mut: retry or cancel outbox item
@@ -214,23 +110,65 @@ sequenceDiagram
 ```
 
 ### What matters
-- Delivery tab combines three query surfaces: channel health, outbox feed and notification logs.
-- Telegram/MAX cards are operator summary, not source of truth; authoritative delivery state stays in backend outbox/log tables.
-- Retry after `dead_letter` is explicit operator action and should be reflected in both outbox row and channel health snapshot.
+- Delivery tab combines operator health, outbox feed, and notification logs.
+- Operator diagnostics must stay behind authenticated admin surfaces.
+- Telegram is the only supported live messaging runtime today.
 
-## Theme And Shell Flow
+## Telegram Mini App Flow
 
 ```mermaid
-flowchart LR
-  Theme["localStorage theme / TGTheme.apply"] --> DataTheme["documentElement[data-theme]"]
-  Glass["localStorage ui:liquidGlassV2"] --> DataUi["documentElement[data-ui='liquid-glass-v2']"]
-  DataTheme --> CSS["theme tokens + page CSS"]
-  DataUi --> CSS
-  CSS --> Shell["RootLayout shell + navigation"]
-  Shell --> Pages["route pages"]
+sequenceDiagram
+  participant TG as Telegram client
+  participant SPA as tg-app routes
+  participant API as backend.apps.admin_api
+
+  TG->>SPA: Open /tg-app/*
+  SPA->>API: send Telegram initData-backed requests
+  API-->>SPA: recruiter/mobile payloads
+  SPA-->>TG: render recruiter workflow
+```
+
+## MAX Mini App Candidate Flow
+
+```mermaid
+sequenceDiagram
+  participant Candidate as MAX client
+  participant SPA as /miniapp SPA
+  participant Launch as /api/max/launch
+  participant Access as /api/candidate-access/*
+  participant Chat as MAX chat
+
+  Candidate->>SPA: Open /miniapp from MAX system button
+  SPA->>Launch: POST signed initData + optional start_param
+  Launch-->>SPA: bound session for existing candidate or new hidden draft intake
+  alt first MAX visit without bound context
+    Launch-->>SPA: create hidden draft candidate + access session
+    SPA->>Access: GET /test1
+    Access-->>SPA: shared Test1 payload
+  else manual_review_required
+    SPA-->>Candidate: render manual-review next-step card
+  end
+  SPA->>Access: GET /journey, /test1, booking context
+  Access-->>SPA: shared candidate journey/Test1/booking payloads
+  alt no slots available after Test1
+    SPA->>Access: POST /manual-availability
+    Access-->>SPA: waiting-slot success + activated candidate state
+  end
+  alt user chooses chat handoff
+    SPA->>Access: POST /chat-handoff
+    Access-->>SPA: server-side handoff acknowledged
+    SPA-->>Candidate: open MAX chat through explicit user gesture
+  end
 ```
 
 ### What matters
-- Theme selection is browser state, not server state.
-- Liquid Glass v2 is a UI mode toggle layered on top of the theme.
-- Pages read from CSS variables and should not hard-code a second design system.
+- `/miniapp` is a bounded controlled-pilot surface, not a production MAX rollout.
+- Critical candidate state stays server-backed through shared `/api/max/launch` and `/api/candidate-access/*`; MAX bridge APIs only supply client runtime helpers.
+- Shared candidate journey, Test1, screening, booking, and chat-handoff semantics remain canonical and must not fork into MAX-only business logic.
+- Global MAX entry now follows an intake-first path: a hidden draft candidate is created on first launch, Test1 starts immediately, and phone/contact restore remains a bounded recovery path instead of the primary entry flow.
+- The surface stays default-off and fail-closed when MAX is disabled or unconfigured.
+
+## Reserved Future Surfaces
+- Future standalone candidate web flow remains a target-state surface. It is intentionally excluded from the mounted SPA route tree and from live OpenAPI today.
+- Full MAX runtime/channel rollout beyond the bounded pilot remains a target-state surface. The mounted `/miniapp` flow described above is the guarded pilot-only exception, not a production channel commitment.
+- SMS / voice fallback remains a target-state integration concern, not a current frontend flow.

@@ -50,7 +50,7 @@ Canonical
 - Data model and schema evolution: `backend/migrations/` plus `docs/data/*`.
 - Workflow and interaction diagrams: `docs/architecture/*` in Markdown + Mermaid.
 - SPA route tree: `frontend/app/src/app/main.tsx`; current canonical route inventory covers 37 frontend routes and must not be confused with backend FastAPI route count.
-- Auth, session, portal and MAX token semantics: `docs/security/*`.
+- Auth, session, and token semantics: `docs/security/*`.
 - Release readiness and regression policy: `docs/qa/*`.
 
 ## Historical Boundary

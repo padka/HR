@@ -9,10 +9,16 @@ The product is currently a FastAPI backend plus a React 18 SPA:
 
 ## Architecture
 
-- Backend: FastAPI, SQLAlchemy, Alembic-style migration runner, Redis-backed optional services, Telegram bot workers, HH/Max integrations.
+- Backend: FastAPI, SQLAlchemy, Alembic-style migration runner, Redis-backed optional services, Telegram bot workers, HH integrations.
 - Frontend: React 18, TanStack Router, React Query, TypeScript, Vite, pure CSS with custom properties and route-driven layouts.
 - Storage/services: PostgreSQL is the primary app database; Redis is used for notifications and optional broker/cache scenarios.
 - Testing: Python `pytest`, frontend `vitest`, Playwright smoke/e2e.
+
+Current supported runtime matrix lives in [docs/architecture/supported_channels.md](/Users/mikhail/Projects/recruitsmart_admin/docs/architecture/supported_channels.md).
+The short version:
+- supported: Admin SPA, Telegram bot/webapp, HH integration, n8n HH sync callbacks
+- unsupported historical implementations: legacy candidate portal implementation, historical MAX runtime
+- target state, not current runtime: future standalone candidate web flow, future MAX mini-app/channel adapter, SMS / voice fallback integration
 
 ## Repository Layout
 
@@ -63,25 +69,6 @@ The Vite server runs on `http://localhost:5173` and proxies `/api`, `/slots`, `/
 make dev-bot
 ```
 
-### Optional MAX bot webhook service
-
-```bash
-make dev-max-bot
-```
-
-This starts the standalone MAX webhook app on `http://localhost:8010` by default.
-For real MAX delivery the webhook URL must be public HTTPS and point to `/webhook`.
-Current MAX flow supports both public and linked entry: a candidate can open the bot directly and start profile + screening in MAX immediately, while admin-issued deep links `https://max.ru/<botName>?start=<invite_token>` still bind MAX to an existing CRM candidate before continuing the same flow.
-
-### Live-local MAX bootstrap
-
-```bash
-make dev-max-live
-```
-
-This target opens public HTTPS tunnels for admin UI and MAX webhook through `cloudflared`, resolves `MAX_BOT_LINK_BASE` when possible, and starts both services with live-ready public URLs for candidate portal and MAX mini app testing.
-If `8000/8010` are already occupied, pass `DEV_MAX_LIVE_ADMIN_PORT` / `DEV_MAX_LIVE_MAX_PORT` to run the live bootstrap on alternate local ports.
-
 ## Common Commands
 
 ### Backend
@@ -90,9 +77,10 @@ If `8000/8010` are already occupied, pass `DEV_MAX_LIVE_ADMIN_PORT` / `DEV_MAX_L
 make dev-migrate
 make dev-admin
 make dev-bot
-make dev-max-live
 make test
 make test-cov
+make openapi-export
+make openapi-check
 ```
 
 ### Frontend
@@ -106,23 +94,31 @@ npm --prefix frontend/app run build:verify
 npm --prefix frontend/app run test:e2e:smoke
 ```
 
-Detailed command guidance, caveats, and validation scope live in [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md).
+OpenAPI truth is generated from the live FastAPI apps:
+
+```bash
+make openapi-export
+make openapi-check
+```
+
+`make openapi-export` refreshes:
+- [frontend/app/openapi.json](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/openapi.json)
+- [backend/apps/admin_api/openapi.json](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_api/openapi.json)
+- [frontend/app/src/api/schema.ts](/Users/mikhail/Projects/recruitsmart_admin/frontend/app/src/api/schema.ts)
+
+`make openapi-check` is a required repo-local gate whenever a change touches routes, schemas, API contracts, or OpenAPI tooling. It must fail the change if tracked schemas drift from the live `admin_ui` or `admin_api` app factories.
 
 ## Canonical Docs
 
 Start here in this order:
 
 1. [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
-2. [engine.md](/Users/mikhail/Projects/recruitsmart_admin/engine.md)
-3. [PROJECT_CONTEXT_INDEX.md](/Users/mikhail/Projects/recruitsmart_admin/PROJECT_CONTEXT_INDEX.md)
-4. [CURRENT_PROGRAM_STATE.md](/Users/mikhail/Projects/recruitsmart_admin/CURRENT_PROGRAM_STATE.md)
-5. [VERIFICATION_COMMANDS.md](/Users/mikhail/Projects/recruitsmart_admin/VERIFICATION_COMMANDS.md)
-6. [REPOSITORY_WORKFLOW_GUIDE.md](/Users/mikhail/Projects/recruitsmart_admin/REPOSITORY_WORKFLOW_GUIDE.md)
+2. [docs/README.md](/Users/mikhail/Projects/recruitsmart_admin/docs/README.md)
 
 Root policy changed on 2026-03-08:
 - closed task-specific markdown packages were removed from repo root
 - temporary task/spec/checklist docs must now be deleted after completion
-- if you need old closed-task material, use git history or historical docs in [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive) and [codex](/Users/mikhail/Projects/recruitsmart_admin/codex)
+- if you need old closed-task material, use git history or historical docs in [docs/archive](/Users/mikhail/Projects/recruitsmart_admin/docs/archive)
 
 ## Current Active Scope
 
@@ -145,6 +141,6 @@ Local dev helpers load `.env.local` if present, otherwise they fall back to `.en
 - Work in small verified batches.
 - Keep business logic changes out of repo-setup tasks.
 - Temporary markdown files for prompts/TODO/specs must be deleted after the task is closed.
-- After changing code or canonical workflow docs, update the relevant root context files.
+- After changing code or canonical workflow docs, update the relevant canonical docs in [README.md](/Users/mikhail/Projects/recruitsmart_admin/README.md), [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md), and [docs](/Users/mikhail/Projects/recruitsmart_admin/docs).
 
 Project-specific working rules live in [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md).

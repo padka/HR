@@ -1,7 +1,7 @@
 # RecruitSmart Runtime Topology
 
 ## Purpose
-Каноническая карта процессов, портов, зависимостей и failure domains. Документ нужен для локального запуска, production troubleshooting и планирования расширения команды без расшифровки кода с нуля.
+Каноническая карта текущих процессов, портов, зависимостей и public/operator operational surfaces.
 
 ## Owner
 Platform Engineering
@@ -10,136 +10,122 @@ Platform Engineering
 Canonical
 
 ## Last Reviewed
-2026-03-25
+2026-04-19
 
 ## Source Paths
 - `backend/apps/admin_ui/app.py`
 - `backend/apps/admin_api/main.py`
+- `backend/apps/admin_api/max_miniapp.py`
+- `backend/apps/admin_api/candidate_access/router.py`
 - `backend/apps/bot/app.py`
-- `backend/apps/max_bot/app.py`
+- `backend/apps/admin_ui/routers/system.py`
+- `backend/core/settings.py`
+- `docker-compose.yml`
+- `max_bot.py`
 - `scripts/dev_admin.sh`
 - `scripts/dev_bot.sh`
-- `scripts/dev_max_bot.sh`
-- `scripts/dev_crm.sh`
 - `Makefile`
-- `backend/core/settings.py`
-- `backend/core/cache.py`
-- `backend/core/messenger/bootstrap.py`
-- `backend/apps/bot/services/notification_flow.py`
-- `backend/core/messenger/channel_state.py`
 
-## Related Diagrams
+## Related Docs
 - [overview.md](./overview.md)
-- [core-workflows.md](./core-workflows.md)
-
-## Change Policy
-Любое изменение runtime boundary, порта, env-настройки, bootstrap order или background worker semantics должно отражаться здесь в том же коммите, что и код. Если runtime меняется только в dev mode, это тоже фиксируется.
+- [supported_channels.md](./supported_channels.md)
 
 ## Runtime Graph
+
 ```mermaid
 flowchart TB
     dev["Dev entrypoints"]
     admin_ui["Admin UI<br/>uvicorn backend.apps.admin_ui.app:app<br/>:8000"]
     admin_api["Admin API<br/>uvicorn backend.apps.admin_api.main:app<br/>:8100"]
-    bot["Telegram bot<br/>python3 bot.py"]
-    max_bot["MAX bot<br/>uvicorn backend.apps.max_bot.app:create_app --factory<br/>:8010"]
+    bot["Telegram bot<br/>python bot.py"]
     vite["Vite dev server<br/>frontend/app<br/>:5173"]
     db[("PostgreSQL")]
     redis[("Redis")]
     telegram["Telegram API"]
-    max["MAX API"]
-    hh["HH.ru API"]
-    n8n["n8n webhooks"]
+    max["MAX provider / Partner Platform"]
+    hh["HH.ru"]
+    n8n["n8n callbacks"]
 
     dev --> admin_ui
     dev --> admin_api
     dev --> bot
-    dev --> max_bot
     dev --> vite
 
     admin_ui --> db
     admin_ui --> redis
     admin_ui --> hh
-    admin_ui --> n8n
 
     admin_api --> db
     admin_api --> redis
-    admin_api --> hh
     admin_api --> n8n
+    admin_api --> max
 
     bot --> db
     bot --> redis
     bot --> telegram
-
-    max_bot --> db
-    max_bot --> redis
-    max_bot --> max
 ```
 
 ## Processes
-| Process | Dev command | Port | Key responsibilities | Failure domain |
+
+| Process | Dev command | Port | Responsibilities | Notes |
 | --- | --- | --- | --- | --- |
-| Admin UI | `python3 -m uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port 8000 --reload` | `8000` | SPA host, CRM HTTP boundary, candidate portal, workflow, slots, AI, notifications ops, HH webhooks | DB availability, Redis availability, SPA build presence |
-| Admin API | `python3 -m uvicorn backend.apps.admin_api.main:app --host 0.0.0.0 --port 8100 --reload` | `8100` | Telegram webapp API, recruiter webapp API, slot assignments, HH sync callbacks | DB availability, Redis availability, webhook auth |
-| Telegram bot | `python3 bot.py` | n/a | Candidate/recruiter chat UX, reminder service, notification worker, adapter registry | Telegram API, Redis, DB, scheduler |
-| MAX bot | `uvicorn backend.apps.max_bot.app:create_app --factory --host 0.0.0.0 --port 8010 --reload` | `8010` | MAX webhook receiver, dedupe, candidate linking, MAX-specific flow | MAX API, Redis, DB, webhook subscription config |
-| Frontend dev server | `npm --prefix frontend/app run dev` | `5173` | Local SPA development only | backend `/api` availability |
-| Migrations | `python3 scripts/run_migrations.py` | n/a | Schema evolution before service start | Postgres connectivity |
+| Admin UI | `python3 -m uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0 --port 8000 --reload` | `8000` | SPA host, admin/recruiter HTTP boundary, auth/session/CSRF, admin UI `/api/*`, shallow health probes, protected metrics, operator diagnostics | `/candidate*` is intentionally closed with `410 Gone`. |
+| Admin API | `python3 -m uvicorn backend.apps.admin_api.main:app --host 0.0.0.0 --port 8100 --reload` | `8100` | Telegram Mini App APIs, recruiter webapp APIs, HH sync callbacks, bounded MAX launch/auth and webhook shell at `/api/max/*`, MAX mini-app host shell at `/miniapp`, shared candidate-facing MAX APIs at `/api/candidate-access/*` | Separate service boundary from `admin_ui`; MAX path remains guarded, default-off, and fail-closed when disabled or unconfigured. |
+| Admin UI MAX rollout surface | served by `backend.apps.admin_ui.app` | same as admin UI | protected recruiter/operator MAX invite rollout at `/api/candidates/{candidate_id}/max-launch-invite` plus revoke alias | Pilot-only control surface; preview/send split, adapter default-off, and no candidate-facing transport on `/api/webapp/*`. |
+| MAX bounded candidate mini-app | served by `backend.apps.admin_api.main` + built SPA bundle | same as admin API | candidate-facing bounded pilot at `/miniapp` and `/api/candidate-access/*` | Mounted for controlled pilot only; first global launch creates a hidden draft candidate and starts shared Test1 immediately, while shared candidate journey remains canonical; not a production MAX rollout. |
+| Telegram bot | `python3 bot.py` | n/a | Telegram messaging runtime, reminder service, notification worker | Supported channel runtime. |
+| Frontend dev server | `npm --prefix frontend/app run dev` | `5173` | Local SPA development only | Proxies into `admin_ui`. |
+| Migrations | `python3 scripts/run_migrations.py` | n/a | Schema evolution before service startup | Run before HTTP runtimes in non-ephemeral environments. |
+| Historical MAX runtime | disabled by default | n/a | historical/experimental only | `docker-compose.yml` keeps it behind `profiles: [max]`; `max_bot.py` is a disabled stub. |
 
-## Startup Order
-1. Load env from `.env.local` или `.env.local.example`.
-2. Apply migrations before starting HTTP runtimes.
-3. Initialize Postgres connection.
-4. Initialize Redis/cache if configured.
-5. Build FastAPI app, mount routers, then start background watchers/workers.
-6. For bot runtimes, bootstrap scheduler, reminders, notification service, and messenger adapters.
-7. For MAX runtime, reconcile webhook subscriptions and start webhook handling.
+## Default Compose Contour
+- `postgres`
+- `redis_notifications`
+- `redis_cache`
+- `migrate`
+- `admin_ui`
+- `admin_api`
+- `bot`
 
-## Background Work
-- `backend/apps/admin_ui/app.py` поднимает cache/database health watchers и periodic jobs.
-- `backend/apps/bot/app.py` запускает reminder service, notification service, content update subscriber и heartbeat loop.
-- `backend/apps/max_bot/app.py` использует dedupe cache для webhook events и управляет subscription reconciliation.
-- `backend/apps/bot/services/notification_flow.py` обрабатывает outbox claim/send/retry цикл.
-- `backend/core/messenger/channel_state.py` хранит per-channel degraded state для Telegram/MAX и используется как operational guardrail для retry/requeue path.
-- `backend/apps/admin_ui/background_tasks.py` запускает periodic HH sync/import, stalled candidate checks и cleanup свободных слотов.
-
-## Failure Domains
-- Если Postgres недоступен, бизнес-операции должны деградировать, а health endpoints возвращать не-healthy статус.
-- Если Redis недоступен, система должна продолжать работу в деградированном режиме там, где это допускает код, но без silent loss of retry/claim semantics.
-- Если Telegram/MAX adapters не зарегистрированы или misconfigured, outbox items для этих платформ должны попадать в `dead_letter`, а соответствующий канал — в persisted degraded state до ручного recovery.
-- Telegram и MAX не делят общий health budget: деградация одного канала не должна блокировать claim/send path второго.
-- Если HH OAuth или webhook secret не настроены, HH-интеграция остается неактивной, но core CRM продолжает работать.
-- Если SPA bundle отсутствует, admin UI отдает явную ошибку вместо молчаливой деградации.
+`max_bot` is excluded from the default contour and must not break standard `docker compose up`.
 
 ## Health And Observability
-| Surface | Purpose | Source |
+
+| Surface | Exposure | Purpose |
 | --- | --- | --- |
-| `GET /health` on admin UI | App, DB and Redis health | `backend/apps/admin_ui/app.py` |
-| `GET /health` on admin API | App, DB and Redis health | `backend/apps/admin_api/main.py` |
-| `GET /api/system/messenger-health`, `POST /api/system/messenger-health/{channel}/recover` on admin UI | Telegram/MAX queue depth, dead-letter counts, degraded state, explicit operator recovery | `backend/apps/admin_ui/routers/api_misc.py`, `backend/apps/admin_ui/services/messenger_health.py`, `backend/core/messenger/channel_state.py` |
-| `/metrics` and Prometheus instrumentation | HTTP, DB, cache and degraded-mode metrics | `backend/apps/admin_ui/perf/metrics/` |
-| JSON logs and request IDs | Correlation across runtime boundaries | `backend/core/logging.py`, middleware in `backend/apps/admin_ui/app.py` |
-| Sentry | Exception tracking, if configured | `backend/apps/admin_ui/app.py` |
+| `GET /healthz` | public | liveness only |
+| `GET /ready` | public | readiness only, no sensitive payload |
+| `GET /health` | public | shallow structured dependency health |
+| `GET /health/bot` | authenticated operator only | bot runtime diagnostics |
+| `GET /health/notifications` | authenticated operator only | notification/reminder diagnostics |
+| `GET /health/max` | authenticated operator only | bounded MAX runtime snapshot without enabling MAX rollout |
+| `POST /health/max/sync` | authenticated operator only + CSRF | manual MAX `/me` + `/subscriptions` probe, syncs degraded/healthy channel state |
+| `GET /metrics` | protected | Prometheus app metrics; guarded by auth and/or IP allowlist |
+| `GET /metrics/notifications` | protected | notification metrics; same protection model as `/metrics` |
+| `GET /api/system/messenger-health*` | authenticated admin | operator channel health and recovery |
 
 ## Configuration Surface
 - `DATABASE_URL`
 - `REDIS_URL`
 - `SESSION_SECRET`
-- `BOT_TOKEN`
 - `BOT_ENABLED`
+- `BOT_TOKEN`
+- `BOT_CALLBACK_SECRET`
+- `BOT_INTEGRATION_ENABLED`
 - `BOT_NOTIFICATION_RUNTIME_ENABLED`
-- `MAX_BOT_ENABLED`
-- `MAX_BOT_TOKEN`
-- `MAX_WEBHOOK_URL`
-- `MAX_WEBHOOK_SECRET`
-- `MAX_BOT_LINK_BASE`
 - `HH_INTEGRATION_ENABLED`
 - `HH_WEBHOOK_SECRET`
-- `N8N_HH_SYNC_WEBHOOK_URL`
-- `N8N_HH_RESOLVE_WEBHOOK_URL`
+- `MAX_ADAPTER_ENABLED` (guarded pilot canonical switch)
+- `MAX_BOT_ENABLED` (compatibility alias only; not the canonical pilot switch)
+- `MAX_INVITE_ROLLOUT_ENABLED` (guarded operator pilot only)
+- `MAX_BOT_TOKEN` (guarded pilot only)
+- `MAX_PUBLIC_BOT_NAME` (guarded pilot only)
+- `MAX_MINIAPP_URL` (guarded pilot only)
+- `MAX_BOT_API_SECRET` (guarded pilot only; `MAX_WEBHOOK_SECRET` legacy fallback)
+- `MAX_WEBHOOK_URL` (guarded pilot inventory only)
+- `MAX_INIT_DATA_MAX_AGE_SECONDS` (guarded pilot only)
+- `METRICS_ENABLED`
+- `METRICS_IP_ALLOWLIST`
+- `ALLOW_DESTRUCTIVE_ADMIN_ACTIONS`
 
-## Operational Notes
-- `admin_ui` uses the mounted SPA build under `frontend/dist` in production-style runs.
-- `admin_api` is separate from the UI server and may be launched only when Telegram webapp or callback flows require it.
-- The bot runtime is not a passive library; it owns message delivery and scheduling semantics.
-- The MAX runtime is optional and must remain isolated from Telegram-specific logic.
+Historical `MAX_*` settings are not part of the supported default runtime contract. Guarded MAX pilot envs exist only for bounded launch/auth, webhook, `/miniapp`, shared `/api/candidate-access/*`, and operator rollout surfaces. In the current pilot, a global `/miniapp` launch creates a hidden MAX draft candidate and keeps that draft out of operator-facing CRM surfaces until intake activation. These pilot seams do not change the default compose contour or the fact that Telegram remains the only supported live messaging runtime today. Future standalone candidate web flow, future full MAX rollout beyond the bounded pilot, and SMS/voice fallback remain target-state notes only and do not change the current runtime topology.

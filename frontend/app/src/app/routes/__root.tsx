@@ -2,6 +2,7 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
+import { AuthRequiredState, ErrorState, PageLoader } from '@/app/components/AppStates'
 import { apiFetch, queryClient } from '@/api/client'
 
 import { createBubblePopFx, type BubblePopFx } from './bubble-pop-fx'
@@ -117,13 +118,6 @@ const ICONS = {
       <path d="M8 16h8" />
     </svg>
   ),
-  copilot: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2l1.4 6.2L20 10l-6.6 1.8L12 18l-1.4-6.2L4 10l6.6-1.8L12 2z" />
-      <path d="M5 20l1-3" />
-      <path d="M19 20l-1-3" />
-    </svg>
-  ),
   more: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
       <circle cx="6" cy="12" r="1.6" />
@@ -141,11 +135,14 @@ export function RootLayout() {
   const hideNav = location.pathname.startsWith('/app/login')
     || location.pathname.startsWith('/tg-app')
     || location.pathname.startsWith('/candidate')
+    || location.pathname.startsWith('/miniapp')
   const profileQuery = useProfile(!hideNav)
   const principalType = profileQuery.data?.principal.type
   const authError = profileQuery.error as (Error & { status?: number }) | undefined
   const isUnauthed = authError?.status === 401
   const principalId = profileQuery.data?.principal.id
+  const shouldShowAuthCheck = !hideNav && profileQuery.isLoading && !profileQuery.data
+  const shouldShowAuthError = !hideNav && profileQuery.isError && !isUnauthed && !profileQuery.data
 
   const [chatToast, setChatToast] = useState<{ title: string; preview: string; unreadCount: number } | null>(null)
   const [chatUnreadCount, setChatUnreadCount] = useState(0)
@@ -744,26 +741,54 @@ export function RootLayout() {
     }
   }, [hideNav, isUnauthed, principalType, principalId])
 
+  if (shouldShowAuthCheck) {
+    return (
+      <PageLoader
+        fullPage
+        label="Открываем RecruitSmart cockpit"
+        description="Проверяем сессию и подготавливаем очереди, статусы и действия по кандидатам."
+      />
+    )
+  }
+
+  if (shouldShowAuthError) {
+    return (
+      <ErrorState
+        fullPage
+        title="Не удалось открыть cockpit"
+        description={authError?.message || 'Проверка сессии завершилась ошибкой. Очередь кандидатов не открылась. Попробуйте повторить запрос или обновить страницу.'}
+        actions={(
+          <>
+            <button type="button" className="ui-btn ui-btn--primary" onClick={() => profileQuery.refetch()}>
+              Повторить
+            </button>
+            <button type="button" className="ui-btn ui-btn--ghost" onClick={() => window.location.reload()}>
+              Обновить страницу
+            </button>
+          </>
+        )}
+      />
+    )
+  }
+
   if (isUnauthed && !hideNav) {
     return (
-      <div className="root-auth-panel">
-        <main>
-          <div className="glass ui-surface ui-surface--raised root-auth-panel__card">
-            <h1 className="root-auth-panel__title">Требуется вход</h1>
-            <p className="root-auth-panel__text">
-              Сессия не активна. Перейдите на страницу авторизации, чтобы продолжить работу.
-            </p>
-            <div className="root-auth-panel__actions">
-              <Link to="/app/login" className="ui-link">
-                Открыть вход
-              </Link>
-              <a href="/auth/login?redirect_to=/app" className="ui-link">
-                Вход (прямой линк)
-              </a>
-            </div>
-          </div>
-        </main>
-      </div>
+      <AuthRequiredState
+        fullPage
+        className="root-auth-panel"
+        title="Войдите, чтобы открыть cockpit"
+        description="Сессия не активна. После входа откроем очередь кандидатов и рабочие действия без потери контекста."
+        actions={(
+          <>
+            <Link to="/app/login" className="ui-btn ui-btn--primary">
+              Открыть вход
+            </Link>
+            <a href="/auth/login?redirect_to=/app" className="ui-btn ui-btn--ghost">
+              Прямой вход
+            </a>
+          </>
+        )}
+      />
     )
   }
 

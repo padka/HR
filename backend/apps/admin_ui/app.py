@@ -37,12 +37,10 @@ from backend.domain.tests.bootstrap import bootstrap_test_questions
 from pathlib import Path
 from backend.apps.admin_ui.routers import (
     api,
-    candidate_portal,
     metrics as metrics_router,
     candidates,
     cities,
     dashboard,
-    detailization,
     auth as auth_router,
     message_templates,
     questions,
@@ -57,7 +55,6 @@ from backend.apps.admin_ui.routers import (
     slot_assignments_api,
     ai,
     hh_integration,
-    knowledge_base,
     simulator,
 )
 from backend.apps.admin_ui.security import (
@@ -707,7 +704,6 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(metrics_router.router)
     app.include_router(auth_router.router)
-    app.include_router(candidate_portal.router)
     app.include_router(hh_integration_webhook_router)
     app.include_router(hh_integration.callback_router)
     app.include_router(dashboard.router, dependencies=[Depends(require_principal)])
@@ -722,9 +718,7 @@ def create_app() -> FastAPI:
     app.include_router(questions.router, dependencies=[Depends(require_admin)])
     app.include_router(ai.router, dependencies=[Depends(require_principal)])
     app.include_router(hh_integration.router, dependencies=[Depends(require_admin)])
-    app.include_router(knowledge_base.router, dependencies=[Depends(require_principal)])
     app.include_router(simulator.router, dependencies=[Depends(require_admin)])
-    app.include_router(detailization.router, dependencies=[Depends(require_principal)])
     app.include_router(api.router, dependencies=[Depends(require_principal)])
     if _legacy_assignments_enabled():
         app.include_router(assignments.router, prefix="/api/v1", dependencies=[Depends(require_principal)])
@@ -732,79 +726,6 @@ def create_app() -> FastAPI:
         logger.info("Legacy assignments API disabled (ENABLE_LEGACY_ASSIGNMENTS_API=1 to enable)")
     app.include_router(slot_assignments_api.router)
     app.include_router(reschedule_requests.router, prefix="/api/v1/admin", dependencies=[Depends(require_principal)])
-
-    @app.get("/api/templates/list", dependencies=[Depends(require_principal)])
-    async def list_templates():
-        from backend.domain.template_stages import CITY_TEMPLATE_STAGES
-        from backend.domain.models import City, MessageTemplate
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-
-        async with async_session() as session:
-            cities = (
-                await session.scalars(
-                    select(City)
-                    .where(City.active.is_(True))
-                    .options(selectinload(City.message_templates))
-                    .order_by(City.name)
-                )
-            ).all()
-
-            all_custom = (
-                await session.scalars(
-                    select(MessageTemplate)
-                    .where(MessageTemplate.is_active.is_(True))
-                    .order_by(MessageTemplate.key)
-                )
-            ).all()
-
-        def _build_stages(city_id):
-            """Build stage items for a city (or global when city_id=None)."""
-            # Index DB templates by key for this scope
-            city_tmpls = {
-                t.key: t for t in all_custom
-                if t.city_id == city_id
-            }
-            stages = []
-            for stage in CITY_TEMPLATE_STAGES:
-                db_tpl = city_tmpls.get(stage.key)
-                value = db_tpl.body_md if db_tpl else stage.default_text
-                stages.append({
-                    "key": stage.key,
-                    "title": stage.title,
-                    "value": value,
-                    "default": stage.default_text,
-                    "is_custom": db_tpl is not None,
-                })
-            return stages
-
-        city_entries = []
-        for city in cities:
-            city_entries.append({
-                "city": {"id": city.id, "name": city.name, "tz": city.tz},
-                "stages": _build_stages(city.id),
-            })
-
-        custom_templates = []
-        for t in all_custom:
-            city_obj = next((c for c in cities if c.id == t.city_id), None)
-            custom_templates.append({
-                "id": t.id,
-                "key": t.key,
-                "city_id": t.city_id,
-                "city_name": city_obj.name if city_obj else None,
-                "is_global": t.city_id is None,
-                "preview": (t.body_md or "")[:120],
-                "length": len(t.body_md or ""),
-            })
-
-        return JSONResponse({
-            "overview": {
-                "cities": city_entries,
-                "global": {"stages": _build_stages(None)},
-            },
-            "custom_templates": custom_templates,
-        })
 
     if SPA_DIST_DIR.exists():
         @app.get("/app", include_in_schema=False)
@@ -816,10 +737,10 @@ def create_app() -> FastAPI:
 
         @app.get("/candidate", include_in_schema=False)
         async def candidate_spa_index() -> Response:
-            index_file = SPA_DIST_DIR / "index.html"
-            if index_file.exists():
-                return FileResponse(index_file)
-            return PlainTextResponse("SPA build not found", status_code=404)
+            return PlainTextResponse(
+                "Candidate portal is unsupported in the current runtime.",
+                status_code=status.HTTP_410_GONE,
+            )
 
     @app.get("/apple-touch-icon.png", include_in_schema=False)
     async def apple_touch_icon() -> Response:
@@ -855,25 +776,16 @@ def create_app() -> FastAPI:
 
     @app.get("/candidate/{path:path}", include_in_schema=False)
     async def candidate_spa_assets(path: str) -> Response:
-        target = (SPA_DIST_DIR / path).resolve()
-        if target.exists() and target.is_file():
-            return FileResponse(target)
-        index_file = SPA_DIST_DIR / "index.html"
-        if index_file.exists():
-            return FileResponse(index_file)
-        return PlainTextResponse("SPA build not found", status_code=404)
+        return PlainTextResponse(
+            "Candidate portal is unsupported in the current runtime.",
+            status_code=status.HTTP_410_GONE,
+        )
 
     @app.exception_handler(HTTPException)
     async def http_exc_handler(request: Request, exc: HTTPException):
         if exc.status_code == status.HTTP_404_NOT_FOUND:
             path = request.url.path
             if path.startswith("/app") and SPA_DIST_DIR.exists():
-                # Serve SPA index for client-side routes, but not for asset files.
-                if "." not in Path(path).name:
-                    index_file = SPA_DIST_DIR / "index.html"
-                    if index_file.exists():
-                        return FileResponse(index_file)
-            if path.startswith("/candidate") and SPA_DIST_DIR.exists():
                 # Serve SPA index for client-side routes, but not for asset files.
                 if "." not in Path(path).name:
                     index_file = SPA_DIST_DIR / "index.html"

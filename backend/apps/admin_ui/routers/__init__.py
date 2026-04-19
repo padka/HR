@@ -2,12 +2,10 @@
 
 from . import (
     api,
-    candidate_portal,
     candidates,
     cities,
     content_api,
     dashboard,
-    detailization,
     directory,
     hh_integration,
     recruiters,
@@ -22,12 +20,10 @@ from . import (
 
 __all__ = [
     "api",
-    "candidate_portal",
     "candidates",
     "cities",
     "content_api",
     "dashboard",
-    "detailization",
     "directory",
     "hh_integration",
     "profile_api",

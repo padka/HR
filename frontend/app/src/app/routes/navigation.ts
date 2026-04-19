@@ -16,7 +16,6 @@ export type NavIcons = {
   messenger: ReactNode
   profile: ReactNode
   bot: ReactNode
-  copilot: ReactNode
 }
 
 export const MOBILE_PRIMARY_TABS = 4
@@ -31,7 +30,6 @@ export const PAGE_TITLES: Array<{ match: (pathname: string) => boolean; title: s
   { match: (pathname) => pathname.startsWith('/app/profile'), title: 'Профиль' },
   { match: (pathname) => pathname.startsWith('/app/recruiters'), title: 'Рекрутёры' },
   { match: (pathname) => pathname.startsWith('/app/cities'), title: 'Города' },
-  { match: (pathname) => pathname.startsWith('/app/copilot'), title: 'Copilot' },
   { match: (pathname) => pathname.startsWith('/app/system'), title: 'Система' },
 ]
 
@@ -81,8 +79,6 @@ export function buildNavItems({
       { to: '/app/candidates', label: 'Кандидаты', icon: icons.candidates, tone: 'sky' },
       { to: '/app/messenger', label: 'Чаты', icon: icons.messenger, tone: 'aqua' },
       { to: '/app/slots', label: 'Слоты', icon: icons.slots, tone: 'violet' },
-      { to: '/app/detailization', label: 'Детализация', icon: icons.candidates, tone: 'mint' },
-      { to: '/app/copilot', label: 'Copilot', icon: icons.copilot, tone: 'amber' },
       { to: '/app/profile', label: 'Профиль', icon: icons.profile, tone: 'slate' },
     ]
   }
@@ -93,10 +89,8 @@ export function buildNavItems({
       { to: '/app/slots', label: 'Слоты', icon: icons.slots, tone: 'violet' },
       { to: '/app/candidates', label: 'Кандидаты', icon: icons.candidates, tone: 'sky' },
       { to: '/app/messenger', label: 'Чаты', icon: icons.messenger, tone: 'aqua' },
-      { to: '/app/detailization', label: 'Детализация', icon: icons.candidates, tone: 'mint' },
       { to: '/app/recruiters', label: 'Рекрутёры', icon: icons.recruiters, tone: 'indigo' },
       { to: '/app/cities', label: 'Города', icon: icons.cities, tone: 'sunset' },
-      { to: '/app/copilot', label: 'Copilot', icon: icons.copilot, tone: 'amber' },
       ...(simulatorEnabled ? [{ to: '/app/simulator', label: 'Симулятор', icon: icons.slots, tone: 'violet' }] : []),
       { to: '/app/system', label: 'Система', icon: icons.bot, tone: 'emerald' },
       { to: '/app/profile', label: 'Профиль', icon: icons.profile, tone: 'slate' },

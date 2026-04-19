@@ -5,6 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import '@/theme/global.css'
 import { RootLayout } from './routes/__root'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { PageLoader } from './components/AppStates'
 import { queryClient } from '@/api/client'
 
 if (import.meta.env.PROD && typeof window !== 'undefined') {
@@ -52,46 +53,19 @@ const MessageTemplatesPage = lazy(() => import('./routes/app/message-templates')
 const MessengerPage = lazy(() => import('./routes/app/messenger').then(m => ({ default: m.MessengerPage })))
 const CalendarPage = lazy(() => import('./routes/app/calendar').then(m => ({ default: m.CalendarPage })))
 const IncomingPage = lazy(() => import('./routes/app/incoming').then(m => ({ default: m.IncomingPage })))
-const CopilotPage = lazy(() => import('./routes/app/copilot').then(m => ({ default: m.CopilotPage })))
 const SimulatorPage = lazy(() => import('./routes/app/simulator').then(m => ({ default: m.SimulatorPage })))
-const DetailizationPage = lazy(() => import('./routes/app/detailization').then(m => ({ default: m.DetailizationPage })))
-const CandidateStartPage = lazy(() => import('./routes/candidate/start').then(m => ({ default: m.CandidateStartPage })))
-const CandidateJourneyPage = lazy(() => import('./routes/candidate/journey').then(m => ({ default: m.CandidateJourneyPage })))
-
 // Telegram Mini App pages (lazy)
 const TgAppLayout = lazy(() => import('./routes/tg-app/layout').then(m => ({ default: m.TgAppLayout })))
 const TgDashboardPage = lazy(() => import('./routes/tg-app/index').then(m => ({ default: m.TgDashboardPage })))
 const TgIncomingPage = lazy(() => import('./routes/tg-app/incoming').then(m => ({ default: m.TgIncomingPage })))
 const TgCandidatePage = lazy(() => import('./routes/tg-app/candidate').then(m => ({ default: m.TgCandidatePage })))
-
-// Loading fallback
-function PageLoader() {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '200px',
-      color: 'var(--muted)',
-    }}>
-      <div style={{
-        width: '24px',
-        height: '24px',
-        border: '2px solid var(--glass-strong)',
-        borderTopColor: 'var(--accent)',
-        borderRadius: '50%',
-        animation: 'spin 0.8s linear infinite',
-      }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  )
-}
+const MaxMiniAppPage = lazy(() => import('./routes/miniapp').then(m => ({ default: m.MaxMiniAppPage })))
 
 // Wrap lazy components with Suspense
 function withSuspense<P extends object>(Component: React.ComponentType<P>) {
   return function SuspenseWrapper(props: P) {
     return (
-      <Suspense fallback={<PageLoader />}>
+      <Suspense fallback={<PageLoader compact description="Открываем рабочий экран." />}>
         <Component {...props} />
       </Suspense>
     )
@@ -252,22 +226,10 @@ const systemRoute = createRoute({
   component: SystemPage,
 })
 
-const copilotRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/app/copilot',
-  component: withSuspense(CopilotPage),
-})
-
 const simulatorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/app/simulator',
   component: withSuspense(SimulatorPage),
-})
-
-const detailizationRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/app/detailization',
-  component: withSuspense(DetailizationPage),
 })
 
 const candidatesRoute = createRoute({
@@ -313,22 +275,10 @@ const tgCandidateRoute = createRoute({
   component: withSuspense(TgCandidatePage),
 })
 
-const candidateStartRoute = createRoute({
+const maxMiniAppRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/candidate/start/$token',
-  component: withSuspense(CandidateStartPage),
-})
-
-const candidateStartNoTokenRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/candidate/start',
-  component: withSuspense(CandidateStartPage),
-})
-
-const candidateJourneyRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/candidate/journey',
-  component: withSuspense(CandidateJourneyPage),
+  path: '/miniapp',
+  component: withSuspense(MaxMiniAppPage),
 })
 
 const routeTree = rootRoute.addChildren([
@@ -357,15 +307,11 @@ const routeTree = rootRoute.addChildren([
   calendarRoute,
   incomingRoute,
   systemRoute,
-  copilotRoute,
   simulatorRoute,
-  detailizationRoute,
   candidatesRoute,
   candidateNewRoute,
   candidateDetailRoute,
-  candidateStartRoute,
-  candidateStartNoTokenRoute,
-  candidateJourneyRoute,
+  maxMiniAppRoute,
   tgAppLayoutRoute.addChildren([
     tgDashboardRoute,
     tgIncomingRoute,
