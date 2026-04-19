@@ -229,6 +229,26 @@ test.describe("ui cosmetics smoke (mobile 390)", () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test("messenger keeps two-step mobile flow without overflow", async ({ page }) => {
+    await page.goto("/app/messenger");
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(500);
+
+    await expect(page.getByRole("complementary", { name: "Чаты кандидатов" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("messenger-folder-rail")).toBeVisible({ timeout: 10000 });
+
+    const firstThread = page.locator('.messenger-thread-card[role="button"]').first();
+    if (await firstThread.count()) {
+      await expect(firstThread).toBeVisible({ timeout: 10000 });
+      await firstThread.click();
+      await expect(page.getByTestId("messenger-composer")).toBeVisible({ timeout: 10000 });
+      await page.getByRole("button", { name: "Контекст" }).click();
+      await expect(page.getByTestId("messenger-context-panel")).toBeVisible({ timeout: 10000 });
+    }
+
+    await expectNoHorizontalOverflow(page);
+  });
+
   test("candidate detail main blocks are visible", async ({ page }) => {
     await openFirstCandidateDetail(page);
     await expect(page.getByTestId("candidate-actions")).toBeVisible({ timeout: 10000 });
