@@ -16,10 +16,13 @@ from backend.apps.admin_ui.services.candidates.lifecycle_use_cases import (
     execute_finalize_hired,
     execute_finalize_not_hired,
     execute_mark_test2_completed,
+    execute_resend_test2,
+    execute_restart_test1,
     execute_send_to_test2,
 )
 from backend.apps.admin_ui.services.slots import approve_slot_booking
 from backend.core.db import async_session
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.write_contract import (
     INTERVIEW_SCHEDULING_REQUIRED_COLUMNS,
     INTRO_DAY_SCHEDULING_REQUIRED_COLUMNS,
@@ -30,7 +33,6 @@ from backend.domain.candidates.write_contract import (
     resolve_kanban_move_intent,
     resolve_kanban_target_status,
 )
-from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import Slot, SlotStatus
 
 BLOCKING_STATE_META: dict[str, dict[str, Any]] = {
@@ -92,6 +94,13 @@ BLOCKING_STATE_META: dict[str, dict[str, Any]] = {
     },
     "partial_transition_requires_repair": {
         "category": "reconciliation",
+        "severity": "warning",
+        "retryable": False,
+        "recoverable": True,
+        "manual_resolution_required": True,
+    },
+    "active_scheduling_exists": {
+        "category": "scheduling",
         "severity": "warning",
         "retryable": False,
         "recoverable": True,
@@ -330,11 +339,32 @@ async def execute_candidate_action_intent(
     dedicated_targets = {
         "interview_outcome_passed": CandidateStatus.TEST2_SENT.value,
         "interview_passed": CandidateStatus.TEST2_SENT.value,
+        "resend_test2": CandidateStatus.TEST2_SENT.value,
         "mark_hired": CandidateStatus.HIRED.value,
         "mark_not_hired": CandidateStatus.NOT_HIRED.value,
+        "restart_test1": CandidateStatus.INVITED.value,
     }
     if action_key in {"interview_outcome_passed", "interview_passed"}:
         result = await execute_send_to_test2(
+            candidate_id,
+            principal=principal,
+            bot_service=bot_service,
+            action_key=action_key,
+        )
+        return _from_lifecycle_use_case_result(
+            result,
+            action=action_key,
+            candidate_id=candidate_id,
+            intent={
+                "kind": "candidate_action",
+                "action_key": action_key,
+                "intent_key": intent_key,
+                "resolved_status": dedicated_targets[action_key],
+                "resolution": "dedicated_lifecycle_use_case",
+            },
+        )
+    if action_key == "resend_test2":
+        result = await execute_resend_test2(
             candidate_id,
             principal=principal,
             bot_service=bot_service,
@@ -372,6 +402,26 @@ async def execute_candidate_action_intent(
         )
     if action_key == "mark_not_hired":
         result = await execute_finalize_not_hired(
+            candidate_id,
+            principal=principal,
+            reason=reason,
+            comment=comment,
+            action_key=action_key,
+        )
+        return _from_lifecycle_use_case_result(
+            result,
+            action=action_key,
+            candidate_id=candidate_id,
+            intent={
+                "kind": "candidate_action",
+                "action_key": action_key,
+                "intent_key": intent_key,
+                "resolved_status": dedicated_targets[action_key],
+                "resolution": "dedicated_lifecycle_use_case",
+            },
+        )
+    if action_key == "restart_test1":
+        result = await execute_restart_test1(
             candidate_id,
             principal=principal,
             reason=reason,

@@ -59,193 +59,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/candidate/session/exchange": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Exchange Candidate Portal Session */
-        post: operations["exchange_candidate_portal_session_api_candidate_session_exchange_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/session/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Logout Candidate Portal Session */
-        post: operations["logout_candidate_portal_session_api_candidate_session_logout_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/journey": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Candidate Portal Journey */
-        get: operations["get_candidate_portal_journey_api_candidate_journey_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/profile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Candidate Portal Profile */
-        post: operations["save_candidate_portal_profile_api_candidate_profile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/screening/save": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Save Candidate Portal Screening Draft */
-        post: operations["save_candidate_portal_screening_draft_api_candidate_screening_save_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/screening/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Complete Candidate Portal Screening */
-        post: operations["complete_candidate_portal_screening_api_candidate_screening_complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/slots/reserve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reserve Candidate Portal Slot Route */
-        post: operations["reserve_candidate_portal_slot_route_api_candidate_slots_reserve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/slots/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm Candidate Portal Slot Route */
-        post: operations["confirm_candidate_portal_slot_route_api_candidate_slots_confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/slots/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Cancel Candidate Portal Slot Route */
-        post: operations["cancel_candidate_portal_slot_route_api_candidate_slots_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/slots/reschedule": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reschedule Candidate Portal Slot Route */
-        post: operations["reschedule_candidate_portal_slot_route_api_candidate_slots_reschedule_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/candidate/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Send Candidate Portal Message Route */
-        post: operations["send_candidate_portal_message_route_api_candidate_messages_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/hh-integration/webhooks/{webhook_key}": {
         parameters: {
             query?: never;
@@ -652,6 +465,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/slot-assignments/{assignment_id}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Repair Slot Assignment */
+        post: operations["api_repair_slot_assignment_api_slot_assignments__assignment_id__repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/candidates/{candidate_id}/state": {
         parameters: {
             query?: never;
@@ -695,23 +525,6 @@ export interface paths {
         };
         /** Candidates List */
         get: operations["candidates_list_candidates_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/candidates/detailization": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Candidates Detailization */
-        get: operations["candidates_detailization_candidates_detailization_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -839,26 +652,6 @@ export interface paths {
          *     This endpoint is only available when ENABLE_LEGACY_STATUS_API=true.
          */
         post: operations["candidates_set_status_candidates__candidate_id__status_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/candidates/{candidate_id}/resend-test2": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Candidates Resend Test2
-         * @description Resend Test 2 invite to a candidate via bot.
-         */
-        get: operations["candidates_resend_test2_candidates__candidate_id__resend_test2_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1651,46 +1444,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ai/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Api Ai Agent Chat State
-         * @description Retrieve current AI agent chat thread state and messages.
-         */
-        get: operations["api_ai_agent_chat_state_api_ai_chat_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ai/chat/message": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Api Ai Agent Chat Send
-         * @description Send a message to AI agent chat and get response.
-         */
-        post: operations["api_ai_agent_chat_send_api_ai_chat_message_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ai/cities/{city_id}/candidates/recommendations": {
         parameters: {
             query?: never;
@@ -1969,60 +1722,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/kb/documents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Api Kb Documents List */
-        get: operations["api_kb_documents_list_api_kb_documents_get"];
-        put?: never;
-        /** Api Kb Document Create */
-        post: operations["api_kb_document_create_api_kb_documents_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/kb/documents/{document_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Api Kb Document Get */
-        get: operations["api_kb_document_get_api_kb_documents__document_id__get"];
-        /** Api Kb Document Update */
-        put: operations["api_kb_document_update_api_kb_documents__document_id__put"];
-        post?: never;
-        /** Api Kb Document Delete */
-        delete: operations["api_kb_document_delete_api_kb_documents__document_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/kb/documents/{document_id}/reindex": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Api Kb Document Reindex */
-        post: operations["api_kb_document_reindex_api_kb_documents__document_id__reindex_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/simulator/runs": {
         parameters: {
             query?: never;
@@ -2072,59 +1771,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/detailization": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Api Detailization List */
-        get: operations["api_detailization_list_api_detailization_get"];
-        put?: never;
-        /** Api Detailization Create */
-        post: operations["api_detailization_create_api_detailization_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/detailization/export.csv": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Api Detailization Export */
-        get: operations["api_detailization_export_api_detailization_export_csv_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/detailization/{entry_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Api Detailization Delete */
-        delete: operations["api_detailization_delete_api_detailization__entry_id__delete"];
-        options?: never;
-        head?: never;
-        /** Api Detailization Update */
-        patch: operations["api_detailization_update_api_detailization__entry_id__patch"];
         trace?: never;
     };
     "/api/recruiters": {
@@ -2505,8 +2151,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Templates */
-        get: operations["list_templates_api_templates_list_get"];
+        /** Api Templates List */
+        get: operations["api_templates_list_api_templates_list_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2682,7 +2328,7 @@ export interface paths {
         };
         /**
          * Api Dashboard Incoming
-         * @description Candidates who passed test1 and are waiting for a free interview slot.
+         * @description Unified incoming queue for candidates waiting on slot coordination or manual time resolution.
          */
         get: operations["api_dashboard_incoming_api_dashboard_incoming_get"];
         put?: never;
@@ -3504,6 +3150,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/candidates/{candidate_id}/max-rollout/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Candidate Max Rollout Issue */
+        post: operations["api_candidate_max_rollout_issue_api_candidates__candidate_id__max_rollout_issue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/{candidate_id}/max-launch-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Candidate Max Rollout Issue */
+        post: operations["api_candidate_max_rollout_issue_api_candidates__candidate_id__max_launch_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/{candidate_id}/max-rollout/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Candidate Max Rollout Revoke */
+        post: operations["api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_rollout_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/{candidate_id}/max-launch-invite/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Candidate Max Rollout Revoke */
+        post: operations["api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_launch_invite_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/candidates/{candidate_id}/hh": {
         parameters: {
             query?: never;
@@ -3696,6 +3410,57 @@ export interface paths {
         };
         /** Api Notifications Logs */
         get: operations["api_notifications_logs_api_notifications_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/messenger-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api System Messenger Health */
+        get: operations["api_system_messenger_health_api_system_messenger_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/messenger-health/{channel}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Recover Messenger Channel */
+        post: operations["api_recover_messenger_channel_api_system_messenger_health__channel__recover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/candidates/{candidate_id}/channel-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api Candidate Channel Health */
+        get: operations["api_candidate_channel_health_api_candidates__candidate_id__channel_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4189,6 +3954,11 @@ export interface components {
              * @default false
              */
             force: boolean | null;
+            /**
+             * Confirmation
+             * @default
+             */
+            confirmation: string;
         };
         /** CalendarTaskCreatePayload */
         CalendarTaskCreatePayload: {
@@ -4260,82 +4030,30 @@ export interface components {
         };
         /** CandidateKanbanMovePayload */
         CandidateKanbanMovePayload: {
+            /** Target Column */
+            target_column?: string | null;
             /** Target Status */
-            target_status: string;
+            target_status?: string | null;
         };
-        /** CandidatePortalExchangePayload */
-        CandidatePortalExchangePayload: {
-            /** Token */
-            token: string;
-        };
-        /** CandidatePortalMessagePayload */
-        CandidatePortalMessagePayload: {
-            /** Text */
-            text: string;
-        };
-        /** CandidatePortalProfilePayload */
-        CandidatePortalProfilePayload: {
-            /** Fio */
-            fio: string;
-            /** Phone */
-            phone: string;
-            /** City Id */
-            city_id: number;
-        };
-        /** CandidatePortalReschedulePayload */
-        CandidatePortalReschedulePayload: {
-            /** New Slot Id */
-            new_slot_id: number;
-        };
-        /** CandidatePortalReservePayload */
-        CandidatePortalReservePayload: {
-            /** Slot Id */
-            slot_id: number;
-        };
-        /** CandidatePortalScreeningPayload */
-        CandidatePortalScreeningPayload: {
-            /** Answers */
-            answers?: Record<string, never>;
-        };
-        /** DetailizationCreatePayload */
-        DetailizationCreatePayload: {
-            /** Candidate Id */
-            candidate_id: number;
-            /** Recruiter Id */
-            recruiter_id?: number | null;
-            /** City Id */
-            city_id?: number | null;
-            /** Assigned At */
-            assigned_at?: string | null;
-            /** Conducted At */
-            conducted_at?: string | null;
-            /** Expert Name */
-            expert_name?: string | null;
-            /** Is Attached */
-            is_attached?: boolean | null;
-            /** Final Outcome */
-            final_outcome?: string | null;
-            /** Final Outcome Reason */
-            final_outcome_reason?: string | null;
-        };
-        /** DetailizationUpdatePayload */
-        DetailizationUpdatePayload: {
-            /** Expert Name */
-            expert_name?: string | null;
-            /** Is Attached */
-            is_attached?: boolean | null;
-            /** Final Outcome */
-            final_outcome?: string | null;
-            /** Final Outcome Reason */
-            final_outcome_reason?: string | null;
-            /** Assigned At */
-            assigned_at?: string | null;
-            /** Conducted At */
-            conducted_at?: string | null;
-            /** Recruiter Id */
-            recruiter_id?: number | null;
-            /** City Id */
-            city_id?: number | null;
+        /** CandidateMaxRolloutIssuePayload */
+        CandidateMaxRolloutIssuePayload: {
+            /** Application Id */
+            application_id?: number | null;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Send
+             * @default false
+             */
+            send: boolean;
+            /**
+             * Reuse Policy
+             * @default reuse_active
+             */
+            reuse_policy: string;
         };
         /** HHActionExecuteRequest */
         HHActionExecuteRequest: {
@@ -4428,6 +4146,19 @@ export interface components {
             requested_tz?: string | null;
             /** Comment */
             comment?: string | null;
+        };
+        /** SchedulingRepairRequest */
+        SchedulingRepairRequest: {
+            /** Action */
+            action: string;
+            /** Chosen Assignment Id */
+            chosen_assignment_id?: number | null;
+            /** Chosen Slot Id */
+            chosen_slot_id?: number | null;
+            /** Confirmations */
+            confirmations?: string[];
+            /** Note */
+            note?: string | null;
         };
         /** SlotAssignmentCreateRequest */
         SlotAssignmentCreateRequest: {
@@ -4722,315 +4453,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    exchange_candidate_portal_session_api_candidate_session_exchange_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalExchangePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    logout_candidate_portal_session_api_candidate_session_logout_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_candidate_portal_journey_api_candidate_journey_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    save_candidate_portal_profile_api_candidate_profile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalProfilePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    save_candidate_portal_screening_draft_api_candidate_screening_save_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalScreeningPayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    complete_candidate_portal_screening_api_candidate_screening_complete_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalScreeningPayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reserve_candidate_portal_slot_route_api_candidate_slots_reserve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalReservePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_candidate_portal_slot_route_api_candidate_slots_confirm_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    cancel_candidate_portal_slot_route_api_candidate_slots_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    reschedule_candidate_portal_slot_route_api_candidate_slots_reschedule_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalReschedulePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    send_candidate_portal_message_route_api_candidate_messages_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidatePortalMessagePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5867,6 +5289,41 @@ export interface operations {
             };
         };
     };
+    api_repair_slot_assignment_api_slot_assignments__assignment_id__repair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulingRepairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_candidate_state_candidates__candidate_id__state_get: {
         parameters: {
             query?: never;
@@ -5954,41 +5411,6 @@ export interface operations {
                 view?: string;
                 calendar_mode?: string;
                 pipeline?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    candidates_detailization_candidates_detailization_get: {
-        parameters: {
-            query?: {
-                /** @description hired or not_hired */
-                status?: string | null;
-                search?: string | null;
-                page?: number;
-                per_page?: number;
             };
             header?: never;
             path?: never;
@@ -6202,37 +5624,6 @@ export interface operations {
         };
     };
     candidates_set_status_candidates__candidate_id__status_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                candidate_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    candidates_resend_test2_candidates__candidate_id__resend_test2_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -7651,46 +7042,6 @@ export interface operations {
             };
         };
     };
-    api_ai_agent_chat_state_api_ai_chat_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    api_ai_agent_chat_send_api_ai_chat_message_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     api_ai_city_candidate_recommendations_api_ai_cities__city_id__candidates_recommendations_get: {
         parameters: {
             query?: {
@@ -8133,170 +7484,6 @@ export interface operations {
             };
         };
     };
-    api_kb_documents_list_api_kb_documents_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    api_kb_document_create_api_kb_documents_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    api_kb_document_get_api_kb_documents__document_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_kb_document_update_api_kb_documents__document_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_kb_document_delete_api_kb_documents__document_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_kb_document_reindex_api_kb_documents__document_id__reindex_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                document_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     simulator_create_run_api_simulator_runs_post: {
         parameters: {
             query?: never;
@@ -8358,169 +7545,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_detailization_list_api_detailization_get: {
-        parameters: {
-            query?: {
-                date_from?: string | null;
-                date_to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_detailization_create_api_detailization_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DetailizationCreatePayload"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_detailization_export_api_detailization_export_csv_get: {
-        parameters: {
-            query?: {
-                date_from?: string | null;
-                date_to?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_detailization_delete_api_detailization__entry_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entry_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    api_detailization_update_api_detailization__entry_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entry_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DetailizationUpdatePayload"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -9493,7 +8517,7 @@ export interface operations {
             };
         };
     };
-    list_templates_api_templates_list_get: {
+    api_templates_list_api_templates_list_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -11521,6 +10545,142 @@ export interface operations {
             };
         };
     };
+    api_candidate_max_rollout_issue_api_candidates__candidate_id__max_rollout_issue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateMaxRolloutIssuePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_candidate_max_rollout_issue_api_candidates__candidate_id__max_launch_invite_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateMaxRolloutIssuePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_rollout_revoke_post: {
+        parameters: {
+            query?: {
+                application_id?: number | null;
+            };
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_launch_invite_revoke_post: {
+        parameters: {
+            query?: {
+                application_id?: number | null;
+            };
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     api_candidate_hh_summary_api_candidates__candidate_id__hh_get: {
         parameters: {
             query?: never;
@@ -11589,6 +10749,7 @@ export interface operations {
                 page?: number;
                 per_page?: number;
                 search?: string | null;
+                state?: string[] | null;
                 status?: string[] | null;
                 recruiter_id?: string | null;
                 active?: string | null;
@@ -11882,6 +11043,88 @@ export interface operations {
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_system_messenger_health_api_system_messenger_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    api_recover_messenger_channel_api_system_messenger_health__channel__recover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_candidate_channel_health_api_candidates__candidate_id__channel_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
             cookie?: never;
         };
         requestBody?: never;

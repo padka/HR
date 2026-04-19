@@ -274,6 +274,85 @@
   justify-content: space-between;
 }
 
+.ui-tabular-nums {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+.ui-glass-rail,
+.ui-segmented {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 84%, transparent);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+  backdrop-filter: blur(var(--blur-sm));
+  -webkit-backdrop-filter: blur(var(--blur-sm));
+}
+
+.ui-glass-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: var(--space-sm);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--glass-bg-elevated) 88%, transparent);
+}
+
+.ui-glass-rail--compact {
+  gap: var(--space-xs);
+  padding: 6px;
+  border-radius: var(--radius-lg);
+}
+
+.ui-glass-rail--sticky {
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-md));
+  z-index: calc(var(--z-mobile-nav) - 1);
+}
+
+.ui-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--glass-bg) 82%, transparent);
+}
+
+.ui-segmented--compact {
+  gap: 4px;
+  padding: 3px;
+}
+
+.ui-segmented__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--touch-target-min);
+  min-width: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: calc(var(--radius-full) - 4px);
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font: inherit;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+  text-align: center;
+  white-space: nowrap;
+  transition: background var(--transition-hover), color var(--transition-hover), box-shadow var(--transition-hover);
+}
+
+.ui-segmented__item:is(.is-active, [aria-selected='true'], [aria-pressed='true'], [data-state='active']) {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--glass-bg-elevated) 92%, transparent);
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 84%, transparent);
+}
+
 .ui-state {
   display: grid;
   gap: 10px;
@@ -773,4 +852,44 @@ html[data-ui='liquid-glass-v2'][data-theme='light'] .cd-hh-card {
 .city-hh-card__side {
   display: flex;
   justify-content: flex-end;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-ui='liquid-glass-v2'] .ui-btn,
+  html[data-ui='liquid-glass-v2'] .ui-control,
+  html[data-ui='liquid-glass-v2'] input:not([type='checkbox']):not([type='radio']),
+  html[data-ui='liquid-glass-v2'] select,
+  html[data-ui='liquid-glass-v2'] textarea {
+    background: var(--ui-surface-2-solid);
+  }
+
+  html[data-ui='liquid-glass-v2'] .ui-form-actions--sticky-mobile,
+  html[data-ui='liquid-glass-v2'] .data-table thead th,
+  html[data-ui='liquid-glass-v2'] .modal-overlay,
+  html[data-ui='liquid-glass-v2'] .ui-glass-rail,
+  html[data-ui='liquid-glass-v2'] .ui-segmented {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  html[data-ui='liquid-glass-v2'] .ui-form-actions--sticky-mobile,
+  html[data-ui='liquid-glass-v2'] .ui-glass-rail {
+    background: var(--ui-surface-3-solid);
+  }
+
+  html[data-ui='liquid-glass-v2'] .ui-segmented {
+    background: var(--ui-surface-2-solid);
+  }
+
+  html[data-ui='liquid-glass-v2'] .data-table thead th {
+    background: var(--ui-surface-3-solid);
+  }
+
+  html[data-ui='liquid-glass-v2'] .modal-overlay {
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+  }
+
+  html[data-ui='liquid-glass-v2'] .ui-segmented__item:is(.is-active, [aria-selected='true'], [aria-pressed='true'], [data-state='active']) {
+    background: var(--ui-surface-4-solid);
+  }
 }

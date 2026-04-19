@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 import backend.apps.admin_ui.services.candidates.lifecycle_use_cases as lifecycle_use_cases
+import pytest
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
-from backend.domain.candidates.models import TestResult, User
+from backend.domain.candidates.models import (
+    CandidateJourneySession,
+    CandidateJourneyStepState,
+    TestResult,
+    User,
+)
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import StatusTransitionError
+from backend.domain.candidates.test1_shared import TEST1_STEP_KEY
+from sqlalchemy import select
 
 
 async def _create_candidate(
@@ -83,6 +89,81 @@ async def _create_test2_result(
         )
         session.add(result)
         await session.commit()
+
+
+async def _seed_test1_attempt(
+    candidate: User,
+    *,
+    completed: bool = True,
+    journey_step_key: str = "test1_completed",
+) -> int:
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        test_result = TestResult(
+            user_id=user.id,
+            raw_score=11,
+            final_score=11.0,
+            rating="TEST1",
+            source="admin_test",
+            total_time=180,
+        )
+        session.add(test_result)
+        await session.flush()
+        journey_session = CandidateJourneySession(
+            candidate_id=user.id,
+            journey_key="candidate_portal",
+            journey_version="v1",
+            entry_channel="max",
+            current_step_key=journey_step_key,
+            last_surface="max_miniapp",
+            last_auth_method="max_init_data",
+            payload_json={
+                "candidate_access": {
+                    "allowed_next_actions": ["select_interview_slot"],
+                    "booking_context": {
+                        "city_id": 1,
+                        "city_name": "Москва",
+                        "recruiter_id": 1,
+                        "recruiter_name": "Recruiter",
+                    },
+                    "chat_cursor": {"state": "completed"},
+                    "test1": {
+                        "test_result_id": int(test_result.id),
+                        "required_next_action": "select_interview_slot",
+                    },
+                    "active_surface": "max_chat",
+                }
+            },
+        )
+        session.add(journey_session)
+        await session.flush()
+        step_state = CandidateJourneyStepState(
+            session_id=journey_session.id,
+            step_key=TEST1_STEP_KEY,
+            step_type="form",
+            status="completed" if completed else "in_progress",
+            payload_json={
+                "draft": {
+                    "question_ids": ["fio", "city", "age"],
+                    "answers": {"fio": "Иванов Иван Иванович", "city": "Москва", "age": "23"},
+                    "city_id": 1,
+                    "city_name": "Москва",
+                    "candidate_tz": "Europe/Moscow",
+                },
+                "completion": {
+                    "completed": completed,
+                    "test_result_id": int(test_result.id),
+                    "required_next_action": "select_interview_slot",
+                    "current_step_key": journey_step_key,
+                    "screening_decision": {"outcome": "invite_to_interview"},
+                    "interview_offer": {"city_id": 1, "city_name": "Москва"},
+                },
+            },
+        )
+        session.add(step_state)
+        await session.commit()
+        return int(test_result.id)
 
 
 @pytest.mark.asyncio
@@ -422,4 +503,84 @@ async def test_execute_finalize_not_hired_blocks_invalid_state() -> None:
 
     assert result.ok is False
     assert result.error == "invalid_transition"
+    assert result.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_execute_restart_test1_resets_current_attempt_and_reopens_candidate() -> None:
+    candidate = await _create_candidate(
+        telegram_id=920014,
+        fio="Restart Test1 Candidate",
+        status=CandidateStatus.NOT_HIRED,
+    )
+    previous_result_id = await _seed_test1_attempt(candidate)
+
+    result = await lifecycle_use_cases.execute_restart_test1(
+        candidate.id,
+        principal=None,
+        action_key="restart_test1",
+        reason="candidate_reapplied",
+    )
+
+    assert result.ok is True
+    assert result.status == CandidateStatus.INVITED.value
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        journey_session = await session.scalar(
+            select(CandidateJourneySession)
+            .where(CandidateJourneySession.candidate_id == candidate.id)
+            .order_by(CandidateJourneySession.id.desc())
+            .limit(1)
+        )
+        step_state = await session.scalar(
+            select(CandidateJourneyStepState)
+            .where(
+                CandidateJourneyStepState.session_id == journey_session.id,
+                CandidateJourneyStepState.step_key == TEST1_STEP_KEY,
+            )
+        )
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.INVITED
+    assert user.is_active is True
+    assert user.rejection_reason is None
+    assert user.final_outcome_reason is None
+    assert journey_session is not None
+    assert journey_session.current_step_key == TEST1_STEP_KEY
+    assert journey_session.session_version >= 2
+    assert journey_session.last_access_session_id is None
+    assert journey_session.last_surface is None
+    candidate_access = dict(journey_session.payload_json or {}).get("candidate_access") or {}
+    assert "booking_context" not in candidate_access
+    assert "test1" not in candidate_access
+    assert candidate_access.get("history")
+    assert step_state is not None
+    history = list((step_state.payload_json or {}).get("history") or [])
+    assert history
+    assert history[-1]["test_result_id"] == previous_result_id
+    assert history[-1]["required_next_action"] == "select_interview_slot"
+
+
+@pytest.mark.asyncio
+async def test_execute_restart_test1_blocks_when_candidate_has_active_scheduling() -> None:
+    candidate = await _create_candidate(
+        telegram_id=920015,
+        fio="Restart Blocked Candidate",
+        status=CandidateStatus.TEST1_COMPLETED,
+    )
+    await _seed_test1_attempt(candidate)
+    await _create_candidate_slot(
+        candidate,
+        purpose="interview",
+        status=models.SlotStatus.BOOKED,
+    )
+
+    result = await lifecycle_use_cases.execute_restart_test1(
+        candidate.id,
+        principal=None,
+        action_key="restart_test1",
+    )
+
+    assert result.ok is False
+    assert result.error == "active_scheduling_exists"
     assert result.status_code == 409

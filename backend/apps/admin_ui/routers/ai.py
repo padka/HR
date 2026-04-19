@@ -355,41 +355,6 @@ async def api_ai_dashboard_insights(
     return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "insight": result.payload})
 
 
-@router.get("/chat")
-async def api_ai_agent_chat_state(
-    principal: Principal = principal_dep,
-    ai: AIService = ai_dep,
-) -> JSONResponse:
-    """Retrieve current AI agent chat thread state and messages."""
-    try:
-        thread_id, messages = await ai.get_agent_chat_state(principal=principal, limit=120)
-    except AIDisabledError:
-        return _disabled()
-    return JSONResponse({"ok": True, "thread_id": int(thread_id), "messages": messages})
-
-
-@router.post("/chat/message")
-@limiter.limit("10/minute", key_func=get_principal_identifier)
-async def api_ai_agent_chat_send(
-    request: Request,
-    principal: Principal = principal_dep,
-    ai: AIService = ai_dep,
-) -> JSONResponse:
-    """Send a message to AI agent chat and get response."""
-    _ = await require_csrf_token(request)
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
-    text = str(data.get("text") or "")
-    try:
-        result = await ai.send_agent_chat_message(principal=principal, text=text)
-    except AIDisabledError:
-        return _disabled()
-    except AIRateLimitedError:
-        return _rate_limited()
-    return JSONResponse({"ok": True, **result})
-
-
 @router.get("/cities/{city_id}/candidates/recommendations")
 async def api_ai_city_candidate_recommendations(
     city_id: int,

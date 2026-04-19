@@ -1,10 +1,11 @@
 /**
  * Telegram Mini App — Candidate detail view.
- * Shows profile, test results, timeline, notes.
+ * Shows lightweight candidate context and explicit status actions.
  */
 import { useEffect, useState } from 'react'
-import { useParams } from '@tanstack/react-router'
+import { Link, useParams } from '@tanstack/react-router'
 import { apiFetch } from '@/api/client'
+import './surface.css'
 
 interface CandidateDetail {
   id: number
@@ -36,17 +37,30 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Не удалось выполнить действие'
 }
 
+function resolveStatusNote(transitionsCount: number): string {
+  if (transitionsCount > 0) {
+    return 'Выберите новый статус сразу после фактического действия, чтобы карточка и очередь оставались синхронными.'
+  }
+
+  return 'Сейчас доступных переходов нет. Если работа продолжается, проверьте карточку позже в SPA.'
+}
+
 export function TgCandidatePage() {
   const { candidateId } = useParams({ strict: false }) as { candidateId: string }
   const initData = useTgInitData()
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [statusMsg, setStatusMsg] = useState('')
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null)
+  const [statusNotice, setStatusNotice] = useState<{
+    tone: 'info' | 'success' | 'danger'
+    title: string
+    text: string
+  } | null>(null)
 
   useEffect(() => {
     if (!initData || !candidateId) {
-      setError('Откройте через Telegram')
+      setError('Откройте экран из Telegram Mini App, чтобы загрузить карточку кандидата.')
       setLoading(false)
       return
     }
@@ -55,13 +69,19 @@ export function TgCandidatePage() {
       headers: { 'X-Telegram-Init-Data': initData },
     })
       .then(setCandidate)
-      .catch(e => setError(e.message))
+      .catch((fetchError: unknown) => setError(errorMessage(fetchError)))
       .finally(() => setLoading(false))
   }, [initData, candidateId])
 
   const handleStatusChange = async (status: string) => {
-    if (!initData || !candidateId) return
-    setStatusMsg('Обновление...')
+    if (!initData || !candidateId || pendingStatus) return
+    setPendingStatus(status)
+    setStatusNotice({
+      tone: 'info',
+      title: 'Обновляем статус',
+      text: 'Фиксируем изменение и перечитываем карточку кандидата.',
+    })
+
     try {
       await apiFetch(`/webapp/recruiter/candidates/${candidateId}/status`, {
         method: 'POST',
@@ -70,73 +90,126 @@ export function TgCandidatePage() {
         },
         body: { status },
       })
-      setStatusMsg('Статус обновлён')
       const updated = await apiFetch<CandidateDetail>(`/webapp/recruiter/candidates/${candidateId}`, {
         headers: { 'X-Telegram-Init-Data': initData },
       })
       setCandidate(updated)
+      setStatusNotice({
+        tone: 'success',
+        title: 'Статус обновлён',
+        text: updated.status_label
+          ? `Текущий статус: ${updated.status_label}.`
+          : 'Карточка синхронизирована с сервером.',
+      })
     } catch (error: unknown) {
-      setStatusMsg(`Ошибка: ${errorMessage(error)}`)
+      setStatusNotice({
+        tone: 'danger',
+        title: 'Не удалось обновить статус',
+        text: errorMessage(error),
+      })
+    } finally {
+      setPendingStatus(null)
     }
   }
 
   if (loading) {
-    return <div style={{ padding: '24px', textAlign: 'center', color: '#999' }}>Загрузка...</div>
+    return (
+      <TgStateCard
+        eyebrow="Загрузка"
+        title="Загружаем карточку кандидата"
+        text="Подтягиваем текущий статус и доступные переходы."
+      />
+    )
   }
   if (error || !candidate) {
-    return <div style={{ padding: '24px', textAlign: 'center', color: '#666' }}>{error || 'Не найден'}</div>
+    return (
+      <TgStateCard
+        eyebrow="Ошибка"
+        title="Карточка недоступна"
+        text={error || 'Кандидат не найден или недоступен в этой сессии.'}
+        role="alert"
+      />
+    )
   }
 
   return (
-    <div>
-      <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>{candidate.fio}</h2>
-
-      <div style={{ fontSize: '14px', color: 'var(--tg-theme-hint-color, #999)', marginBottom: '16px' }}>
-        {candidate.city || '—'} &middot; {candidate.phone || '—'}
-      </div>
-
-      <div
-        style={{
-          background: 'var(--tg-theme-secondary-bg-color, #f2f2f7)',
-          borderRadius: '10px',
-          padding: '12px',
-          marginBottom: '12px',
-        }}
-      >
-        <div style={{ fontSize: '13px', color: 'var(--tg-theme-hint-color, #999)' }}>Статус</div>
-        <div style={{ fontWeight: 600, marginTop: '4px' }}>{candidate.status_label || 'Нет статуса'}</div>
-      </div>
-
-      {candidate.transitions.length > 0 && (
-        <div style={{ marginBottom: '12px' }}>
-          <div style={{ fontSize: '13px', color: 'var(--tg-theme-hint-color, #999)', marginBottom: '8px' }}>
-            Изменить статус:
+    <div className="tg-screen">
+      <header className="tg-page-header">
+        <div className="tg-page-header__top">
+          <div>
+            <p className="tg-page-header__eyebrow">Карточка кандидата</p>
+            <h1 className="tg-page-header__title">{candidate.fio}</h1>
+            <p className="tg-page-header__subtitle">
+              {candidate.city || 'Город не указан'} · {candidate.phone || 'Телефон не указан'}
+            </p>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-            {candidate.transitions.map(t => (
+          <Link to="/tg-app/incoming" className="tg-inline-link">К очереди</Link>
+        </div>
+      </header>
+
+      <section className="tg-card">
+        <p className="tg-card__eyebrow">Текущий статус</p>
+        <div className="tg-chip-row">
+          <span className="tg-chip tg-chip--success">{candidate.status_label || 'Статус не указан'}</span>
+        </div>
+        <p className="tg-card__text">{resolveStatusNote(candidate.transitions.length)}</p>
+      </section>
+
+      <section className="tg-card">
+        <p className="tg-card__eyebrow">Следующий шаг</p>
+        <h2 className="tg-card__title">
+          {candidate.transitions.length > 0 ? 'Выберите новый статус' : 'Доступных переходов нет'}
+        </h2>
+        <p className="tg-card__text">
+          {candidate.transitions.length > 0
+            ? 'Статус обновится без перехода на другой экран.'
+            : 'Новый статус на этой поверхности сейчас не доступен.'}
+        </p>
+
+        {candidate.transitions.length > 0 ? (
+          <div className="tg-actions">
+            {candidate.transitions.map((transition, index) => (
               <button
-                key={t.status}
-                onClick={() => handleStatusChange(t.status)}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: '13px',
-                  border: '1px solid var(--tg-theme-button-color, #007aff)',
-                  borderRadius: '8px',
-                  background: 'transparent',
-                  color: 'var(--tg-theme-button-color, #007aff)',
-                  cursor: 'pointer',
-                }}
+                key={transition.status}
+                type="button"
+                onClick={() => handleStatusChange(transition.status)}
+                disabled={pendingStatus !== null}
+                className={`tg-button ${index === 0 ? 'tg-button--primary' : ''}`}
               >
-                {t.label}
+                {pendingStatus === transition.status ? 'Обновляем…' : transition.label}
               </button>
             ))}
           </div>
-        </div>
-      )}
+        ) : null}
+      </section>
 
-      {statusMsg && (
-        <div style={{ padding: '8px', fontSize: '13px', color: '#007aff' }}>{statusMsg}</div>
-      )}
+      {statusNotice ? (
+        <section className={`tg-banner tg-banner--${statusNotice.tone}`} aria-live="polite">
+          <p className="tg-banner__eyebrow">Статус действия</p>
+          <h2 className="tg-banner__title">{statusNotice.title}</h2>
+          <p className="tg-banner__text">{statusNotice.text}</p>
+        </section>
+      ) : null}
+    </div>
+  )
+}
+
+function TgStateCard({
+  eyebrow,
+  title,
+  text,
+  role = 'status',
+}: {
+  eyebrow: string
+  title: string
+  text: string
+  role?: 'status' | 'alert'
+}) {
+  return (
+    <div className="tg-state-card" role={role}>
+      <p className="tg-card__eyebrow">{eyebrow}</p>
+      <h1 className="tg-state-card__title">{title}</h1>
+      <p className="tg-state-card__text">{text}</p>
     </div>
   )
 }

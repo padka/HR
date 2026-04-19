@@ -762,13 +762,8 @@
     gap: 8px;
   }
 
-  .incoming-card__actions .ui-btn,
-  .incoming-card__assign .ui-btn {
+  .incoming-card__actions .ui-btn {
     width: 100%;
-  }
-
-  .incoming-card__assign {
-    grid-template-columns: 1fr;
   }
 
   .kanban,
@@ -815,15 +810,6 @@
 
   .recruiter-card {
     padding: 14px;
-  }
-
-  .recruiter-card__actions {
-    grid-template-columns: 1fr;
-  }
-
-  .recruiter-card__actions .ui-btn {
-    width: 100%;
-    justify-content: center;
   }
 
   .page-section__content > .list-item {

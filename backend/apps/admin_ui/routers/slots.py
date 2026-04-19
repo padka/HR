@@ -21,7 +21,13 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from backend.apps.admin_ui.security import Principal, principal_ctx, require_principal
+from backend.apps.admin_ui.security import (
+    Principal,
+    principal_ctx,
+    require_admin,
+    require_csrf_token,
+    require_principal,
+)
 from backend.apps.admin_ui.services.bot_service import BotService, provide_bot_service
 from backend.apps.admin_ui.services.cities import list_cities
 from backend.apps.admin_ui.services.recruiters import list_recruiters
@@ -49,6 +55,7 @@ from backend.apps.admin_ui.utils import (
     utc_to_local_naive,
     validate_timezone_name,
 )
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import (
@@ -62,6 +69,7 @@ from backend.domain.slot_service import SlotValidationError, ensure_slot_not_in_
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 logger = logging.getLogger(__name__)
+SLOTS_DELETE_ALL_CONFIRMATION = "DELETE ALL SLOTS"
 
 _FLASH_COOKIE = "admin_flash"
 _SETTINGS = get_settings()
@@ -497,14 +505,52 @@ async def slots_delete(
 
 class BulkDeletePayload(BaseModel):
     force: Optional[bool] = False
+    confirmation: str = ""
 
 
 @router.post("/delete_all")
 async def slots_delete_all(
-    payload: BulkDeletePayload, principal: Principal = Depends(require_principal)
+    payload: BulkDeletePayload,
+    _: None = Depends(require_csrf_token),
+    principal: Principal = Depends(require_admin),
 ):
+    settings = get_settings()
+    if not settings.allow_destructive_admin_actions:
+        await log_audit_action(
+            "slots_bulk_delete_blocked",
+            "slot",
+            None,
+            changes={"reason": "feature_disabled", "forced": bool(payload.force)},
+        )
+        return JSONResponse(
+            {"ok": False, "message": "Bulk slot deletion is disabled in this environment."},
+            status_code=403,
+        )
+
+    if payload.confirmation.strip() != SLOTS_DELETE_ALL_CONFIRMATION:
+        await log_audit_action(
+            "slots_bulk_delete_blocked",
+            "slot",
+            None,
+            changes={"reason": "confirmation_mismatch", "forced": bool(payload.force)},
+        )
+        return JSONResponse(
+            {"ok": False, "message": "Typed confirmation is required to delete all slots."},
+            status_code=400,
+        )
+
     deleted, remaining = await delete_all_slots(
         force=bool(payload.force), principal=principal
+    )
+    await log_audit_action(
+        "slots_bulk_delete_confirmed",
+        "slot",
+        None,
+        changes={
+            "affected_count": deleted,
+            "remaining": remaining,
+            "forced": bool(payload.force),
+        },
     )
     return JSONResponse({"ok": True, "deleted": deleted, "remaining": remaining})
 

@@ -3,42 +3,38 @@ import { useMemo, useRef, useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
 import '@/theme/pages/dashboard.css'
 import { apiFetch } from '@/api/client'
-import {
-  RecruiterActionBlock,
-  RecruiterRiskBanner,
-  RecruiterStateContext,
-} from '@/app/components/RecruiterState'
+import { fetchDashboardIncomingWindow } from '@/api/services/dashboard'
 import { fetchCandidateDetail, type CandidateDetail } from '@/api/services/candidates'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib/timezonePreview'
 import { ModalPortal } from '@/shared/components/ModalPortal'
-import { resolveIncomingDemoCount, withDemoIncomingCandidates } from './incoming-demo'
 import {
   clearIncomingPersistedFilters,
   loadIncomingPersistedFilters,
   saveIncomingPersistedFilters,
   type IncomingAiFilter,
   type IncomingOwnerFilter,
+  type IncomingSortMode,
   type IncomingStatusFilter,
   type IncomingWaitingFilter,
 } from './incoming.filters'
 import { IncomingTestPreviewModal } from './incoming-test-preview-modal'
 import {
+  deriveIncomingSummary,
+  formatAiDetailScore,
+  formatAiDetailStateLabel,
+  formatAiPrimaryScore,
   formatAiRecommendation,
+  formatAiUpdatedAtLabel,
   formatInTz,
   formatRequestedAnotherTime,
   formatSlotOption,
-  resolveAiScoreTone,
+  resolveAiStateTone,
   toIsoDate,
 } from './incoming.utils'
-import {
-  buildCandidateSurfaceState,
-  compareIncomingCandidates,
-  matchesIncomingStatusFilter,
-  summarizeIncomingCandidates,
-} from './candidate-state.adapter'
+import { buildCandidateSurfaceState } from './candidate-state.adapter'
 import type {
   ActionResponse,
   AvailableSlotsPayload,
@@ -47,20 +43,68 @@ import type {
   ScheduleIncomingPayload,
 } from './incoming.types'
 
+const STATUS_FILTER_LABELS: Record<IncomingStatusFilter, string> = {
+  all: 'Все статусы',
+  waiting_slot: 'Ожидают слот',
+  stalled_waiting_slot: 'Застряли >24ч',
+  slot_pending: 'На согласовании',
+  requested_other_time: 'Запросили другое время',
+}
+
+const OWNER_FILTER_LABELS: Record<IncomingOwnerFilter, string> = {
+  all: 'Любой ответственный',
+  mine: 'Мои кандидаты',
+  assigned: 'Есть ответственный',
+  unassigned: 'Без ответственного',
+}
+
+const WAITING_FILTER_LABELS: Record<IncomingWaitingFilter, string> = {
+  all: 'Любое ожидание',
+  '24h': 'Ждут >=24ч',
+  '48h': 'Ждут >=48ч',
+}
+
+const AI_FILTER_LABELS: Record<IncomingAiFilter, string> = {
+  all: 'Любой AI level',
+  high: 'AI: high',
+  medium: 'AI: medium',
+  low: 'AI: low',
+  unknown: 'AI: unknown',
+}
+
+const SORT_MODE_LABELS: Record<IncomingSortMode, string> = {
+  priority: 'По приоритету',
+  waiting_desc: 'Дольше ждут',
+  recent_desc: 'Свежие сообщения',
+  ai_score_desc: 'AI relevance',
+  name_asc: 'По имени',
+}
+
+const DEFAULT_INCOMING_PAGE_SIZE = 50
+const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
+
+function formatAiSummary(candidate: IncomingCandidate): string | null {
+  if (typeof candidate.ai_relevance_score === 'number') {
+    const recommendation = formatAiRecommendation(candidate.ai_recommendation)
+    return recommendation
+      ? `${Math.round(candidate.ai_relevance_score)}/100 · ${recommendation}`
+      : `${Math.round(candidate.ai_relevance_score)}/100`
+  }
+  if (candidate.ai_relevance_level) {
+    const recommendation = formatAiRecommendation(candidate.ai_recommendation)
+    return recommendation
+      ? `${candidate.ai_relevance_level} · ${recommendation}`
+      : candidate.ai_relevance_level
+  }
+  return null
+}
+
 export function IncomingPage() {
   const profile = useProfile()
   const isMobile = useIsMobile()
   const isAdmin = profile.data?.principal.type === 'admin'
   const recruiterId = profile.data?.recruiter?.id ?? null
   const recruiterTz = profile.data?.recruiter?.tz || browserTimeZone()
-  const incomingDemoCount = useMemo(() => {
-    if (typeof window === 'undefined') return 0
-    return resolveIncomingDemoCount({
-      envValue: import.meta.env.VITE_INCOMING_DEMO_COUNT,
-      hostname: window.location.hostname,
-      search: window.location.search,
-    })
-  }, [])
   const persistedFilters = useMemo(() => {
     if (typeof window === 'undefined') return {}
     return loadIncomingPersistedFilters(window.localStorage)
@@ -79,13 +123,22 @@ export function IncomingPage() {
   const [ownerFilter, setOwnerFilter] = useState<IncomingOwnerFilter>(() => persistedFilters.ownerFilter ?? 'all')
   const [waitingFilter, setWaitingFilter] = useState<IncomingWaitingFilter>(() => persistedFilters.waitingFilter ?? 'all')
   const [aiFilter, setAiFilter] = useState<IncomingAiFilter>(() => persistedFilters.aiFilter ?? 'all')
+  const [sortMode, setSortMode] = useState<IncomingSortMode>(() => persistedFilters.sortMode ?? 'priority')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_INCOMING_PAGE_SIZE)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(() => persistedFilters.showAdvancedFilters ?? false)
-  const [expandedCards, setExpandedCards] = useState<Record<number, boolean>>({})
+  const [expandedCardId, setExpandedCardId] = useState<number | null>(null)
   const toastTimeoutRef = useRef<number | null>(null)
+  const [debouncedSearch, setDebouncedSearch] = useState(() => (persistedFilters.search ?? '').trim())
 
   useEffect(() => {
     if (isMobile) setShowAdvancedFilters(false)
   }, [isMobile])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedSearch(search.trim()), 260)
+    return () => window.clearTimeout(timeoutId)
+  }, [search])
 
   const showToast = (message: string) => {
     setToast(message)
@@ -95,9 +148,35 @@ export function IncomingPage() {
     toastTimeoutRef.current = window.setTimeout(() => setToast(null), 2400)
   }
 
+  const cityOptions = useMemo(
+    () => profile.data?.recruiter?.cities || [],
+    [profile.data?.recruiter?.cities],
+  )
+
   const incomingQuery = useQuery<IncomingPayload>({
-    queryKey: ['dashboard-incoming'],
-    queryFn: () => apiFetch('/dashboard/incoming?limit=100'),
+    queryKey: ['dashboard-incoming', {
+      page,
+      pageSize,
+      search: debouncedSearch,
+      cityFilter,
+      statusFilter,
+      ownerFilter,
+      waitingFilter,
+      aiFilter,
+      sortMode,
+    }],
+    queryFn: () => fetchDashboardIncomingWindow({
+      page,
+      pageSize,
+      search: debouncedSearch,
+      cityId: cityFilter === 'all' ? null : Number(cityFilter),
+      status: statusFilter,
+      owner: ownerFilter,
+      waiting: waitingFilter,
+      aiLevel: aiFilter,
+      sort: sortMode,
+    }),
+    placeholderData: (previousData) => previousData,
     staleTime: 120_000,
     refetchInterval: 120_000,
     refetchIntervalInBackground: false,
@@ -265,121 +344,63 @@ export function IncomingPage() {
     }
   }, [incomingCandidateTz, recruiterTz, selectedExistingSlot])
 
-  const cityOptions = useMemo(
-    () => profile.data?.recruiter?.cities || [],
-    [profile.data?.recruiter?.cities],
+  const surfaceItems = useMemo(
+    () => (incomingQuery.data?.items ?? []).map((candidate) => ({ candidate, state: buildCandidateSurfaceState(candidate) })),
+    [incomingQuery.data?.items],
   )
-  const baseItems = useMemo(
-    () =>
-      withDemoIncomingCandidates(incomingQuery.data?.items ?? [], {
-        targetCount: incomingDemoCount,
-        cityOptions,
-      }),
-    [cityOptions, incomingDemoCount, incomingQuery.data?.items],
+  const summary = useMemo(
+    () => deriveIncomingSummary(incomingQuery.data, { page, pageSize }),
+    [incomingQuery.data, page, pageSize],
   )
-  const filteredItems = useMemo(() => {
-    let items = baseItems
 
+  const activeFilters = useMemo(() => {
+    const filters: Array<{ key: string; label: string; clear: () => void }> = []
+    const searchValue = search.trim()
+    if (searchValue) {
+      filters.push({
+        key: `search:${searchValue}`,
+        label: `Поиск: ${searchValue}`,
+        clear: () => setSearch(''),
+      })
+    }
     if (cityFilter !== 'all') {
-      const cityId = Number(cityFilter)
-      items = items.filter((item) => item.city_id === cityId)
+      const cityLabel = cityOptions.find((city) => String(city.id) === cityFilter)?.name || cityFilter
+      filters.push({
+        key: `city:${cityFilter}`,
+        label: `Город: ${cityLabel}`,
+        clear: () => setCityFilter('all'),
+      })
     }
-
     if (statusFilter !== 'all') {
-      items = items.filter((item) => matchesIncomingStatusFilter(item, statusFilter))
+      filters.push({
+        key: `status:${statusFilter}`,
+        label: STATUS_FILTER_LABELS[statusFilter],
+        clear: () => setStatusFilter('all'),
+      })
     }
-
     if (ownerFilter !== 'all') {
-      if (ownerFilter === 'mine') {
-        items = items.filter((item) => item.responsible_recruiter_id === recruiterId)
-      } else if (ownerFilter === 'assigned') {
-        items = items.filter((item) => Boolean(item.responsible_recruiter_id))
-      } else if (ownerFilter === 'unassigned') {
-        items = items.filter((item) => !item.responsible_recruiter_id)
-      }
+      filters.push({
+        key: `owner:${ownerFilter}`,
+        label: OWNER_FILTER_LABELS[ownerFilter],
+        clear: () => setOwnerFilter('all'),
+      })
     }
-
     if (waitingFilter !== 'all') {
-      const threshold = waitingFilter === '48h' ? 48 : 24
-      items = items.filter((item) => (item.waiting_hours || 0) >= threshold)
+      filters.push({
+        key: `waiting:${waitingFilter}`,
+        label: WAITING_FILTER_LABELS[waitingFilter],
+        clear: () => setWaitingFilter('all'),
+      })
     }
-
     if (aiFilter !== 'all') {
-      items = items.filter((item) => (item.ai_relevance_level || 'unknown') === aiFilter)
+      filters.push({
+        key: `ai:${aiFilter}`,
+        label: AI_FILTER_LABELS[aiFilter],
+        clear: () => setAiFilter('all'),
+      })
     }
-
-    if (search.trim()) {
-      const q = search.trim().toLowerCase()
-      items = items.filter((item) =>
-        [
-          item.name,
-          item.city,
-          String(item.telegram_id || ''),
-          item.responsible_recruiter_name,
-          item.status_display,
-          item.lifecycle_summary?.stage_label,
-          item.scheduling_summary?.status_label,
-          item.candidate_next_action?.primary_action?.label,
-          item.state_reconciliation?.issues?.map((issue) => issue.message).filter(Boolean).join(' '),
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(q))
-      )
-    }
-
-    return [...items].sort((left, right) => compareIncomingCandidates(left, right, 'waiting'))
-  }, [aiFilter, baseItems, cityFilter, ownerFilter, recruiterId, search, statusFilter, waitingFilter])
-
-  const triageItems = useMemo(
-    () => filteredItems.map((candidate) => ({ candidate, state: buildCandidateSurfaceState(candidate) })),
-    [filteredItems],
-  )
-
-  const triageLanes = useMemo(() => {
-    const lanes = {
-      action_now: [] as typeof triageItems,
-      waiting: [] as typeof triageItems,
-      review: [] as typeof triageItems,
-    }
-    for (const item of triageItems) {
-      lanes[item.state.triageLane].push(item)
-    }
-    return [
-      {
-        key: 'action_now' as const,
-        title: 'Требует действия сейчас',
-        description: 'Срочные и управляемые кандидаты, где следующий шаг уже понятен.',
-        items: lanes.action_now,
-      },
-      {
-        key: 'waiting' as const,
-        title: 'Ждет кандидата / в процессе',
-        description: 'Есть движение по воронке, но ручное вмешательство не горит.',
-        items: lanes.waiting,
-      },
-      {
-        key: 'review' as const,
-        title: 'Требует разбора',
-        description: 'Конфликты состояния, блокировки и кандидаты, которые нельзя двигать вслепую.',
-        items: lanes.review,
-      },
-    ]
-  }, [triageItems])
-
-  const laneCounts = useMemo(
-    () => triageLanes.reduce((acc, lane) => ({ ...acc, [lane.key]: lane.items.length }), { action_now: 0, waiting: 0, review: 0 }),
-    [triageLanes],
-  )
-
-  const stats = useMemo(() => {
-    const summary = summarizeIncomingCandidates(baseItems)
-    return {
-      total: summary.total,
-      pending: summary.pending,
-      stalled: summary.stalled,
-      requested: summary.requested,
-    }
-  }, [baseItems])
+    return filters
+  }, [aiFilter, cityFilter, cityOptions, ownerFilter, search, statusFilter, waitingFilter])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -390,9 +411,28 @@ export function IncomingPage() {
       ownerFilter,
       waitingFilter,
       aiFilter,
+      sortMode,
       showAdvancedFilters,
     })
-  }, [aiFilter, cityFilter, ownerFilter, search, showAdvancedFilters, statusFilter, waitingFilter])
+  }, [aiFilter, cityFilter, ownerFilter, search, showAdvancedFilters, sortMode, statusFilter, waitingFilter])
+
+  useEffect(() => {
+    if (!incomingQuery.data) return
+    if (incomingQuery.data.total > 0 && incomingQuery.data.returned_count === 0 && page > 1) {
+      setPage((current) => Math.max(1, current - 1))
+    }
+  }, [incomingQuery.data, page])
+
+  useEffect(() => {
+    if (expandedCardId == null) return
+    if (!surfaceItems.some(({ candidate }) => candidate.id === expandedCardId)) {
+      setExpandedCardId(null)
+    }
+  }, [expandedCardId, surfaceItems])
+
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch, cityFilter, statusFilter, ownerFilter, waitingFilter, aiFilter, sortMode, pageSize])
 
   const resetFilters = () => {
     setSearch('')
@@ -401,42 +441,68 @@ export function IncomingPage() {
     setOwnerFilter('all')
     setWaitingFilter('all')
     setAiFilter('all')
+    setSortMode('priority')
     setShowAdvancedFilters(false)
+    setPage(1)
     if (typeof window !== 'undefined') {
       clearIncomingPersistedFilters(window.localStorage)
     }
   }
 
   const toggleCardExpanded = (candidateId: number) => {
-    setExpandedCards((prev) => ({ ...prev, [candidateId]: !prev[candidateId] }))
+    setExpandedCardId((current) => (current === candidateId ? null : candidateId))
   }
 
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
-      <div className="page app-page app-page--ops">
-        <header className="glass glass--elevated page-header page-header--row ui-hero--quiet app-page__hero">
-          <div>
-            <h1 className="title">Входящие</h1>
-            <p className="subtitle">Единая очередь кандидатов: ожидание слота, согласование времени и переносы.</p>
-          </div>
-          <button className="ui-btn ui-btn--ghost" onClick={() => incomingQuery.refetch()}>
-            Обновить
-          </button>
-        </header>
-
-        <section className="glass page-section ui-stack-16 app-page__section">
-          <div className="toolbar toolbar--compact ui-section-kpis app-page__toolbar">
-            <span className="cd-chip">Всего: {triageItems.length}</span>
-            <span className="cd-chip">Сейчас: {laneCounts.action_now}</span>
-            <span className="cd-chip">В ожидании: {laneCounts.waiting}</span>
-            <span className="cd-chip">Требуют разбора: {laneCounts.review}</span>
-            <span className="cd-chip">Застряли {'>'}24ч: {stats.stalled}</span>
-          </div>
-          {incomingDemoCount > 0 && (
-            <div className="incoming-demo-note">
-              Тестовый режим: отображаем {incomingDemoCount} карточек кандидатов с разными профилями.
+      <div className="page app-page app-page--ops app-page--incoming">
+        <section className="glass page-section ui-stack-16 app-page__section incoming-page">
+          <div className="incoming-page__toolbar">
+            <div className="incoming-page__summary">
+              <h1 className="incoming-page__title">Входящие</h1>
+              <div className="incoming-page__summary-line">
+                <span className="incoming-page__summary-label">Во входящих</span>
+                <strong className="incoming-page__summary-value" data-testid="incoming-queue-total">{summary.queueTotal}</strong>
+                <span className="incoming-page__summary-meta">кандидатов</span>
+              </div>
+              <div className="incoming-page__summary-detail" data-testid="incoming-summary-detail">
+                <span>Показано {summary.shownStart}–{summary.shownEnd}</span>
+                {activeFilters.length > 0 && <span>По фильтрам {summary.filteredTotal}</span>}
+                {incomingQuery.isFetching && !incomingQuery.isLoading && <span>Обновляем…</span>}
+              </div>
             </div>
-          )}
+            <div className="incoming-page__controls" data-testid="incoming-pagination">
+              <label className="incoming-page__control">
+                <span>Показывать</span>
+                <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+                  {INCOMING_PAGE_SIZE_OPTIONS.map((value) => (
+                    <option key={value} value={value}>{value} на странице</option>
+                  ))}
+                </select>
+              </label>
+              <div className="incoming-page__pager">
+                <button
+                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                  type="button"
+                  disabled={!incomingQuery.data?.has_prev || incomingQuery.isFetching}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Назад
+                </button>
+                <span className="incoming-page__pager-label">
+                  Страница {summary.page} из {summary.pageCount}
+                </span>
+                <button
+                  className="ui-btn ui-btn--ghost ui-btn--sm"
+                  type="button"
+                  disabled={!incomingQuery.data?.has_next || incomingQuery.isFetching}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  Дальше
+                </button>
+              </div>
+            </div>
+          </div>
 
           <div className="filter-bar ui-filter ui-filter-bar--compact ui-filter-spacing" data-testid="incoming-filter-bar">
             <input
@@ -458,6 +524,11 @@ export function IncomingPage() {
               <option value="slot_pending">На согласовании</option>
               <option value="requested_other_time">Запросили другое время</option>
             </select>
+            <select value={sortMode} onChange={(e) => setSortMode(e.target.value as IncomingSortMode)}>
+              {Object.entries(SORT_MODE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
             <button
               className="ui-btn ui-btn--ghost ui-btn--sm"
               type="button"
@@ -470,6 +541,16 @@ export function IncomingPage() {
               Сбросить фильтры
             </button>
           </div>
+          {activeFilters.length > 0 && (
+            <div className="dashboard-filter-strip" data-testid="incoming-active-filters">
+              {activeFilters.map((filter) => (
+                <button key={filter.key} type="button" className="dashboard-filter-pill" onClick={filter.clear}>
+                  <span>{filter.label}</span>
+                  <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div
             className={`ui-filter-bar__advanced ui-filter ${showAdvancedFilters ? 'ui-filter-bar__advanced--open' : ''}`}
             aria-hidden={!showAdvancedFilters}
@@ -498,206 +579,251 @@ export function IncomingPage() {
           {incomingQuery.isError && (
             <p className="text-danger">Ошибка: {(incomingQuery.error as Error).message}</p>
           )}
-          {incomingQuery.data && triageItems.length === 0 && (
+          {incomingQuery.data && surfaceItems.length === 0 && (
             <div data-testid="incoming-empty-state">
               <p className="subtitle">Нет кандидатов по выбранным фильтрам.</p>
             </div>
           )}
-          {incomingQuery.data && triageItems.length > 0 && (
-            <div className="incoming-lanes" data-testid="incoming-lanes">
-              {triageLanes.map((lane) => (
-                <section key={lane.key} className={`glass glass--subtle incoming-lane incoming-lane--${lane.key}`} data-testid={`incoming-lane-${lane.key}`}>
-                  <header className="incoming-lane__header">
-                    <div>
-                      <h2 className="incoming-lane__title">{lane.title}</h2>
-                      <p className="incoming-lane__subtitle">{lane.description}</p>
-                    </div>
-                    <span className="incoming-lane__count">{lane.items.length}</span>
-                  </header>
-                  {lane.items.length === 0 ? (
-                    <div className="incoming-lane__empty">Нет кандидатов в этой зоне.</div>
-                  ) : (
-                    <div className="incoming-grid">
-                      {lane.items.map(({ candidate, state }) => {
+          {incomingQuery.data && surfaceItems.length > 0 && (
+            <div className="incoming-list" data-testid="incoming-list" role="list">
+              {surfaceItems.map(({ candidate, state }) => {
                 const isNew = candidate.last_message_at
                   ? Date.now() - new Date(candidate.last_message_at).getTime() < 24 * 60 * 60 * 1000
                   : false
                 const selectedRecruiter =
                   assignTargets[candidate.id] ??
                   (candidate.responsible_recruiter_id ? String(candidate.responsible_recruiter_id) : '')
-                const isExpanded = Boolean(expandedCards[candidate.id])
+                const isExpanded = expandedCardId === candidate.id
                 const requestedAnotherTimeLabel = formatRequestedAnotherTime(candidate)
+                const aiSummary = formatAiSummary(candidate)
+                const aiTone = resolveAiStateTone(candidate)
+                const fullAiReasons = candidate.ai_reasons || []
+                const statusChips: Array<{ key: string; label: string; tone: string }> = [
+                  {
+                    key: 'status',
+                    label: state.statusLabel,
+                    tone: state.statusTone,
+                  },
+                ]
+                if (state.requestedOtherTime) {
+                  statusChips.push({
+                    key: 'requested-other-time',
+                    label: 'Запросил другое время',
+                    tone: 'warning',
+                  })
+                } else if (
+                  state.schedulingLabel
+                  && state.schedulingLabel !== state.statusLabel
+                  && statusChips.length < 2
+                ) {
+                  statusChips.push({
+                    key: 'scheduling',
+                    label: state.schedulingLabel,
+                    tone: state.schedulingTone || 'info',
+                  })
+                }
+                if (state.hasReconciliationIssues) {
+                  statusChips.push({
+                    key: 'reconciliation',
+                    label: 'Требует проверки',
+                    tone: 'danger',
+                  })
+                }
+                const visibleStatusChips = statusChips.slice(0, 3)
+                const compactActionLabel = state.nextActionLabel || 'Открыть профиль'
+                const compactRiskLabel = !state.hasReconciliationIssues && state.riskTitle ? state.riskTitle : null
+                const primaryActionLabel = state.requestedOtherTime ? 'Подобрать время' : 'Предложить время'
                 return (
-                  <div key={candidate.id} className="glass glass--subtle incoming-card incoming-card--compact ui-reveal" data-testid="incoming-card">
-                    <div className="incoming-card__main">
-                      <div className="incoming-card__main-content">
-                        <div className="incoming-card__name-row">
-                          <div className="incoming-card__name">
+                  <article
+                    key={candidate.id}
+                    className="glass glass--subtle incoming-row ui-reveal"
+                    data-testid="incoming-row"
+                    role="listitem"
+                  >
+                    <div className="incoming-row__head">
+                      <div className="incoming-row__identity">
+                        <div className="incoming-row__name-line">
+                          <div className="incoming-row__name">
                             {candidate.name || 'Без имени'}
                             {isNew && <span className="incoming-card__badge">NEW</span>}
                           </div>
-                          <span className="incoming-card__waiting">
-                            {candidate.waiting_hours != null ? `Ждёт ${candidate.waiting_hours} ч` : 'Без ожидания'}
-                          </span>
-                        </div>
-                        <div className="incoming-card__meta">
-                          <span>{candidate.city || 'Город не указан'}</span>
-                          {candidate.availability_window && (
-                            <span>· {candidate.availability_window}</span>
-                          )}
+                          <div className="incoming-row__metrics">
+                            <span className="incoming-row__waiting">
+                              {candidate.waiting_hours != null ? `Ждёт ${candidate.waiting_hours} ч` : 'Без ожидания'}
+                            </span>
+                            <span className={`incoming-row__score incoming-row__score--${aiTone}`} data-testid="incoming-ai-score">
+                              <span className="incoming-row__score-label">AI</span>
+                              <strong className="incoming-row__score-value">{formatAiPrimaryScore(candidate)}</strong>
+                            </span>
                           </div>
+                        </div>
+                        <div className="incoming-row__meta">
+                          <span>{candidate.city || 'Город не указан'}</span>
+                          {isAdmin && candidate.responsible_recruiter_name && (
+                            <span>· Ответственный: {candidate.responsible_recruiter_name}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
-
-                    <RecruiterActionBlock
-                      label={state.nextActionLabel || 'Откройте профиль'}
-                      explanation={state.nextActionExplanation || 'Следующий шаг появится в профиле кандидата.'}
-                      tone={state.nextActionTone}
-                      enabled={state.nextActionEnabled}
-                      compact
-                    />
-                    <RecruiterStateContext
-                      bucketLabel={state.worklistBucketLabel}
-                      contextLine={state.stateContextLine}
-                      schedulingLine={state.schedulingContextLine}
-                      compact
-                    />
-                    {state.riskLevel && state.riskTitle && state.riskMessage ? (
-                      <RecruiterRiskBanner
-                        level={state.riskLevel}
-                        title={state.riskTitle}
-                        message={state.riskMessage}
-                        count={state.riskCount > 0 ? state.riskCount : undefined}
-                        compact
-                      />
-                    ) : null}
-                    <div className="incoming-card__status-row toolbar toolbar--compact">
-                      {(candidate.ai_relevance_score != null || candidate.ai_relevance_level) && (
-                        <span className={`status-pill status-pill--${resolveAiScoreTone(candidate.ai_relevance_score, candidate.ai_recommendation)}`}>
-                          AI {typeof candidate.ai_relevance_score === 'number' ? `${Math.round(candidate.ai_relevance_score)}/100` : candidate.ai_relevance_level || 'unknown'}
-                        </span>
-                      )}
-                      {formatAiRecommendation(candidate.ai_recommendation) && (
-                        <span className={`status-pill ${candidate.ai_recommendation === 'not_recommended' ? 'status-pill--danger' : candidate.ai_recommendation === 'od_recommended' ? 'status-pill--success' : 'status-pill--info'}`}>
-                          {formatAiRecommendation(candidate.ai_recommendation)}
-                        </span>
-                      )}
-                    </div>
-
-                    {requestedAnotherTimeLabel && (
-                      <div className="incoming-card__note incoming-card__note--highlight">
-                        🗓 {requestedAnotherTimeLabel}
+                    <div className="incoming-row__summary">
+                      <div className="incoming-row__status-strip">
+                        {visibleStatusChips.map((chip) => (
+                          <span key={chip.key} className={`status-pill status-pill--${chip.tone}`}>{chip.label}</span>
+                        ))}
                       </div>
-                    )}
-                    {candidate.availability_note && isExpanded && (
-                      <div className="incoming-card__note incoming-card__note--muted">
-                        ✉️ {candidate.availability_note}
-                      </div>
-                    )}
-                    {candidate.requested_another_time_comment && isExpanded && requestedAnotherTimeLabel !== `Пожелание: ${candidate.requested_another_time_comment}` && (
-                      <div className="incoming-card__note incoming-card__note--highlight">
-                        💬 {candidate.requested_another_time_comment}
-                      </div>
-                    )}
-                    {candidate.last_message && candidate.last_message !== candidate.availability_note && (
-                      <div className={`incoming-card__note incoming-card__note--message ${!isExpanded ? 'incoming-card__meta-collapsed' : ''}`}>
-                        💬 {candidate.last_message}
-                        {candidate.last_message_at && (
-                          <span className="incoming-card__note-time">
-                            {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                      <div className="incoming-row__action-summary">
+                        <span className="incoming-row__action-kicker">Сейчас</span>
+                        <strong className="incoming-row__action-text">{compactActionLabel}</strong>
+                        {compactRiskLabel && (
+                          <span className={`incoming-row__risk-marker incoming-row__risk-marker--${state.riskLevel || 'warning'}`}>
+                            {compactRiskLabel}
                           </span>
                         )}
                       </div>
-                    )}
-                    {candidate.ai_risk_hint && (
-                      <div className="incoming-card__note incoming-card__note--muted">
-                        AI: {candidate.ai_risk_hint}
-                      </div>
-                    )}
-                    {isAdmin && (
-                      <div className="incoming-card__note incoming-card__note--muted">
-                        Ответственный: {candidate.responsible_recruiter_name || 'не назначен'}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn--ghost ui-btn--sm incoming-card__more"
-                      data-testid="incoming-card-more-toggle"
-                      onClick={() => toggleCardExpanded(candidate.id)}
-                    >
-                      {isExpanded ? 'Скрыть детали' : 'Подробнее'}
-                    </button>
+                    </div>
 
-                    {isAdmin && (
-                      <div className="incoming-card__assign">
-                        <select
-                          value={selectedRecruiter}
-                          onChange={(e) =>
-                            setAssignTargets((prev) => ({ ...prev, [candidate.id]: e.target.value }))
-                          }
-                        >
-                          <option value="">Выберите рекрутёра</option>
-                          {(recruitersQuery.data || []).map((rec) => (
-                            <option key={rec.id} value={String(rec.id)}>{rec.name}</option>
-                          ))}
-                        </select>
+                    <div className="incoming-row__footer">
+                      <div className="incoming-row__primary">
+                        {isAdmin ? (
+                          <div className="incoming-row__assign">
+                            <select
+                              value={selectedRecruiter}
+                              onChange={(e) =>
+                                setAssignTargets((prev) => ({ ...prev, [candidate.id]: e.target.value }))
+                              }
+                            >
+                              <option value="">Выберите рекрутёра</option>
+                              {(recruitersQuery.data || []).map((rec) => (
+                                <option key={rec.id} value={String(rec.id)}>{rec.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="ui-btn ui-btn--primary ui-btn--sm"
+                              type="button"
+                              disabled={!selectedRecruiter || assignRecruiter.isPending}
+                              onClick={() =>
+                                assignRecruiter.mutate({ candidateId: candidate.id, recruiterId: Number(selectedRecruiter) })
+                              }
+                            >
+                              Назначить
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="ui-btn ui-btn--primary ui-btn--sm"
+                            type="button"
+                            onClick={() => openIncomingSchedule(candidate)}
+                          >
+                            {primaryActionLabel}
+                          </button>
+                        )}
+                      </div>
+                      <div className="incoming-row__actions">
                         <button
-                          className="ui-btn ui-btn--primary ui-btn--sm"
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
                           type="button"
-                          disabled={!selectedRecruiter || assignRecruiter.isPending}
-                          onClick={() =>
-                            assignRecruiter.mutate({ candidateId: candidate.id, recruiterId: Number(selectedRecruiter) })
-                          }
+                          onClick={() => openTestPreview(candidate)}
                         >
-                          Назначить
+                          Тест
+                        </button>
+                        <Link
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                          to="/app/candidates/$candidateId"
+                          params={{ candidateId: String(candidate.id) }}
+                        >
+                          Профиль
+                        </Link>
+                        <button
+                          type="button"
+                          className="ui-btn ui-btn--ghost ui-btn--sm"
+                          onClick={() => toggleCardExpanded(candidate.id)}
+                        >
+                          {isExpanded ? 'Скрыть детали' : 'Подробнее'}
+                        </button>
+                        <button
+                          className="ui-btn ui-btn--danger ui-btn--sm"
+                          type="button"
+                          onClick={() => rejectCandidate.mutate(candidate.id)}
+                        >
+                          Отказать
                         </button>
                       </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="incoming-row__details" data-testid={`incoming-row-details-${candidate.id}`}>
+                        {state.riskTitle && state.riskMessage && (
+                          <div className="incoming-row__detail-card incoming-row__detail-card--risk">
+                            <strong>{state.riskTitle}</strong>
+                            <span>{state.riskMessage}</span>
+                          </div>
+                        )}
+                        {requestedAnotherTimeLabel && (
+                          <div className="incoming-row__detail-card incoming-row__detail-card--requested">
+                            <strong>Желаемое время</strong>
+                            <span>{requestedAnotherTimeLabel}</span>
+                          </div>
+                        )}
+                        {candidate.requested_another_time_comment && requestedAnotherTimeLabel !== `Пожелание: ${candidate.requested_another_time_comment}` && (
+                          <div className="incoming-row__detail-card incoming-row__detail-card--requested">
+                            <strong>Комментарий кандидата</strong>
+                            <span>{candidate.requested_another_time_comment}</span>
+                          </div>
+                        )}
+                        {candidate.last_message && (
+                          <div className="incoming-row__detail-card">
+                            <strong>Последнее сообщение</strong>
+                            <span>{candidate.last_message}</span>
+                            {candidate.last_message_at && (
+                              <span className="incoming-row__detail-meta">
+                                {new Date(candidate.last_message_at).toLocaleString('ru-RU', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {candidate.availability_note && (
+                          <div className="incoming-row__detail-card">
+                            <strong>Пожелания по времени</strong>
+                            <span>{candidate.availability_note}</span>
+                          </div>
+                        )}
+                        <div className="incoming-row__detail-card incoming-row__detail-card--ai">
+                          <div className="incoming-row__detail-head">
+                            <strong>AI relevance</strong>
+                            <span className={`incoming-row__detail-score incoming-row__detail-score--${aiTone}`}>
+                              {formatAiDetailScore(candidate)}
+                            </span>
+                          </div>
+                          <div className="incoming-row__detail-meta">
+                            <span>{formatAiDetailStateLabel(candidate.ai_relevance_state)}</span>
+                            {formatAiUpdatedAtLabel(candidate.ai_relevance_updated_at) && (
+                              <span>· {formatAiUpdatedAtLabel(candidate.ai_relevance_updated_at)}</span>
+                            )}
+                          </div>
+                          {fullAiReasons.length > 0 && (
+                            <div className="incoming-row__ai-reasons">
+                              {fullAiReasons.map((reason) => (
+                                <span
+                                  key={`expanded-${candidate.id}-${reason.tone}-${reason.label}`}
+                                  className={`incoming-ai__chip incoming-ai__chip--${reason.tone}`}
+                                >
+                                  {reason.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {!fullAiReasons.length && aiSummary && <span>{aiSummary}</span>}
+                          {candidate.ai_risk_hint && <span>{candidate.ai_risk_hint}</span>}
+                        </div>
+                      </div>
                     )}
-                    <div className="incoming-card__actions">
-                      {!isAdmin && (
-                        <button
-                          className="ui-btn ui-btn--primary ui-btn--sm"
-                          type="button"
-                          onClick={() => openIncomingSchedule(candidate)}
-                        >
-                          Предложить время
-                        </button>
-                      )}
-                      <button
-                        className="ui-btn ui-btn--ghost ui-btn--sm"
-                        type="button"
-                        data-testid="incoming-card-test-preview"
-                        onClick={() => openTestPreview(candidate)}
-                      >
-                        Тест
-                      </button>
-                      <Link
-                        className="ui-btn ui-btn--ghost ui-btn--sm"
-                        to="/app/candidates/$candidateId"
-                        params={{ candidateId: String(candidate.id) }}
-                      >
-                        Профиль
-                      </Link>
-                      <button
-                        className="ui-btn ui-btn--danger ui-btn--sm"
-                        type="button"
-                        onClick={() => rejectCandidate.mutate(candidate.id)}
-                      >
-                        Отказать
-                      </button>
-                    </div>
-                  </div>
+                  </article>
                 )
-                      })}
-                    </div>
-                  )}
-                </section>
-              ))}
+              })}
             </div>
           )}
         </section>

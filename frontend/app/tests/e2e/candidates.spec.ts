@@ -16,13 +16,12 @@ test.describe("/app/candidates", () => {
     await expect(table.or(empty).first()).toBeVisible({ timeout: 10000 });
   });
 
-  test("has view mode switcher", async ({ page }) => {
+  test("renders filter bar without view switcher", async ({ page }) => {
     await page.goto("/app/candidates");
     await page.waitForLoadState("domcontentloaded");
 
-    const viewSwitcher = page.getByTestId("candidates-view-switcher");
-    await expect(viewSwitcher).toBeVisible({ timeout: 10000 });
-    await expect(viewSwitcher.getByRole("button").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("candidates-filter-bar")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("candidates-view-switcher")).toHaveCount(0);
   });
 
   test("can navigate to new candidate form", async ({ page }) => {

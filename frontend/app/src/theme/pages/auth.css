@@ -15,22 +15,53 @@
   width: 100%;
   max-width: 400px;
   padding: var(--space-2xl);
-  text-align: center;
+  display: grid;
+  gap: var(--space-lg);
+  text-align: left;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .login-card .title {
   font-size: var(--text-2xl);
-  margin-bottom: var(--space-sm);
+  margin: 0;
 }
 
 .login-card .subtitle {
-  margin-bottom: var(--space-xl);
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .login-form {
   display: grid;
   gap: var(--space-md);
   text-align: left;
+}
+
+.login-form__summary {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border-default));
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-surface));
+  color: var(--text-primary);
+}
+
+.login-form__summary strong {
+  font-size: var(--text-sm);
+}
+
+.login-form__summary span {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.login-form__secondary {
+  display: flex;
+  justify-content: center;
 }
 
 /* Details/Summary styling */
@@ -397,4 +428,3 @@ details > *:not(summary) {
   color: var(--muted);
   margin-top: var(--space-xs);
 }
-

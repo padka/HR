@@ -70,6 +70,16 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
             method="POST",
             target_status="interview_declined",
         ),
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
     ],
 
     CandidateStatus.WAITING_SLOT: [
@@ -90,6 +100,16 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
             method="POST",
             target_status="interview_declined",
         ),
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
     ],
 
     CandidateStatus.STALLED_WAITING_SLOT: [
@@ -109,6 +129,16 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
             confirmation="Отклонить кандидата?",
             method="POST",
             target_status="interview_declined",
+        ),
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
         ),
     ],
 
@@ -201,9 +231,11 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
         CandidateAction(
             key="resend_test2",
             label="Повторно отправить Тест 2",
-            url_pattern="/candidates/{id}/resend-test2",
+            url_pattern="/api/candidates/{id}/actions/resend_test2",
             icon="📤",
             variant="secondary",
+            method="POST",
+            target_status="test2_sent",
         ),
     ],
 
@@ -294,21 +326,77 @@ STATUS_ACTIONS: Dict[CandidateStatus, List[CandidateAction]] = {
     ],
 
     # Terminal states - no actions
-    CandidateStatus.INTERVIEW_DECLINED: [],
-    CandidateStatus.TEST2_FAILED: [],
-    CandidateStatus.INTRO_DAY_DECLINED_INVITATION: [],
-    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF: [],
+    CandidateStatus.INTERVIEW_DECLINED: [
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
+    ],
+    CandidateStatus.TEST2_FAILED: [
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
+    ],
+    CandidateStatus.INTRO_DAY_DECLINED_INVITATION: [
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
+    ],
+    CandidateStatus.INTRO_DAY_DECLINED_DAY_OF: [
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
+    ],
     CandidateStatus.HIRED: [],
-    CandidateStatus.NOT_HIRED: [],
+    CandidateStatus.NOT_HIRED: [
+        CandidateAction(
+            key="restart_test1",
+            label="Перезапустить Тест 1",
+            url_pattern="/api/candidates/{id}/actions/restart_test1",
+            icon="🔄",
+            variant="secondary",
+            confirmation="Сбросить текущий результат Теста 1 и открыть кандидату повторное прохождение?",
+            method="POST",
+            target_status="invited",
+        ),
+    ],
 }
 
 UNIVERSAL_TEST2_ACTION = CandidateAction(
     key="resend_test2",
     label="Отправить Тест 2",
-    url_pattern="/candidates/{id}/resend-test2",
+    url_pattern="/api/candidates/{id}/actions/resend_test2",
     icon="📤",
     variant="secondary",
-    method="GET",
+    method="POST",
+    target_status="test2_sent",
 )
 
 

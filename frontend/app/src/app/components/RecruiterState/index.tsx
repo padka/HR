@@ -62,6 +62,21 @@ type CandidateIdentityBlockProps = {
   className?: string
 }
 
+type RecruiterSemanticSignalTone = 'muted' | 'info' | 'warning' | 'danger' | 'success'
+
+type RecruiterSemanticSignal = {
+  label: string
+  value?: ReactNode | null
+  tone?: RecruiterSemanticSignalTone
+}
+
+type RecruiterSemanticStripProps = {
+  title?: string | null
+  signals: RecruiterSemanticSignal[]
+  compact?: boolean
+  className?: string
+}
+
 function joinClassNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
 }
@@ -254,6 +269,43 @@ export function RecruiterRiskBanner({
   )
 }
 
+export function RecruiterSemanticStrip({
+  title,
+  signals,
+  compact = false,
+  className,
+}: RecruiterSemanticStripProps) {
+  const visibleSignals = signals.filter((signal) => signal.value != null && signal.value !== '')
+  if (visibleSignals.length === 0) return null
+
+  return (
+    <div
+      className={joinClassNames(
+        'recruiter-semantic-strip',
+        compact && 'recruiter-semantic-strip--compact',
+        className,
+      )}
+      data-testid="recruiter-semantic-strip"
+    >
+      {title ? <div className="recruiter-semantic-strip__title">{title}</div> : null}
+      <div className="recruiter-semantic-strip__list">
+        {visibleSignals.map((signal) => (
+          <div
+            key={`${signal.label}-${String(signal.value)}`}
+            className={joinClassNames(
+              'recruiter-semantic-strip__signal',
+              `recruiter-semantic-strip__signal--${toneClass(signal.tone)}`,
+            )}
+          >
+            <span className="recruiter-semantic-strip__signal-label">{signal.label}</span>
+            <span className="recruiter-semantic-strip__signal-value">{signal.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function RecruiterLifecycleStrip({
   stageLabel,
   recordState,
@@ -321,3 +373,4 @@ export const OneLineStateContext = RecruiterStateContext
 export const RiskOrBlockBanner = RecruiterRiskBanner
 export const LifecycleStrip = RecruiterLifecycleStrip
 export const LockedOrGuidedColumnHeader = RecruiterKanbanColumnHeader
+export const WorkItemSemanticStrip = RecruiterSemanticStrip

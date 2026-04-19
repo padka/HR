@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
+from backend.domain.candidates.status import CandidateStatus
 from sqlalchemy import inspect
 from sqlalchemy.orm.attributes import NO_VALUE, set_committed_value
-
-from backend.domain.candidates.status import CandidateStatus
 
 if TYPE_CHECKING:
     from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
@@ -15,6 +14,7 @@ if TYPE_CHECKING:
     from backend.domain.models import Recruiter, Slot
 
 LIFECYCLE_ACTIVE = "active"
+LIFECYCLE_DRAFT = "draft"
 LIFECYCLE_ARCHIVED = "archived"
 
 FINAL_OUTCOME_ATTACHED = "attached"
@@ -29,6 +29,7 @@ FINAL_OUTCOME_LABELS = {
 
 LIFECYCLE_LABELS = {
     LIFECYCLE_ACTIVE: "Активен",
+    LIFECYCLE_DRAFT: "Черновик intake",
     LIFECYCLE_ARCHIVED: "Архив",
 }
 

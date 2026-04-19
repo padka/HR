@@ -8,6 +8,7 @@ _SERVICE_EXPORTS = {
     "create_or_update_user",
     "save_test_result",
     "get_user_by_telegram_id",
+    "get_user_by_max_user_id",
     "get_user_by_candidate_id",
     "get_all_active_users",
     "get_test_statistics",
@@ -21,12 +22,16 @@ _SERVICE_EXPORTS = {
     "get_latest_candidate_invite_token",
     "ensure_candidate_invite_token",
     "bind_telegram_to_candidate",
+    "bind_max_to_candidate",
     "update_chat_message_status",
     "log_inbound_chat_message",
+    "log_inbound_max_message",
     "log_outbound_chat_message",
+    "log_outbound_max_message",
     "list_chat_messages",
     "set_conversation_mode",
     "is_chat_mode_active",
+    "mark_manual_slot_requested_for_candidate",
 }
 
 __all__ = sorted(_SERVICE_EXPORTS)

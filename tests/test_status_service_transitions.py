@@ -11,6 +11,7 @@ from backend.domain.candidates.status_service import (
     set_status_hired,
     set_status_interview_confirmed,
     set_status_interview_scheduled,
+    set_status_slot_pending,
     set_status_test2_completed,
     set_status_test2_sent,
     update_candidate_status,
@@ -84,6 +85,17 @@ async def test_forward_pipeline_allows_test2_completion():
         user = result.scalar_one()
     assert user.candidate_status == CandidateStatus.TEST2_COMPLETED
     assert user.workflow_status == WorkflowStatus.ONBOARDING_DAY_SCHEDULED.value
+
+
+@pytest.mark.asyncio
+async def test_slot_pending_can_move_directly_to_interview_confirmed():
+    tg_id = await _create_user(CandidateStatus.TEST1_COMPLETED)
+    assert await set_status_slot_pending(tg_id)
+    assert await set_status_interview_confirmed(tg_id)
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == tg_id))
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.INTERVIEW_CONFIRMED
 
 
 @pytest.mark.asyncio

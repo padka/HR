@@ -11,7 +11,8 @@ const budgets = {
   jsAssetMax: Number(process.env.BUNDLE_JS_ASSET_MAX_BYTES || 550 * kb),
   cssAssetMax: Number(process.env.BUNDLE_CSS_ASSET_MAX_BYTES || 220 * kb),
   totalJsMax: Number(process.env.BUNDLE_TOTAL_JS_MAX_BYTES || 1700 * kb),
-  totalCssMax: Number(process.env.BUNDLE_TOTAL_CSS_MAX_BYTES || 320 * kb),
+  // Shared state grammar plus dashboard/slots/recruiters rollout and bounded TG/MAX semantic alignment increased the realistic CSS baseline.
+  totalCssMax: Number(process.env.BUNDLE_TOTAL_CSS_MAX_BYTES || 360 * kb),
 }
 
 function formatBytes(bytes) {

@@ -8,11 +8,13 @@ MetricStatus = Literal["met", "not_met", "unknown"]
 Recommendation = Literal["od_recommended", "clarify_before_od", "not_recommended"]
 
 OBJECTIVE_WEIGHTS: dict[str, int] = {
-    "experience_relevance": 25,
+    "experience_relevance": 20,
     "field_format_readiness": 20,
-    "communication_clarity": 20,
-    "motivation_alignment": 15,
-    "od_readiness_test_gate": 20,
+    "start_readiness": 20,
+    "answer_quality": 15,
+    "age_alignment": 5,
+    "motivation_alignment": 10,
+    "od_readiness_test_gate": 10,
 }
 
 SEMANTIC_WEIGHTS: dict[str, int] = {
@@ -25,7 +27,9 @@ SEMANTIC_WEIGHTS: dict[str, int] = {
 OBJECTIVE_LABELS: dict[str, str] = {
     "experience_relevance": "Релевантный опыт",
     "field_format_readiness": "Готовность к полевому формату",
-    "communication_clarity": "Понятная коммуникация",
+    "start_readiness": "Скорость выхода",
+    "answer_quality": "Качество ответов",
+    "age_alignment": "Возрастной профиль",
     "motivation_alignment": "Мотивация к роли",
     "od_readiness_test_gate": "Готовность к ОД по тесту",
 }
@@ -98,7 +102,7 @@ _COMMUNICATION_BLOCKER_NEEDLES = (
     "сильное заикание",
     "неразборчивая речь",
 )
-_START_DELAY_NEEDLES = (
+_START_BLOCKER_NEEDLES = (
     "нужна отработка",
     "надо отработать",
     "смогу выйти через месяц",
@@ -106,6 +110,30 @@ _START_DELAY_NEEDLES = (
     "смогу выйти через две недели",
     "не могу выйти быстро",
     "не готов начать в ближайшие дни",
+)
+_START_IMMEDIATE_NEEDLES = (
+    "сразу",
+    "хоть завтра",
+    "уже готов",
+    "уже готова",
+    "готов завтра",
+    "готова завтра",
+    "могу завтра",
+    "могу выйти сразу",
+    "готов приступить",
+    "готова приступить",
+    "сегодня",
+    "завтра",
+)
+_START_SOON_NEEDLES = (
+    "через 1 день",
+    "через 2 дня",
+    "через 3 дня",
+    "в ближайшие 2 дня",
+    "в ближайшие 3 дня",
+    "в течение 2 дней",
+    "в течение 3 дней",
+    "пару дней",
 )
 _MOTIVATION_POSITIVE_NEEDLES = (
     "доход",
@@ -126,6 +154,18 @@ _ROLE_INTEREST_NEEDLES = (
     "бизнес",
     "продаж",
     "встреч",
+)
+_ANSWER_USEFUL_NEEDLES = (
+    "клиент",
+    "продаж",
+    "переговор",
+    "встреч",
+    "предприним",
+    "опыт",
+    "готов",
+    "график",
+    "доход",
+    "обуч",
 )
 
 
@@ -183,6 +223,81 @@ def _classify_field_format_answer(raw: Any) -> tuple[MetricStatus | None, str | 
     return None, None
 
 
+def _extract_delay_days(text: str) -> int | None:
+    if not text:
+        return None
+    if _has_any(text, _START_IMMEDIATE_NEEDLES):
+        return 0
+    if _has_any(text, _START_SOON_NEEDLES):
+        return 2
+    range_match = re.search(r"(\d+)\s*[-–]\s*(\d+)\s*(дн|дня|дней)", text)
+    if range_match:
+        return max(int(range_match.group(1)), int(range_match.group(2)))
+    day_match = re.search(r"(\d+)\s*(дн|дня|дней|сут)", text)
+    if day_match:
+        return int(day_match.group(1))
+    week_match = re.search(r"(\d+)\s*(недел|недели|неделю)", text)
+    if week_match:
+        return int(week_match.group(1)) * 7
+    month_match = re.search(r"(\d+)\s*(месяц|месяца|месяцев)", text)
+    if month_match:
+        return int(month_match.group(1)) * 30
+    if "пару дней" in text:
+        return 2
+    if "несколько дней" in text:
+        return 3
+    return None
+
+
+def _classify_start_readiness_answer(raw: Any) -> tuple[MetricStatus | None, int | None, str | None, bool]:
+    text = _normalize_text(raw)
+    if not text:
+        return None, None, None, False
+    delay_days = _extract_delay_days(text)
+    weight = OBJECTIVE_WEIGHTS["start_readiness"]
+    if _has_any(text, _START_BLOCKER_NEEDLES) or (delay_days is not None and delay_days >= 14):
+        return "not_met", 0, "Кандидат не сможет быстро выйти или пройти обучение в ближайшем цикле.", True
+    if delay_days == 0:
+        return "met", weight, "Кандидат готов выйти сразу или на следующий день.", False
+    if delay_days is not None and delay_days <= 2:
+        return "met", weight - 3, "Кандидат готов выйти в течение 1–2 дней.", False
+    if delay_days is not None and delay_days <= 5:
+        return "unknown", int(round(weight * 0.5)), "Кандидат сможет выйти, но не сразу; срок старта чуть растянут.", False
+    if delay_days is not None:
+        return "unknown", int(round(weight * 0.2)), "Старт возможен, но с заметной задержкой относительно приоритетного окна.", False
+    return "unknown", int(round(weight * 0.4)), "Срок выхода описан нечетко, нужен короткий follow-up.", False
+
+
+def _score_answer_quality(
+    *,
+    answer_text: str,
+    candidate_profile: dict[str, Any],
+    signals: dict[str, Any],
+) -> tuple[MetricStatus, int | None, str]:
+    if _has_any(answer_text, _COMMUNICATION_BLOCKER_NEEDLES):
+        return "not_met", 0, "В ответах есть прямой сигнал о речевом или языковом барьере."
+
+    sections = [
+        str(candidate_profile.get("work_experience") or "").strip(),
+        str(candidate_profile.get("motivation") or "").strip(),
+        str(candidate_profile.get("skills") or "").strip(),
+        str(candidate_profile.get("expectations") or "").strip(),
+    ]
+    filled_sections = [item for item in sections if item]
+    word_count = len(re.findall(r"\w+", answer_text, flags=re.UNICODE))
+    useful_hits = sum(1 for needle in _ANSWER_USEFUL_NEEDLES if needle in answer_text)
+    written_expression = bool(((signals.get("communication") or {}).get("written_expression")))
+    weight = OBJECTIVE_WEIGHTS["answer_quality"]
+
+    if not answer_text:
+        return "unknown", None, "Нет развернутых ответов для оценки качества рассуждения."
+    if word_count >= 35 and len(filled_sections) >= 2 and (useful_hits >= 2 or written_expression):
+        return "met", weight, "Свободные ответы развернутые и содержат полезные детали для оценки кандидата."
+    if word_count >= 16 and len(filled_sections) >= 2:
+        return "unknown", int(round(weight * 0.6)), "Ответы содержательные, но не везде хватает конкретики."
+    return "unknown", int(round(weight * 0.3)), "Ответы короткие; по рассуждению и конкретике нужен follow-up."
+
+
 def _append_missing(target: list[dict[str, str]], key: str, label: str, evidence: str) -> None:
     if any(item.get("key") == key for item in target):
         return
@@ -200,12 +315,14 @@ def _objective_metric(
     *,
     status: MetricStatus,
     evidence: str,
+    score: int | None = None,
 ) -> dict[str, Any]:
     weight = OBJECTIVE_WEIGHTS[key]
+    safe_score = _points_for_status(status, weight) if score is None else max(0, min(weight, int(score)))
     return {
         "key": key,
         "label": OBJECTIVE_LABELS[key],
-        "score": _points_for_status(status, weight),
+        "score": safe_score,
         "weight": weight,
         "status": status,
         "evidence": evidence,
@@ -322,9 +439,10 @@ def build_candidate_scorecard(
     )
     combined_text = _normalize_text(resume_text, answer_text)
     signals = candidate_profile.get("signals") or {}
-    people_signal = (signals.get("people_interaction") or {}).get("level")
-    communication_signal = (signals.get("communication") or {}).get("level")
     field_format_answer = candidate_profile.get("field_format_readiness")
+    start_readiness_answer = candidate_profile.get("start_readiness")
+    age_years_raw = candidate_profile.get("age_years")
+    age_years = int(age_years_raw) if isinstance(age_years_raw, int) else None
 
     objective_metrics: list[dict[str, Any]] = []
     blockers: list[dict[str, str]] = []
@@ -446,43 +564,119 @@ def build_candidate_scorecard(
             )
         )
 
-    if _has_any(combined_text, _COMMUNICATION_BLOCKER_NEEDLES):
+    start_status, start_score, start_evidence, start_blocker = _classify_start_readiness_answer(start_readiness_answer)
+    if start_blocker:
         _append_blocker(
             blockers,
-            "communication_barrier",
-            "Коммуникационный барьер",
-            "В данных есть указание на языковой/речевой барьер, который может мешать работе с клиентом.",
+            "start_delay",
+            "Невозможность быстро начать",
+            start_evidence or "Кандидат не готов выйти в нужное окно старта.",
         )
-        communication_status: MetricStatus = "not_met"
-        communication_evidence = "Есть прямой сигнал о значимом речевом или языковом барьере."
-    elif communication_signal in {"high", "medium"} or people_signal in {"high", "medium"}:
-        communication_status = "met"
-        communication_evidence = "Ответы и опыт указывают на рабочий уровень коммуникации."
-    elif answer_text:
-        communication_status = "unknown"
-        communication_evidence = "Нужна дополнительная проверка речи и ясности формулировок на звонке."
+    if start_status is None:
         _append_missing(
             missing_data,
-            "communication_clarity",
-            OBJECTIVE_LABELS["communication_clarity"],
-            "Нужно проверить, насколько кандидат чётко формулирует мысли в живом диалоге.",
+            "start_readiness",
+            OBJECTIVE_LABELS["start_readiness"],
+            "Нужно уточнить, когда кандидат реально сможет выйти на обучение.",
+        )
+        objective_metrics.append(
+            _objective_metric(
+                "start_readiness",
+                status="unknown",
+                score=int(round(OBJECTIVE_WEIGHTS["start_readiness"] * 0.4)),
+                evidence="Нет явного ответа о готовности начать в ближайшие дни.",
+            )
         )
     else:
-        communication_status = "unknown"
-        communication_evidence = "Недостаточно данных для оценки коммуникации."
+        objective_metrics.append(
+            _objective_metric(
+                "start_readiness",
+                status=start_status,
+                score=start_score,
+                evidence=f"{start_evidence} Ответ: {str(start_readiness_answer).strip()}",
+            )
+        )
+
+    answer_quality_status, answer_quality_score, answer_quality_evidence = _score_answer_quality(
+        answer_text=answer_text,
+        candidate_profile=candidate_profile,
+        signals=signals,
+    )
+    if answer_quality_score is None:
         _append_missing(
             missing_data,
-            "communication_clarity",
-            OBJECTIVE_LABELS["communication_clarity"],
-            "Нет свободных ответов для оценки ясности коммуникации.",
+            "answer_quality",
+            OBJECTIVE_LABELS["answer_quality"],
+            "Нет свободных ответов, по которым можно понять ход мысли кандидата.",
         )
-    objective_metrics.append(
-        _objective_metric(
-            "communication_clarity",
-            status=communication_status,
-            evidence=communication_evidence,
+        objective_metrics.append(
+            _objective_metric(
+                "answer_quality",
+                status="unknown",
+                score=int(round(OBJECTIVE_WEIGHTS["answer_quality"] * 0.4)),
+                evidence=answer_quality_evidence,
+            )
         )
-    )
+    else:
+        if answer_quality_status == "not_met":
+            _append_blocker(
+                blockers,
+                "communication_barrier",
+                "Коммуникационный барьер",
+                answer_quality_evidence,
+            )
+        elif answer_quality_status == "unknown" and answer_text:
+            _append_missing(
+                missing_data,
+                "answer_quality",
+                OBJECTIVE_LABELS["answer_quality"],
+                "Нужно добрать 1-2 развернутых ответа, чтобы понять глубину рассуждения кандидата.",
+            )
+        objective_metrics.append(
+            _objective_metric(
+                "answer_quality",
+                status=answer_quality_status,
+                score=answer_quality_score,
+                evidence=answer_quality_evidence,
+            )
+        )
+
+    if age_years is None:
+        _append_missing(
+            missing_data,
+            "age_alignment",
+            OBJECTIVE_LABELS["age_alignment"],
+            "Возраст не указан, поэтому возрастной сигнал нейтральный.",
+        )
+        objective_metrics.append(
+            _objective_metric(
+                "age_alignment",
+                status="unknown",
+                score=2,
+                evidence="Возраст не указан, возрастной сигнал не подтвержден.",
+            )
+        )
+    else:
+        if 23 <= age_years <= 35:
+            age_status: MetricStatus = "met"
+            age_score = OBJECTIVE_WEIGHTS["age_alignment"]
+            age_evidence = f"Возраст {age_years} попадает в приоритетный диапазон."
+        elif 21 <= age_years <= 37:
+            age_status = "unknown"
+            age_score = 3
+            age_evidence = f"Возраст {age_years} близок к приоритетному диапазону, сигнал умеренно положительный."
+        else:
+            age_status = "unknown"
+            age_score = 1
+            age_evidence = f"Возраст {age_years} вне приоритетного диапазона, но это не стоп-фактор."
+        objective_metrics.append(
+            _objective_metric(
+                "age_alignment",
+                status=age_status,
+                score=age_score,
+                evidence=age_evidence,
+            )
+        )
 
     if _has_any(combined_text, _MOTIVATION_POSITIVE_NEEDLES):
         motivation_status: MetricStatus = "met"
@@ -544,14 +738,6 @@ def build_candidate_scorecard(
             evidence=od_evidence,
         )
     )
-
-    if _has_any(combined_text, _START_DELAY_NEEDLES):
-        _append_blocker(
-            blockers,
-            "start_delay",
-            "Невозможность быстро начать",
-            "В данных есть подтверждение, что кандидат не сможет выйти или начать обучение в требуемый срок.",
-        )
 
     llm_metrics_raw = ((llm_scorecard or {}).get("metrics") or []) if isinstance(llm_scorecard, dict) else []
     semantic_metrics_by_key = {

@@ -155,7 +155,7 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 
 async def notify_recruiters_manual_availability(
     *,
-    candidate_tg_id: int,
+    candidate_tg_id: Optional[int],
     candidate_name: str,
     city_name: str,
     city_id: int,
@@ -163,6 +163,8 @@ async def notify_recruiters_manual_availability(
     availability_note: str,
     candidate_db_id: Optional[int] = None,
     responsible_recruiter_id: Optional[int] = None,
+    source_channel: str = "telegram",
+    candidate_external_id: Optional[str] = None,
 ) -> bool:
     """Notify recruiters that a candidate provided/updated manual availability.
 
@@ -221,7 +223,11 @@ async def notify_recruiters_manual_availability(
         lines.append(f"🗓 {escape_html(str(availability_window))}")
     if availability_note:
         lines.append(f"💬 {escape_html(str(availability_note))}")
-    lines.append(f"TG: <code>{candidate_tg_id}</code>")
+    channel_label = str(source_channel or "telegram").strip().upper()
+    if candidate_external_id:
+        lines.append(f"{escape_html(channel_label)}: <code>{escape_html(str(candidate_external_id))}</code>")
+    elif candidate_tg_id is not None:
+        lines.append(f"TG: <code>{candidate_tg_id}</code>")
     message = "\n".join(lines)
 
     # Build inline keyboard with action buttons and CRM deep link
@@ -242,12 +248,13 @@ async def notify_recruiters_manual_availability(
 
         sent = False
         report_paths: List[Path] = []
-        try:
-            db_user = await candidate_services.get_user_by_telegram_id(candidate_tg_id)
-            if db_user is not None:
-                report_paths = _candidate_report_paths(db_user)
-        except Exception:
-            report_paths = []
+        if candidate_tg_id is not None:
+            try:
+                db_user = await candidate_services.get_user_by_telegram_id(candidate_tg_id)
+                if db_user is not None:
+                    report_paths = _candidate_report_paths(db_user)
+            except Exception:
+                report_paths = []
 
         if report_paths and hasattr(bot, "send_document"):
             for path in report_paths[:1]:  # send the most useful one (Test 1) to avoid spam

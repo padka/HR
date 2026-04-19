@@ -99,7 +99,9 @@ test.describe('Critical User Flows', () => {
     } else {
       expect(scrollState.scrollTop).toBe(0)
     }
-    await expect(drawer.getByText('Телефон')).toBeVisible()
+    await expect(drawer.getByRole('heading', { name: 'Заметки по кандидату', exact: true })).toBeVisible()
+    await expect(drawer.getByTestId('candidate-quick-notes')).toBeVisible()
+    await expect(drawer.getByText('HeadHunter')).toBeVisible()
   })
 
   test('messenger keeps composer pinned and sends a message', async ({ page, request }) => {
@@ -217,6 +219,8 @@ test.describe('Critical User Flows Mobile', () => {
 
     await testsTab.click()
     await expect(page.getByTestId('candidate-tests-section')).toBeVisible({ timeout: 10000 })
+    await page.locator('.modal-overlay').getByRole('button', { name: 'Закрыть', exact: true }).click()
+    await expect(page.locator('.modal-overlay')).toHaveCount(0)
 
     await chatTab.click()
     await expect(page.getByTestId('candidate-chat-drawer')).toBeVisible({ timeout: 10000 })

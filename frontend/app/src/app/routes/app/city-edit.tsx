@@ -905,7 +905,7 @@ export function CityEditPage() {
                       </button>
                     </div>
                     <div className="text-muted text-xs">
-                      Список экспертов для города. Используется в «Детализации» при выборе города.
+                      Список экспертов для города. Используется в отчётных и операционных сценариях.
                     </div>
                     {expertsItems.length === 0 && <div className="text-muted text-sm">Эксперты не добавлены</div>}
                     <div style={{ display: 'grid', gap: 8 }}>

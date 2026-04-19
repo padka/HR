@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CandidateDetail } from '@/api/services/candidates'
+import type { CandidateDetail, TestSection } from '@/api/services/candidates'
+import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import { formatDateTime, formatSecondsToMinutes, formatTzOffset, getTomorrowDate } from '@/shared/utils/formatters'
 import { browserTimeZone, buildSlotTimePreview } from '@/app/lib/timezonePreview'
-import { useCandidateActions, useCitiesOptions } from './candidate-detail.api'
-import type { City, IntroDayTemplateContext, ReportPreviewState, TestAttemptPreview } from './candidate-detail.types'
+import { useCandidateActions, useCandidateHh, useCitiesOptions } from './candidate-detail.api'
+import type {
+  City,
+  IntroDayTemplateContext,
+  ReportPreviewState,
+  TestAttemptPreview,
+} from './candidate-detail.types'
 import { renderIntroDayTemplate } from './candidate-detail.utils'
-import { TestScoreBar } from './CandidateTests'
+import { CandidateTests, TestScoreBar } from './CandidateTests'
 
 type CandidateModalsProps = {
   candidateId: number
@@ -14,13 +20,20 @@ type CandidateModalsProps = {
   scheduleSlotOpen: boolean
   scheduleIntroDayOpen: boolean
   rejectState: { actionKey: string; title?: string } | null
+  testsOpen: boolean
+  testSections: TestSection[]
+  hhProfileOpen: boolean
   reportPreview: ReportPreviewState | null
   attemptPreview: TestAttemptPreview | null
   onCloseScheduleSlot: () => void
   onCloseScheduleIntroDay: () => void
   onCloseReject: () => void
+  onCloseTests: () => void
+  onCloseHhProfile: () => void
   onCloseReportPreview: () => void
   onCloseAttemptPreview: () => void
+  onOpenReportPreview: (title: string, url: string) => void
+  onOpenAttemptPreview: (testTitle: string, attempt: TestAttemptPreview['attempt']) => void
   onDetailChanged: (message?: string) => void
 }
 
@@ -187,6 +200,126 @@ function TestAttemptModal({ testTitle, attempt, onClose }: NonNullable<Candidate
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
+function TestsModal({
+  testSections,
+  onClose,
+  onOpenReportPreview,
+  onOpenAttemptPreview,
+}: {
+  testSections: TestSection[]
+  onClose: () => void
+  onOpenReportPreview: (title: string, url: string) => void
+  onOpenAttemptPreview: (testTitle: string, attempt: TestAttemptPreview['attempt']) => void
+}) {
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(event) => event.target === event.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal cd-modal cd-modal--wide">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Тесты кандидата</h2>
+              <p className="modal__subtitle">Все попытки, баллы и подробные отчёты в одном окне.</p>
+            </div>
+            <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+          </div>
+          <div className="modal__body">
+            <CandidateTests
+              embedded
+              testSections={testSections}
+              onOpenReportPreview={onOpenReportPreview}
+              onOpenAttemptPreview={onOpenAttemptPreview}
+            />
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  )
+}
+
+function HhResumeModal({
+  candidateId,
+  candidate,
+  onClose,
+}: {
+  candidateId: number
+  candidate?: CandidateDetail | null
+  onClose: () => void
+}) {
+  const hhSummaryQuery = useCandidateHh(candidateId, true)
+  const hhSummary = hhSummaryQuery.data
+  const resumeUrl = hhSummary?.resume?.url || candidate?.hh_profile_url || null
+  const vacancyTitle = hhSummary?.vacancy?.title || '—'
+  const resumeTitle = hhSummary?.resume?.title || hhSummary?.resume?.id || 'Резюме не найдено'
+  const negotiationState = hhSummary?.negotiation?.employer_state || '—'
+
+  return (
+    <ModalPortal>
+      <div className="modal-overlay" onClick={(event) => event.target === event.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <div className="glass glass--elevated modal cd-modal cd-modal--wide">
+          <div className="modal__header">
+            <div>
+              <h2 className="modal__title">Резюме HeadHunter</h2>
+              <p className="modal__subtitle">Быстрый просмотр профиля кандидата внутри RecruitSmart.</p>
+            </div>
+            <div className="report-preview__actions">
+              {resumeUrl ? (
+                <a href={resumeUrl} className="ui-btn ui-btn--ghost" target="_blank" rel="noopener">
+                  Открыть в HH
+                </a>
+              ) : null}
+              <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>
+            </div>
+          </div>
+          <div className="modal__body cd-hh-modal">
+            {hhSummaryQuery.isPending ? (
+              <p className="subtitle">Загрузка резюме HH...</p>
+            ) : hhSummaryQuery.isError ? (
+              <ApiErrorBanner
+                title="Не удалось загрузить данные HH"
+                error={hhSummaryQuery.error}
+                onRetry={() => hhSummaryQuery.refetch()}
+              />
+            ) : (
+              <>
+                <div className="cd-hh-modal__summary">
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Резюме</div>
+                    <div className="cd-hh-card__value">{resumeTitle}</div>
+                  </div>
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Вакансия</div>
+                    <div className="cd-hh-card__value">{vacancyTitle}</div>
+                  </div>
+                  <div className="cd-hh-card">
+                    <div className="cd-hh-card__label">Статус переговоров</div>
+                    <div className="cd-hh-card__value">{negotiationState}</div>
+                  </div>
+                </div>
+                {resumeUrl ? (
+                  <div className="report-preview__frame cd-hh-modal__frame">
+                    <iframe
+                      className="cd-hh-modal__iframe"
+                      title="HeadHunter resume preview"
+                      src={resumeUrl}
+                    />
+                  </div>
+                ) : (
+                  <div className="ui-alert ui-alert--info">
+                    У резюме нет прямой ссылки для предпросмотра внутри системы.
+                  </div>
+                )}
+                <p className="subtitle">
+                  Если HH запрещает встраивание, используйте кнопку «Открыть в HH».
+                </p>
+              </>
             )}
           </div>
         </div>
@@ -545,13 +678,20 @@ export function CandidateModals({
   scheduleSlotOpen,
   scheduleIntroDayOpen,
   rejectState,
+  testsOpen,
+  testSections,
+  hhProfileOpen,
   reportPreview,
   attemptPreview,
   onCloseScheduleSlot,
   onCloseScheduleIntroDay,
   onCloseReject,
+  onCloseTests,
+  onCloseHhProfile,
   onCloseReportPreview,
   onCloseAttemptPreview,
+  onOpenReportPreview,
+  onOpenAttemptPreview,
   onDetailChanged,
 }: CandidateModalsProps) {
   return (
@@ -585,6 +725,23 @@ export function CandidateModals({
           title={rejectState.title}
           onClose={onCloseReject}
           onSuccess={() => onDetailChanged()}
+        />
+      )}
+
+      {testsOpen && (
+        <TestsModal
+          testSections={testSections}
+          onClose={onCloseTests}
+          onOpenReportPreview={onOpenReportPreview}
+          onOpenAttemptPreview={onOpenAttemptPreview}
+        />
+      )}
+
+      {hhProfileOpen && (
+        <HhResumeModal
+          candidateId={candidateId}
+          candidate={candidate}
+          onClose={onCloseHhProfile}
         />
       )}
 

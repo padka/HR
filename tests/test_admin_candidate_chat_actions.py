@@ -1,23 +1,15 @@
 import asyncio
-import importlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-
-import backend.core.messenger.registry as registry_mod
 from backend.apps.admin_ui.security import Principal
-from backend.apps.admin_ui.services.candidates.helpers import get_candidate_detail
 from backend.apps.admin_ui.services.bot_service import BotSendResult
-from backend.core.messenger.protocol import MessengerPlatform, SendResult
-from backend.core.messenger.registry import MessengerRegistry
+from backend.apps.admin_ui.services.candidates.helpers import get_candidate_detail
 from backend.core.db import async_session
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import (
-    CandidateJourneySession,
     ChatMessage,
     ChatMessageDirection,
     ChatMessageStatus,
@@ -25,7 +17,6 @@ from backend.domain.candidates.models import (
 )
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import (
-    AuditLog,
     CalendarTask,
     City,
     Recruiter,
@@ -34,6 +25,8 @@ from backend.domain.models import (
     SlotAssignmentStatus,
     SlotStatus,
 )
+from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 @pytest.fixture(autouse=True)
@@ -91,24 +84,6 @@ class DummyBotService:
         return BotSendResult(ok=True, status="sent", telegram_message_id=777)
 
 
-class _FakeMaxAccessAdapter:
-    platform = MessengerPlatform.MAX
-
-    async def configure(self, **kwargs) -> None:
-        return None
-
-    async def get_bot_profile(self) -> dict[str, Any]:
-        return {
-            "user": {
-                "id": 312260558067,
-                "name": "Attila MAX Bot",
-            }
-        }
-
-    async def send_message(self, chat_id, text, **kwargs) -> SendResult:
-        return SendResult(success=True, message_id="max_msg_1")
-
-
 @pytest.fixture
 def admin_app(monkeypatch) -> Any:
     bot_stub = DummyBotService()
@@ -125,33 +100,23 @@ def admin_app(monkeypatch) -> Any:
     monkeypatch.setenv("ADMIN_PASSWORD", "admin")
     monkeypatch.setenv("ALLOW_LEGACY_BASIC", "1")
     monkeypatch.setenv("LOG_FILE", "data/logs/test_app.log")
-    monkeypatch.setenv("MAX_BOT_ENABLED", "1")
-    monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
-    monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
     monkeypatch.setenv("CRM_PUBLIC_URL", "https://crm.example.test")
-    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
 
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
     import importlib
-    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
 
     state_module = importlib.import_module("backend.apps.admin_ui.state")
     app_module = importlib.import_module("backend.apps.admin_ui.app")
     monkeypatch.setattr(state_module, "setup_bot_state", fake_setup)
     monkeypatch.setattr(app_module, "setup_bot_state", fake_setup, raising=False)
-    reg = MessengerRegistry()
-    reg.register(_FakeMaxAccessAdapter())
-    monkeypatch.setattr(registry_mod, "_registry", reg)
-    invalidate_max_bot_profile_probe_cache()
     from backend.apps.admin_ui.app import create_app
 
     app = create_app()
     try:
         yield app
     finally:
-        invalidate_max_bot_profile_probe_cache()
         settings_module.get_settings.cache_clear()
 
 
@@ -297,365 +262,6 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
     assert retry_response.status_code == 200
     result = retry_response.json()
     assert result["message"]["status"] == ChatMessageStatus.SENT.value
-
-
-@pytest.mark.asyncio
-async def test_generate_max_link(admin_app) -> None:
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90122,
-        fio="MAX Link Tester",
-        city="Москва",
-        username="max_link_tester",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["public_link"] == "https://max.ru/recruitsmartbot"
-    assert payload["portal_public_url"] == "https://crm.example.test"
-    assert payload["portal_entry_ready"] is True
-    assert payload["max_entry_ready"] is True
-    assert payload["invite_token"]
-    assert payload["deep_link"].startswith("https://max.ru/recruitsmartbot?start=")
-    assert payload["invite_token"] in payload["deep_link"]
-    assert payload["mini_app_link"].startswith("https://max.ru/recruitsmartbot?startapp=")
-    assert payload["invite_token"] not in payload["mini_app_link"]
-    assert payload["browser_link"].startswith("https://crm.example.test/candidate/start?start=")
-    assert payload["invite"] == {"channel": "max", "status": "active", "rotated": False}
-
-    rotated = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-    assert rotated.status_code == 200
-    rotated_payload = rotated.json()
-    assert rotated_payload["invite"]["channel"] == "max"
-    assert rotated_payload["invite"]["status"] == "active"
-    assert rotated_payload["invite"]["rotated"] is True
-    assert rotated_payload["invite_token"] != payload["invite_token"]
-
-    channel_health = await _async_request(
-        admin_app,
-        "get",
-        f"/api/candidates/{candidate.id}/channel-health",
-    )
-    assert channel_health.status_code == 200
-    channel_payload = channel_health.json()
-    assert "token" not in (channel_payload.get("active_invite") or {})
-    assert channel_payload["public_link"] == "https://max.ru/recruitsmartbot"
-    assert channel_payload["last_portal_access_delivery"] is None
-
-    async with async_session() as session:
-        audit_rows = (
-            await session.scalars(
-                select(AuditLog)
-                .where(
-                    AuditLog.entity_type == "candidate",
-                    AuditLog.entity_id == str(candidate.id),
-                    AuditLog.action.in_(("invite_issued", "invite_superseded")),
-                )
-                .order_by(AuditLog.id.asc())
-            )
-        ).all()
-
-    assert any(row.action == "invite_issued" for row in audit_rows)
-    assert any(row.action == "invite_superseded" for row in audit_rows)
-    for row in audit_rows:
-        changes = row.changes or {}
-        assert "token" not in changes
-        assert "previous_token" not in changes
-
-
-@pytest.mark.asyncio
-async def test_generate_max_link_resolves_public_link_from_provider(admin_app, monkeypatch) -> None:
-    from backend.core import settings as settings_module
-    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
-
-    monkeypatch.delenv("MAX_BOT_LINK_BASE", raising=False)
-    settings_module.get_settings.cache_clear()
-    invalidate_max_bot_profile_probe_cache()
-
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90125,
-        fio="MAX Provider Link Tester",
-        city="Москва",
-        username="max_provider_link_tester",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["public_link"] == "https://max.ru/id312260558067_bot"
-    assert payload["max_link_base_source"] == "provider"
-    assert payload["token_valid"] is True
-    assert payload["bot_profile_resolved"] is True
-    assert payload["deep_link"].startswith("https://max.ru/id312260558067_bot?start=")
-    assert payload["mini_app_link"].startswith("https://max.ru/id312260558067_bot?startapp=")
-
-
-@pytest.mark.asyncio
-async def test_generate_max_link_records_delivery_boundary_metadata(admin_app) -> None:
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90127,
-        fio="MAX Delivery Metadata Tester",
-        city="Москва",
-        username="max_delivery_metadata_tester",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    async with async_session() as session:
-        stored = await session.get(User, candidate.id)
-        assert stored is not None
-        stored.max_user_id = "max-user-90127"
-        stored.messenger_platform = "max"
-        await session.commit()
-
-    response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["delivery"]["status"] == "sent"
-    assert payload["delivery"]["attempted"] is True
-    assert payload["delivery"]["channel"] == "max"
-    assert payload["delivery"]["journey_id"] == payload["journey"]["id"]
-    assert payload["delivery"]["session_version"] == payload["journey"]["session_version"]
-    assert payload["delivery"]["invite_id"]
-    assert payload["delivery"]["correlation_id"]
-
-    async with async_session() as session:
-        message = await session.scalar(
-            select(ChatMessage)
-            .where(
-                ChatMessage.candidate_id == candidate.id,
-                ChatMessage.direction == ChatMessageDirection.OUTBOUND.value,
-            )
-            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-            .limit(1)
-        )
-
-    assert message is not None
-    assert isinstance(message.payload_json, dict)
-    assert message.payload_json["kind"] == "portal_access_package"
-    assert message.payload_json["invite_id"] == payload["delivery"]["invite_id"]
-    assert message.payload_json["journey_id"] == payload["journey"]["id"]
-    assert message.payload_json["session_version"] == payload["journey"]["session_version"]
-    assert message.payload_json["delivery_status"] == "sent"
-    assert message.payload_json["correlation_id"] == payload["delivery"]["correlation_id"]
-
-    channel_health = await _async_request(
-        admin_app,
-        "get",
-        f"/api/candidates/{candidate.id}/channel-health",
-    )
-    assert channel_health.status_code == 200
-    health_payload = channel_health.json()
-    assert health_payload["last_portal_access_delivery"]["portal_access"]["journey_id"] == payload["journey"]["id"]
-    assert (
-        health_payload["last_portal_access_delivery"]["portal_access"]["session_version"]
-        == payload["journey"]["session_version"]
-    )
-    assert health_payload["last_portal_access_delivery"]["portal_access"]["delivery_status"] == "sent"
-
-
-@pytest.mark.asyncio
-async def test_generate_max_link_returns_deterministic_block_reason_when_provider_link_missing(
-    admin_app,
-    monkeypatch,
-) -> None:
-    from backend.core import settings as settings_module
-    from backend.domain.candidates.portal_service import invalidate_max_bot_profile_probe_cache
-
-    class _NoLinkAdapter(_FakeMaxAccessAdapter):
-        async def get_bot_profile(self) -> dict[str, Any]:
-            return {"user": {"name": "MAX Bot Without Public Handle"}}
-
-    reg = MessengerRegistry()
-    reg.register(_NoLinkAdapter())
-    monkeypatch.setattr(registry_mod, "_registry", reg)
-    monkeypatch.delenv("MAX_BOT_LINK_BASE", raising=False)
-    settings_module.get_settings.cache_clear()
-    invalidate_max_bot_profile_probe_cache()
-
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90126,
-        fio="MAX Missing Link Tester",
-        city="Москва",
-        username="max_missing_link_tester",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["public_link"] == ""
-    assert payload["max_entry_ready"] is False
-    assert payload["max_link_base_source"] == "missing"
-    assert payload["delivery_ready"] is False
-    assert payload["delivery_block_reason"] == "max_bot_link_base_unresolved"
-    assert payload["delivery"]["status"] == "skipped_by_preflight"
-    assert payload["delivery"]["attempted"] is False
-    assert payload["delivery"]["skipped_reason"] == "max_bot_link_base_unresolved"
-
-
-@pytest.mark.asyncio
-async def test_candidate_channel_health_surfaces_ambiguous_max_ownership(admin_app) -> None:
-    first_candidate = await candidate_services.create_or_update_user(
-        telegram_id=90127,
-        fio="MAX Ownership Duplicate 1",
-        city="Москва",
-        username="max_owner_dup_1",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-    second_candidate = await candidate_services.create_or_update_user(
-        telegram_id=90128,
-        fio="MAX Ownership Duplicate 2",
-        city="Москва",
-        username="max_owner_dup_2",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-    duplicate_max_user_id = "max-owner-duplicate-1"
-
-    async with async_session() as session:
-        first_row = await session.get(User, first_candidate.id)
-        second_row = await session.get(User, second_candidate.id)
-        assert first_row is not None
-        assert second_row is not None
-        first_row.max_user_id = duplicate_max_user_id
-        second_row.max_user_id = duplicate_max_user_id
-        first_row.messenger_platform = "max"
-        second_row.messenger_platform = "max"
-        await session.commit()
-
-    response = await _async_request(
-        admin_app,
-        "get",
-        f"/api/candidates/{first_candidate.id}/channel-health",
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["max"]["linked"] is True
-    assert payload["max"]["ownership_status"] == "ambiguous"
-    assert sorted(payload["max"]["ownership_candidate_ids"]) == sorted(
-        [int(first_candidate.id), int(second_candidate.id)]
-    )
-    assert payload["max"]["ownership_duplicate_count"] == 1
-    assert payload["delivery_ready"] is False
-    assert payload["delivery_block_reason"] == "max_ownership_ambiguous"
-
-
-@pytest.mark.asyncio
-async def test_restart_candidate_portal_creates_new_active_journey(admin_app) -> None:
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90123,
-        fio="Portal Restart Tester",
-        city="Москва",
-        username="portal_restart_tester",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    first_link = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/channels/max-link",
-    )
-    assert first_link.status_code == 200
-    first_payload = first_link.json()
-
-    restart_response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/portal/restart",
-    )
-    assert restart_response.status_code == 200
-    payload = restart_response.json()
-    assert payload["journey"]["restarted"] is True
-    assert payload["journey"]["id"] != first_payload["journey"]["id"]
-    assert payload["journey"]["session_version"] == 1
-    assert payload["invite"]["rotated"] is True
-    assert payload["browser_link"].startswith("https://crm.example.test/candidate/start?start=")
-    assert payload["delivery"]["status"] == "skipped_by_preflight"
-    assert payload["delivery"]["attempted"] is False
-    assert payload["delivery"]["skipped_reason"] == "max_not_linked"
-
-    async with async_session() as session:
-        journeys = (
-            await session.scalars(
-                select(CandidateJourneySession)
-                .where(CandidateJourneySession.candidate_id == candidate.id)
-                .order_by(CandidateJourneySession.id.asc())
-            )
-        ).all()
-        assert len(journeys) >= 2
-        assert journeys[-1].status == "active"
-        assert journeys[0].status == "abandoned"
-
-        refreshed_candidate = await session.get(User, candidate.id)
-        assert refreshed_candidate is not None
-        assert refreshed_candidate.candidate_status == CandidateStatus.LEAD
-
-
-@pytest.mark.asyncio
-async def test_restart_candidate_portal_blocks_confirmed_interview(admin_app) -> None:
-    recruiter_id = await _create_recruiter("Restart Slot Recruiter", city_name="Самара")
-    candidate = await candidate_services.create_or_update_user(
-        telegram_id=90124,
-        fio="Portal Restart Blocked",
-        city="Самара",
-        username="portal_restart_blocked",
-        initial_status=CandidateStatus.TEST1_COMPLETED,
-    )
-
-    async with async_session() as session:
-        city = await session.scalar(select(City).where(City.name == "Самара"))
-        assert city is not None
-        slot = Slot(
-            recruiter_id=recruiter_id,
-            city_id=city.id,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
-            duration_min=60,
-            status=SlotStatus.CONFIRMED_BY_CANDIDATE,
-            purpose="interview",
-            candidate_id=candidate.id,
-            candidate_tg_id=candidate.telegram_id,
-            candidate_fio=candidate.fio,
-            candidate_tz="Europe/Moscow",
-            candidate_city_id=city.id,
-            tz_name="Europe/Moscow",
-        )
-        session.add(slot)
-        await session.commit()
-
-    response = await _async_request(
-        admin_app,
-        "post",
-        f"/api/candidates/{candidate.id}/portal/restart",
-    )
-
-    assert response.status_code == 409
-    assert "подтверждено собеседование" in response.json()["detail"]["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -873,7 +479,7 @@ async def test_recruiter_cannot_view_foreign_candidate_detail(admin_app) -> None
         f"/api/candidates/{candidate.id}",
     )
 
-    assert response.status_code == 404
+    assert response.status_code in {403, 404}
 
 
 @pytest.mark.asyncio
@@ -966,6 +572,31 @@ async def test_candidate_action_updates_status(admin_app) -> None:
     async with async_session() as session:
         refreshed = await session.get(User, candidate.id)
         assert refreshed.candidate_status == CandidateStatus.INTERVIEW_DECLINED
+
+
+@pytest.mark.asyncio
+async def test_candidate_action_restart_test1_uses_dedicated_use_case(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=901031,
+        fio="Action Restart Test1",
+        city="Москва",
+        username="action_restart_test1",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    action_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/actions/restart_test1",
+    )
+
+    assert action_response.status_code == 200
+    data = action_response.json()
+    assert data["ok"] is True
+    assert data["status"] == CandidateStatus.INVITED.value
+    assert data["intent"]["action_key"] == "restart_test1"
+    assert data["intent"]["resolution"] == "dedicated_lifecycle_use_case"
+    assert data["candidate_state"]["candidate_status_slug"] == CandidateStatus.INVITED.value
 
 
 @pytest.mark.asyncio

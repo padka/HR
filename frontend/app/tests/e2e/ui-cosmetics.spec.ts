@@ -60,7 +60,7 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await page.waitForTimeout(500);
 
     await expect(page.getByTestId("incoming-filter-bar")).toBeVisible({ timeout: 10000 });
-    const incomingCard = page.getByTestId("incoming-card").first();
+    const incomingCard = page.getByTestId("incoming-row").first();
     const incomingEmpty = page.getByTestId("incoming-empty-state");
     await expect(incomingCard.or(incomingEmpty).first()).toBeVisible({ timeout: 10000 });
 
@@ -140,15 +140,18 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await expect(page.locator(".background-scene")).toHaveCount(0);
   });
 
-  test("candidate detail opens interview script panel from insights drawer", async ({ page }) => {
+  test("candidate detail insights drawer stays notes-first", async ({ page }) => {
     await openFirstCandidateDetail(page);
     await expect(page.getByTestId("candidate-actions")).toBeVisible({ timeout: 10000 });
 
     await page.getByTestId("candidate-insights-trigger").click();
-    await expect(page.getByTestId("candidate-insights-drawer")).toBeVisible({ timeout: 10000 });
-
-    await page.getByRole("button", { name: "Скрипт интервью" }).click();
-    await expect(page.getByTestId("interview-script-panel")).toBeVisible({ timeout: 10000 });
+    const drawer = page.getByTestId("candidate-insights-drawer");
+    await expect(drawer).toBeVisible({ timeout: 10000 });
+    await expect(drawer.getByRole("heading", { name: "Заметки по кандидату", exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(drawer.getByTestId("candidate-quick-notes")).toBeVisible({ timeout: 10000 });
+    await expect(drawer.getByText("HeadHunter")).toBeVisible({ timeout: 10000 });
+    await expect(drawer.getByText("AI-помощник")).toHaveCount(0);
+    await expect(drawer.getByText("Карточка кандидата")).toHaveCount(0);
   });
 
   test("candidate detail drawer stays scrollable and pipeline cards keep compact states", async ({ page }) => {
@@ -175,7 +178,8 @@ test.describe("ui cosmetics smoke (desktop)", () => {
     await expect(page.getByText("Краткий операционный контекст для рекрутера.")).toHaveCount(0);
     await expect(page.getByText("Единая лента значимых событий по кандидату.")).toHaveCount(0);
     await expect(page.getByText("Локальные заметки рекрутера по кандидату.")).toHaveCount(0);
-    await expect(drawer.getByText("Телефон")).toBeVisible();
+    await expect(drawer.getByText("HeadHunter")).toBeVisible();
+    await expect(drawer.getByTestId("candidate-quick-notes")).toBeVisible();
 
     const pipeline = page.getByTestId("candidate-pipeline");
     await expect(pipeline.locator(".candidate-pipeline-stage")).toHaveCount(6);

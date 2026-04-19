@@ -7,6 +7,7 @@ import {
   RecruiterRiskBanner,
   RecruiterStateContext,
 } from '@/app/components/RecruiterState'
+import { EmptyState, PageLoader } from '@/app/components/AppStates'
 import {
   fetchCurrentKpis,
   fetchDashboardIncoming,
@@ -54,6 +55,17 @@ type IncomingFilter = 'all' | 'new' | 'stalled' | 'pending' | 'requested_other_t
 const DASHBOARD_INCOMING_FILTERS_KEY = 'dashboardIncomingFilters:v1'
 const INCOMING_FETCH_LIMIT = 100
 const INCOMING_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
+const INCOMING_FILTER_LABELS: Record<Exclude<IncomingFilter, 'all'>, string> = {
+  new: 'NEW (24ч)',
+  stalled: 'Застряли >24ч',
+  pending: 'На согласовании',
+  requested_other_time: 'Запросили другое время',
+}
+const INCOMING_SORT_LABELS: Record<'waiting' | 'recent' | 'name', string> = {
+  waiting: 'Сначала кто дольше ждёт',
+  recent: 'Последние сообщения',
+  name: 'По имени',
+}
 
 const LeaderboardItemCard = memo(function LeaderboardItemCard({
   item,
@@ -485,6 +497,66 @@ export function DashboardPage() {
     }),
     [triageLanes],
   )
+  const selectedIncomingCityLabel = useMemo(
+    () => incomingCityOptions.find((city) => String(city.id) === incomingCityFilter)?.name || null,
+    [incomingCityFilter, incomingCityOptions],
+  )
+  const incomingActiveFilters = useMemo(() => {
+    const items: Array<{ key: string; label: string; clear: () => void }> = []
+
+    if (incomingSearch.trim()) {
+      items.push({
+        key: 'search',
+        label: `Поиск: ${incomingSearch.trim()}`,
+        clear: () => setIncomingSearch(''),
+      })
+    }
+
+    if (incomingCityFilter !== 'all') {
+      items.push({
+        key: 'city',
+        label: `Город: ${selectedIncomingCityLabel || incomingCityFilter}`,
+        clear: () => setIncomingCityFilter('all'),
+      })
+    }
+
+    if (incomingFilter !== 'all') {
+      items.push({
+        key: 'filter',
+        label: `Статус: ${INCOMING_FILTER_LABELS[incomingFilter]}`,
+        clear: () => setIncomingFilter('all'),
+      })
+    }
+
+    if (incomingSort !== 'waiting') {
+      items.push({
+        key: 'sort',
+        label: `Сортировка: ${INCOMING_SORT_LABELS[incomingSort]}`,
+        clear: () => setIncomingSort('waiting'),
+      })
+    }
+
+    if (incomingPageSize !== 50) {
+      items.push({
+        key: 'page-size',
+        label: `По ${incomingPageSize}`,
+        clear: () => setIncomingPageSize(50),
+      })
+    }
+
+    return items
+  }, [
+    incomingCityFilter,
+    incomingFilter,
+    incomingPageSize,
+    incomingSearch,
+    incomingSort,
+    selectedIncomingCityLabel,
+  ])
+  const triageActiveFilters = useMemo(
+    () => incomingActiveFilters.filter((item) => item.key !== 'page-size'),
+    [incomingActiveFilters],
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined' || isAdmin) return
@@ -579,7 +651,12 @@ export function DashboardPage() {
     return (
       <RoleGuard allow={['recruiter', 'admin']}>
         <div className="page app-page app-page--ops">
-          <p className="subtitle">Загрузка…</p>
+          <PageLoader
+            label="Загрузка дашборда"
+            description="Проверяем профиль и подготавливаем рабочую сводку."
+            compact
+            cardClassName="dashboard-state-card"
+          />
         </div>
       </RoleGuard>
     )
@@ -600,7 +677,7 @@ export function DashboardPage() {
         <header className="glass glass--elevated panel dashboard-header dashboard-hero ui-hero--quiet app-page__hero">
           <div className="dashboard-hero__content">
             <h1 className="title title--lg">Дашборд</h1>
-            <p className="subtitle">Метрики отдела, KPI и эффективность рекрутеров.</p>
+            <p className="subtitle">Сначала разберите очередь кандидатов, затем сверяйте загрузку команды и KPI.</p>
           </div>
           <div className="dashboard-filters">
             <div className="filter-group">
@@ -664,19 +741,31 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="toolbar toolbar--compact">
-            <span className="cd-chip">Сейчас: {triageSummary.action_now}</span>
-            <span className="cd-chip">В ожидании: {triageSummary.waiting}</span>
-            <span className="cd-chip">Требуют разбора: {triageSummary.review}</span>
-            <span className="cd-chip">Всего в потоке: {incomingItems.length}</span>
+          <div className="dashboard-queue-strip" data-testid="dashboard-triage-summary">
+            <article className="dashboard-queue-card">
+              <span className="dashboard-queue-card__label">Всего в потоке</span>
+              <strong className="dashboard-queue-card__value">{incomingItems.length}</strong>
+              <span className="dashboard-queue-card__meta">из {incomingBaseItems.length} кандидатов</span>
+            </article>
+            <article className="dashboard-queue-card dashboard-queue-card--accent">
+              <span className="dashboard-queue-card__label">Требуют действия</span>
+              <strong className="dashboard-queue-card__value">{triageSummary.action_now}</strong>
+              <span className="dashboard-queue-card__meta">следующий шаг уже определён</span>
+            </article>
+            <article className="dashboard-queue-card dashboard-queue-card--warning">
+              <span className="dashboard-queue-card__label">В ожидании</span>
+              <strong className="dashboard-queue-card__value">{triageSummary.waiting}</strong>
+              <span className="dashboard-queue-card__meta">кандидат или внешний контур должны ответить</span>
+            </article>
+            <article className="dashboard-queue-card dashboard-queue-card--danger">
+              <span className="dashboard-queue-card__label">Требуют разбора</span>
+              <strong className="dashboard-queue-card__value">{triageSummary.review}</strong>
+              <span className="dashboard-queue-card__meta">рассинхрон или конфликт состояния</span>
+            </article>
           </div>
 
-          <div className="incoming-toolbar dashboard-incoming__toolbar ui-filter app-page__toolbar">
-            <div className="incoming-toolbar__stats">
-              <strong>{incomingItems.length}</strong>
-              <span className="text-muted text-sm">из {incomingBaseItems.length} кандидатов</span>
-            </div>
-            <div className="incoming-toolbar__controls">
+          <div className="incoming-toolbar dashboard-incoming__toolbar dashboard-incoming__toolbar--triage ui-filter app-page__toolbar" data-testid="dashboard-triage-filter-bar">
+            <div className="incoming-toolbar__controls incoming-toolbar__controls--primary">
               <input
                 className="incoming-toolbar__search"
                 type="search"
@@ -707,24 +796,73 @@ export function DashboardPage() {
                 <option value="stalled">Застряли {'>'}24ч</option>
                 <option value="new">NEW (24ч)</option>
               </select>
+            </div>
+            <div className="incoming-toolbar__controls incoming-toolbar__controls--actions">
+              <button
+                className="ui-btn ui-btn--ghost ui-btn--sm"
+                type="button"
+                onClick={() => setShowIncomingAdvancedFilters((prev) => !prev)}
+              >
+                {showIncomingAdvancedFilters ? 'Скрыть доп.' : 'Ещё фильтры'}
+              </button>
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={resetIncomingFilters}>
+                Сбросить фильтры
+              </button>
+            </div>
+          </div>
+
+          {triageActiveFilters.length > 0 && (
+            <div className="dashboard-filter-strip" data-testid="dashboard-triage-active-filters">
+              {triageActiveFilters.map((filter) => (
+                <button key={filter.key} type="button" className="dashboard-filter-pill" onClick={filter.clear}>
+                  <span>{filter.label}</span>
+                  <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className={`ui-filter-bar__advanced ui-filter ${showIncomingAdvancedFilters ? 'ui-filter-bar__advanced--open' : ''}`}>
+            <label className="filter-field">
+              <span>Сортировка</span>
               <select
                 className="incoming-toolbar__select"
                 value={incomingSort}
                 onChange={(e) => setIncomingSort(e.target.value as 'waiting' | 'recent' | 'name')}
               >
-                <option value="waiting">Сначала кто дольше ждет</option>
+                <option value="waiting">Сначала кто дольше ждёт</option>
                 <option value="recent">Последние сообщения</option>
                 <option value="name">По имени</option>
               </select>
-            </div>
+            </label>
           </div>
 
-          {incomingQuery.isLoading && <p className="subtitle">Загрузка очереди…</p>}
+          {incomingQuery.isLoading && (
+            <PageLoader
+              label="Загрузка triage-очереди"
+              description="Подготавливаем поток кандидатов и следующий шаг по каждому из них."
+              compact
+              cardClassName="dashboard-state-card"
+            />
+          )}
           {incomingQuery.isError && <ApiErrorBanner error={incomingQuery.error} title="Ошибка загрузки triage-очереди" />}
           {incomingQuery.data && triageItems.length === 0 && (
-            <div className="dashboard-incoming__empty-state">
-              <p className="subtitle">По текущим фильтрам кандидатов нет.</p>
-            </div>
+            <EmptyState
+              title="По текущим фильтрам triage-поток пуст"
+              description="Сбросьте фильтры или откройте полную консоль, если нужен более широкий контекст."
+              compact
+              cardClassName="dashboard-state-card"
+              actions={(
+                <>
+                  <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={resetIncomingFilters}>
+                    Сбросить фильтры
+                  </button>
+                  <Link className="ui-btn ui-btn--secondary ui-btn--sm" to="/app/incoming">
+                    Полная triage-консоль
+                  </Link>
+                </>
+              )}
+            />
           )}
           {incomingQuery.data && triageItems.length > 0 && (
             <div className="incoming-lanes" data-testid="dashboard-triage-lanes">
@@ -900,12 +1038,22 @@ export function DashboardPage() {
               </button>
             </div>
 
-            {incomingQuery.isLoading && <p className="subtitle">Загрузка…</p>}
+            {incomingQuery.isLoading && (
+              <PageLoader
+                label="Загрузка входящих"
+                description="Собираем кандидатов, которым нужен следующий шаг или ответ."
+                compact
+                cardClassName="dashboard-state-card"
+              />
+            )}
             {incomingQuery.isError && <ApiErrorBanner error={incomingQuery.error} title="Ошибка загрузки входящих" />}
             {incomingQuery.data && incomingBaseItems.length === 0 && (
-              <div className="dashboard-incoming__empty-state">
-                <p className="subtitle">Сейчас в очереди нет кандидатов.</p>
-              </div>
+              <EmptyState
+                title="Во входящих пока пусто"
+                description="Новых кандидатов и запросов на обработку сейчас нет."
+                compact
+                cardClassName="dashboard-state-card"
+              />
             )}
             {incomingQuery.data && incomingBaseItems.length > 0 && (
               <>
@@ -959,6 +1107,16 @@ export function DashboardPage() {
                     </button>
                   </div>
                 </div>
+                {incomingActiveFilters.length > 0 && (
+                  <div className="dashboard-filter-strip" data-testid="dashboard-incoming-active-filters">
+                    {incomingActiveFilters.map((filter) => (
+                      <button key={filter.key} type="button" className="dashboard-filter-pill" onClick={filter.clear}>
+                        <span>{filter.label}</span>
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className={`ui-filter-bar__advanced ui-filter ${showIncomingAdvancedFilters ? 'ui-filter-bar__advanced--open' : ''}`}>
                   <select
                     className="incoming-toolbar__select"
@@ -983,12 +1141,17 @@ export function DashboardPage() {
                 </div>
 
                 {incomingItems.length === 0 ? (
-                  <div className="dashboard-incoming__empty-filters">
-                    <p className="subtitle">По текущим фильтрам кандидатов нет.</p>
-                    <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={resetIncomingFilters}>
-                      Сбросить фильтры
-                    </button>
-                  </div>
+                  <EmptyState
+                    title="По текущим фильтрам кандидатов нет"
+                    description="Попробуйте сбросить фильтры или изменить поиск."
+                    compact
+                    cardClassName="dashboard-state-card"
+                    actions={(
+                      <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={resetIncomingFilters}>
+                        Сбросить фильтры
+                      </button>
+                    )}
+                  />
                 ) : (
                   <>
                     <div className="incoming-list incoming-list--fullscreen">

@@ -10,6 +10,15 @@ from types import SimpleNamespace
 from typing import Dict, Optional
 
 from fastapi import Request
+from sqlalchemy import select
+
+from backend.apps.admin_api.candidate_access.services import mark_max_candidate_test2_ready
+from backend.core.db import async_session
+from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.protocol import InlineButton
+from backend.core.settings import get_settings
+from backend.domain.candidates.models import User
+from backend.domain.candidates.services import log_outbound_max_message
 from backend.domain.repositories import get_city
 
 try:  # pragma: no cover - optional dependency handling
@@ -223,6 +232,8 @@ class BotService:
         *,
         required: Optional[bool] = None,
         slot_id: Optional[int] = None,
+        candidate_public_id: Optional[str] = None,
+        max_user_id: Optional[str] = None,
     ) -> BotSendResult:
         """Launch Test 2 for a candidate."""
 
@@ -245,6 +256,92 @@ class BotService:
                 status="skipped:not_configured",
                 message=self.skip_message,
             )
+
+        normalized_candidate_public_id = str(candidate_public_id or "").strip() or None
+        normalized_max_user_id = str(max_user_id or "").strip() or None
+        if normalized_candidate_public_id and not normalized_max_user_id:
+            async with async_session() as session:
+                candidate = await session.scalar(
+                    select(User).where(User.candidate_id == normalized_candidate_public_id)
+                )
+                if candidate is not None:
+                    normalized_max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
+        if normalized_max_user_id:
+            settings = get_settings()
+            adapter = await ensure_max_adapter(settings=settings)
+            if adapter is None:
+                if must_succeed:
+                    return BotSendResult(
+                        ok=False,
+                        status="skipped:not_configured",
+                        error="MAX адаптер недоступен. Проверьте конфигурацию пилота.",
+                    )
+                return BotSendResult(
+                    ok=True,
+                    status="skipped:not_configured",
+                    message="MAX адаптер недоступен. Отправка Теста 2 пропущена.",
+                )
+
+            async with async_session() as session:
+                async with session.begin():
+                    candidate = await session.scalar(
+                        select(User).where(User.max_user_id == normalized_max_user_id)
+                    )
+                    if candidate is None and normalized_candidate_public_id:
+                        candidate = await session.scalar(
+                            select(User).where(User.candidate_id == normalized_candidate_public_id)
+                        )
+                    if candidate is None:
+                        return BotSendResult(
+                            ok=False,
+                            status="skipped:error",
+                            error="Кандидат MAX не найден.",
+                        )
+                    await mark_max_candidate_test2_ready(
+                        session,
+                        candidate=candidate,
+                        slot_id=slot_id,
+                        candidate_tz=candidate_tz,
+                        candidate_city_id=candidate_city,
+                        candidate_name=candidate_name,
+                        required=must_succeed,
+                    )
+
+            miniapp_url = str(getattr(settings, "max_miniapp_url", "") or "").strip() or None
+            buttons: list[list[InlineButton]] = []
+            if miniapp_url:
+                buttons.append([InlineButton(text="Открыть Тест 2", url=miniapp_url, kind="web_app")])
+            buttons.append([InlineButton(text="Пройти в чате", callback_data="test2:start", kind="callback")])
+            message_text = "Поздравляем! Вы успешно прошли собеседование 🎉\n\nОткройте Тест 2 в mini app или продолжите здесь, в чате MAX."
+            result = await adapter.send_message(
+                normalized_max_user_id,
+                message_text,
+                buttons=buttons,
+            )
+            if not result.success:
+                if must_succeed:
+                    return BotSendResult(
+                        ok=False,
+                        status="skipped:error",
+                        error=result.error or self.failure_message,
+                    )
+                return BotSendResult(
+                    ok=True,
+                    status="skipped:error",
+                    message=result.error or self.failure_message,
+                )
+            await log_outbound_max_message(
+                normalized_max_user_id,
+                text=message_text,
+                payload={
+                    "origin_channel": "max",
+                    "kind": "test2_invite",
+                    "slot_id": slot_id,
+                },
+                provider_message_id=result.message_id,
+                client_request_id=f"max:test2:{normalized_max_user_id}:{slot_id or 'none'}",
+            )
+            return BotSendResult(ok=True, status="sent_test2")
 
         if not BOT_RUNTIME_AVAILABLE or not self.configured:
             logger.warning(

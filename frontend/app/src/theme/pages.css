@@ -125,31 +125,15 @@
 }
 
 .root-auth-panel {
-  min-height: 100vh;
   padding: 24px;
-  display: grid;
-  gap: 16px;
 }
 
-.root-auth-panel__card {
-  padding: 24px;
-  display: grid;
-  gap: 12px;
-  max-width: 680px;
+.root-auth-panel .app-state__card {
+  width: min(100%, 680px);
 }
 
-.root-auth-panel__title {
-  margin: 0;
-}
-
-.root-auth-panel__text {
-  color: var(--muted);
-}
-
-.root-auth-panel__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+.root-auth-panel .app-state__actions {
+  justify-content: flex-start;
 }
 
 .ui-link {
@@ -730,54 +714,6 @@ html[data-ui='liquid-glass-v2'][data-theme='light'] .slots-summary__card {
 .city-reminder__global-note {
   color: var(--fg-muted);
   font-size: 13px;
-}
-
-.copilot-section-title {
-  margin: 0;
-}
-
-.copilot-section-subtitle {
-  margin: 6px 0 0;
-}
-
-.copilot-msg__typing {
-  color: var(--muted);
-  font-style: italic;
-}
-
-.copilot-kb__submit,
-.copilot-kb__upload {
-  margin-top: 8px;
-}
-
-.copilot-kb__hint {
-  margin-top: 8px;
-}
-
-.copilot-kb__readonly-note {
-  margin-top: 12px;
-}
-
-.copilot-modal-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.copilot-toast {
-  top: 20px;
-  right: 20px;
-  bottom: auto;
-}
-
-.copilot-toast__title {
-  font-size: 13px;
-}
-
-.copilot-toast__text {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.2;
 }
 
 .test-builder-graph__header-copy {

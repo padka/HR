@@ -1,11 +1,12 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional, Tuple
-
 import os
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import IntegrityError
 
 os.environ.setdefault("ADMIN_USER", "test-admin")
@@ -14,11 +15,33 @@ os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
 
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services import slots as slot_services
-from backend.apps.admin_ui.services.bot_service import BotSendResult, BotService, configure_bot_service
-from backend.core.settings import get_settings
+from backend.apps.admin_ui.services.bot_service import (
+    BotSendResult,
+    BotService,
+    configure_bot_service,
+)
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
+
+
+def _login(
+    client: TestClient,
+    username: str | None = None,
+    password: str | None = None,
+) -> None:
+    settings = get_settings()
+    response = client.post(
+        "/auth/login",
+        data={
+            "username": username or settings.admin_username or "admin",
+            "password": password or settings.admin_password or "admin",
+            "redirect_to": "/",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in {302, 303}
 
 
 def _force_ready_bot(monkeypatch) -> None:
@@ -33,7 +56,7 @@ def _force_ready_bot(monkeypatch) -> None:
     monkeypatch.setattr("backend.apps.admin_ui.state._build_bot", _fake_build)
 
 
-async def _create_booked_slot() -> Tuple[int, int]:
+async def _create_booked_slot() -> tuple[int, int]:
     async with async_session() as session:
         recruiter = models.Recruiter(name="API", tz="Europe/Moscow", active=True)
         city = models.City(name="API City", tz="Europe/Moscow", active=True)
@@ -46,7 +69,7 @@ async def _create_booked_slot() -> Tuple[int, int]:
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc),
+            start_utc=datetime.now(UTC),
             status=models.SlotStatus.BOOKED,
             candidate_tg_id=7777,
             candidate_fio="API Candidate",
@@ -73,7 +96,7 @@ async def _create_booked_slot_no_telegram() -> int:
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc),
+            start_utc=datetime.now(UTC),
             status=models.SlotStatus.BOOKED,
             candidate_id="cand-001",
             candidate_fio="API Candidate",
@@ -92,7 +115,7 @@ async def _async_request(
     method: str,
     path: str,
     *,
-    before_request: Optional[Callable[[Any], None]] = None,
+    before_request: Callable[[Any], None] | None = None,
     **kwargs,
 ) -> Any:
     if before_request is not None:
@@ -164,15 +187,16 @@ async def clear_state_manager():
 
 @pytest.mark.asyncio
 async def test_slot_outcome_endpoint_uses_state_manager(monkeypatch):
-    from backend.apps.admin_ui.state import BotIntegration
-    from backend.apps.bot.services import StateManager, configure as configure_bot_services
     from backend.apps.admin_ui.services.bot_service import IntegrationSwitch
+    from backend.apps.admin_ui.state import BotIntegration
+    from backend.apps.bot.services import configure as configure_bot_services
 
     slot_id, candidate_id = await _create_booked_slot()
 
     async def fake_setup_bot_state(app):
-        from backend.apps.bot.state_store import build_state_manager
         from unittest.mock import AsyncMock
+
+        from backend.apps.bot.state_store import build_state_manager
 
         state_manager = build_state_manager(redis_url=None, ttl_seconds=604800)
 
@@ -363,8 +387,8 @@ async def test_reschedule_reuses_existing_free_target_slot(admin_slots_app):
         await session.refresh(recruiter)
         await session.refresh(city)
 
-        old_start = datetime(2031, 6, 1, 7, 20, tzinfo=timezone.utc)
-        target_start = datetime(2031, 6, 1, 10, 0, tzinfo=timezone.utc)
+        old_start = datetime(2031, 6, 1, 7, 20, tzinfo=UTC)
+        target_start = datetime(2031, 6, 1, 10, 0, tzinfo=UTC)
 
         current_slot = models.Slot(
             recruiter_id=recruiter.id,
@@ -400,8 +424,8 @@ async def test_reschedule_reuses_existing_free_target_slot(admin_slots_app):
             candidate_tg_id=candidate.telegram_id,
             candidate_tz="Europe/Moscow",
             status=models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
-            offered_at=datetime.now(timezone.utc) - timedelta(hours=1),
-            reschedule_requested_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+            offered_at=datetime.now(UTC) - timedelta(hours=1),
+            reschedule_requested_at=datetime.now(UTC) - timedelta(minutes=30),
         )
         session.add(assignment)
         await session.commit()
@@ -561,7 +585,7 @@ async def test_slot_outcome_success_idempotent(monkeypatch):
     _force_ready_bot(monkeypatch)
     app = create_app()
 
-    calls: Dict[str, int] = {"count": 0}
+    calls: dict[str, int] = {"count": 0}
 
     async def fake_send_test2(*_args, **_kwargs):
         calls["count"] += 1
@@ -593,7 +617,7 @@ async def test_slot_outcome_reject_triggers_rejection(monkeypatch):
     _force_ready_bot(monkeypatch)
     app = create_app()
 
-    calls: Dict[str, int] = {"count": 0}
+    calls: dict[str, int] = {"count": 0}
 
     async def fake_send_rejection(*_args, **_kwargs):
         calls["count"] += 1
@@ -679,7 +703,7 @@ async def test_candidate_slot_can_be_approved_via_admin(monkeypatch, admin_slots
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc) + timedelta(hours=2),
+            start_utc=datetime.now(UTC) + timedelta(hours=2),
             status=models.SlotStatus.PENDING,
             candidate_tg_id=candidate.telegram_id,
             candidate_fio=candidate.fio,
@@ -746,7 +770,7 @@ async def test_candidate_slot_approval_validates_owner(monkeypatch, admin_slots_
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc) + timedelta(hours=3),
+            start_utc=datetime.now(UTC) + timedelta(hours=3),
             status=models.SlotStatus.PENDING,
             candidate_tg_id=other.telegram_id,
             candidate_fio=other.fio,
@@ -795,7 +819,7 @@ async def test_api_slot_book_duplicate_candidate_returns_conflict(admin_slots_ap
         await session.refresh(recruiter)
         await session.refresh(city)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         occupied_slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
@@ -868,7 +892,7 @@ async def test_api_slot_book_maps_integrity_error_to_conflict(admin_slots_app, m
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(hours=4),
+            start_utc=datetime.now(UTC) + timedelta(hours=4),
             duration_min=60,
             status=models.SlotStatus.FREE,
             purpose="interview",
@@ -931,14 +955,16 @@ async def test_slots_create_returns_422_when_city_id_invalid(admin_slots_app) ->
 @pytest.mark.asyncio
 async def test_bot_health_endpoint_reports_status(monkeypatch):
     app = create_app()
-    response = await _async_request(app, "get", "/health/bot")
-    assert response.status_code == 200
-    payload = response.json()
-    assert set(payload.keys()) == {"status", "config", "runtime", "telegram", "state_store", "queues"}
-    assert payload["status"] in {"ok", "disabled", "degraded", "error"}
-    assert payload["runtime"]["mode"] in {"real", "null"}
-    assert "switch_enabled" in payload["runtime"]
-    assert "integration_enabled" in payload["config"]
+    with TestClient(app) as client:
+        _login(client)
+        response = client.get("/health/bot")
+        assert response.status_code == 200
+        payload = response.json()
+        assert set(payload.keys()) == {"status", "config", "runtime", "telegram", "state_store", "queues"}
+        assert payload["status"] in {"ok", "disabled", "degraded", "error"}
+        assert payload["runtime"]["mode"] in {"real", "null"}
+        assert "switch_enabled" in payload["runtime"]
+        assert "integration_enabled" in payload["config"]
 
 
 @pytest.mark.asyncio
@@ -955,7 +981,7 @@ async def test_api_slots_returns_local_time(admin_slots_app) -> None:
         slot = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime(2024, 1, 1, 6, 0, tzinfo=timezone.utc),
+            start_utc=datetime(2024, 1, 1, 6, 0, tzinfo=UTC),
             duration_min=45,
             status=models.SlotStatus.FREE,
             tz_name=city.tz,
@@ -994,14 +1020,14 @@ async def test_api_slots_defaults_to_latest_first(admin_slots_app) -> None:
         early = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
+            start_utc=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
             status=models.SlotStatus.FREE,
             tz_name=city.tz,
         )
         late = models.Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+            start_utc=datetime(2024, 1, 1, 10, 0, tzinfo=UTC),
             status=models.SlotStatus.FREE,
             tz_name=city.tz,
         )
@@ -1035,7 +1061,7 @@ async def test_api_slots_bulk_create_returns_created_count(admin_slots_app) -> N
         recruiter_id = recruiter.id
         city_id = city.id
 
-    target_day = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    target_day = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
     response = await _async_request_with_csrf(
         admin_slots_app,
         "post",

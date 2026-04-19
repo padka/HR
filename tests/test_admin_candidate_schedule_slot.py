@@ -390,6 +390,44 @@ async def test_api_candidates_list_includes_views_for_kanban_and_calendar(admin_
 
 
 @pytest.mark.asyncio
+async def test_api_candidates_list_views_include_channel_linkage(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=79991239991,
+        fio="Candidate MAX Visibility",
+        city="Москва",
+        username="candidate_max_visibility",
+        initial_status=CandidateStatus.LEAD,
+    )
+    assert candidate is not None
+
+    async with async_session() as session:
+        stored = await session.get(User, candidate.id)
+        assert stored is not None
+        stored.max_user_id = "max-user-visibility"
+        stored.messenger_platform = "max"
+        await session.commit()
+
+    response = await _async_request(
+        admin_app,
+        "get",
+        "/api/candidates?page=1&per_page=20&pipeline=interview&search=Candidate%20MAX%20Visibility",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    cards = payload.get("views", {}).get("candidates", [])
+    card = next((item for item in cards if item.get("id") == candidate.id), None)
+    assert card is not None
+    assert card.get("linked_channels", {}).get("telegram") is True
+    assert card.get("linked_channels", {}).get("max") is True
+    assert card.get("preferred_channel") == "max"
+    assert card.get("max", {}).get("linked") is True
+    assert card.get("max_rollout", {}).get("invite_state") == "not_issued"
+    assert card.get("max_rollout", {}).get("launch_state") == "not_launched"
+
+
+@pytest.mark.asyncio
 async def test_api_candidates_list_accepts_canonical_state_filter(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=79991239993,

@@ -179,7 +179,7 @@ def test_notifications_logs_returns_items(notifications_feed_app):
                 candidate_tg_id=123,
                 type="slot_reminder",
                 delivery_status="failed",
-                channel="max",
+                channel="telegram",
                 attempts=2,
                 attempt_no=2,
                 last_error="telegram_timeout",
@@ -207,7 +207,7 @@ def test_notifications_logs_returns_items(notifications_feed_app):
     assert payload["degraded"] is False
     assert payload["latest_id"] >= entry_id
     item = next(item for item in payload["items"] if item["id"] == entry_id)
-    assert item["channel"] == "max"
+    assert item["channel"] == "telegram"
     assert item["attempt_no"] == 2
     assert item["failure_class"] == "transient"
     assert item["provider_message_id"] == "provider-42"
@@ -237,7 +237,7 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
                 type="slot_reminder",
                 status="dead_letter",
                 attempts=2,
-                messenger_channel="max",
+                messenger_channel="telegram",
                 candidate_tg_id=1002,
                 failure_class="misconfiguration",
                 failure_code="invalid_token",
@@ -246,7 +246,7 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
             await session.commit()
 
     _run(_seed())
-    _run(set_messenger_channel_degraded("max", reason="max:invalid_token"))
+    _run(set_messenger_channel_degraded("telegram", reason="telegram:invalid_token"))
 
     try:
         with TestClient(notifications_feed_app) as client:
@@ -259,47 +259,11 @@ def test_system_messenger_health_returns_channel_snapshot(notifications_feed_app
         assert response.status_code == 200
         payload = response.json()
         assert payload["channels"]["telegram"]["queue_depth"] >= 1
-        assert payload["channels"]["max"]["dead_letter_count"] >= 1
-        assert payload["channels"]["max"]["degraded"] is True
-        assert payload["channels"]["max"]["degraded_reason"] == "max:invalid_token"
-        assert "portal" in payload
-        assert "public_ready" in payload["portal"]
-        assert "max_entry_ready" in payload["portal"]
-        assert "token_valid" in payload["portal"]
-        assert "max_link_base_source" in payload["portal"]
-        assert "webhook_public_ready" in payload["portal"]
-        assert "runtime_status" in payload["portal"]
-        assert "dedupe_ready" in payload["portal"]
-        assert "readiness_blockers" in payload["portal"]
-        assert "browser_portal_fallback_allowed" in payload["portal"]
-        assert "shared_access" in payload["portal"]
+        assert payload["channels"]["telegram"]["dead_letter_count"] >= 1
+        assert payload["channels"]["telegram"]["degraded"] is True
+        assert payload["channels"]["telegram"]["degraded_reason"] == "telegram:invalid_token"
     finally:
-        _run(mark_messenger_channel_healthy("max"))
-
-
-def test_system_messenger_health_surfaces_missing_max_webhook_secret(monkeypatch):
-    import asyncio
-
-    from backend.apps.admin_ui.services.messenger_health import (
-        get_messenger_health_snapshot,
-    )
-    from backend.core import settings as settings_module
-
-    settings_module.get_settings.cache_clear()
-    monkeypatch.setenv("ENVIRONMENT", "staging")
-    monkeypatch.setenv("MAX_BOT_ENABLED", "1")
-    monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
-    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
-    monkeypatch.delenv("MAX_WEBHOOK_SECRET", raising=False)
-
-    try:
-        payload = asyncio.run(get_messenger_health_snapshot())
-        assert payload["portal"]["webhook_public_ready"] is False
-        assert payload["portal"]["webhook_error"] == "max_webhook_secret_missing"
-        assert payload["portal"]["subscription_ready"] is False
-        assert payload["portal"]["subscription_error"] == "max_webhook_secret_missing"
-    finally:
-        settings_module.get_settings.cache_clear()
+        _run(mark_messenger_channel_healthy("telegram"))
 
 
 def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
@@ -320,7 +284,7 @@ def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
                 status="dead_letter",
                 attempts=1,
                 last_error="telegram_unauthorized",
-                messenger_channel="max",
+                messenger_channel="telegram",
                 failure_class="misconfiguration",
                 failure_code="invalid_token",
             )
@@ -336,7 +300,7 @@ def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
             return int(failed.id), int(pending.id)
 
     failed_id, pending_id = _run(_seed())
-    _run(set_messenger_channel_degraded("max", reason="max:invalid_token"))
+    _run(set_messenger_channel_degraded("telegram", reason="telegram:invalid_token"))
 
     with TestClient(notifications_feed_app) as client:
         token = _csrf(client)
@@ -370,18 +334,18 @@ def test_notifications_retry_and_cancel_endpoints(notifications_feed_app):
     assert failed_entry.dead_lettered_at is None
     assert (pending_entry.status or "").lower() == "failed"
     health = _run(get_messenger_channel_health())
-    assert health["max"]["status"] == "degraded"
+    assert health["telegram"]["status"] == "degraded"
 
     with TestClient(notifications_feed_app) as client:
         token = _csrf(client)
         recover_resp = client.post(
-            "/api/system/messenger-health/max/recover",
+            "/api/system/messenger-health/telegram/recover",
             auth=("admin", "admin"),
             headers={"Accept": "application/json", "x-csrf-token": token},
         )
 
     assert recover_resp.status_code == 200
-    assert recover_resp.json() == {"ok": True, "channel": "max"}
+    assert recover_resp.json() == {"ok": True, "channel": "telegram"}
     health = _run(get_messenger_channel_health())
-    assert health["max"]["status"] == "healthy"
-    _run(mark_messenger_channel_healthy("max"))
+    assert health["telegram"]["status"] == "healthy"
+    _run(mark_messenger_channel_healthy("telegram"))

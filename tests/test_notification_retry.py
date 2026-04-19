@@ -226,8 +226,8 @@ async def test_schedule_retry_marks_misconfiguration_as_dead_letter(monkeypatch)
         notification_type="slot_reminder",
         booking_id=slot.id,
         candidate_tg_id=slot.candidate_tg_id,
-        payload={"msg": "max"},
-        messenger_channel="max",
+        payload={"msg": "telegram"},
+        messenger_channel="telegram",
     )
     item = await get_outbox_item(entry.id)
     assert item is not None
@@ -258,13 +258,13 @@ async def test_schedule_retry_marks_misconfiguration_as_dead_letter(monkeypatch)
         assert log is not None
         assert log.delivery_status == "dead_letter"
         assert log.failure_class == "misconfiguration"
-        assert log.channel == "max"
+        assert log.channel == "telegram"
 
         channel_health = await get_messenger_channel_health()
-        assert channel_health["max"]["status"] == "degraded"
-        assert channel_health["max"]["reason"] == "max:invalid_token"
+        assert channel_health["telegram"]["status"] == "degraded"
+        assert channel_health["telegram"]["reason"] == "telegram:invalid_token"
     finally:
-        await mark_messenger_channel_healthy("max")
+        await mark_messenger_channel_healthy("telegram")
         await service.shutdown()
         await manager.clear()
         await manager.close()
@@ -986,11 +986,12 @@ async def test_direct_fallback_marks_outbox_sent(monkeypatch):
 
     called = {}
 
-    async def fake_notify(snapshot):
-        called["slot_id"] = snapshot.slot_id
+    async def fake_show_menu(user_id, *, notice=None):
+        called["user_id"] = user_id
+        called["notice"] = notice
         return True
 
-    monkeypatch.setattr("backend.apps.bot.services.notify_reschedule", fake_notify)
+    monkeypatch.setattr("backend.apps.bot.services.base.show_recruiter_menu", fake_show_menu)
 
     try:
         snapshot = await capture_slot_snapshot(slot)
@@ -1002,7 +1003,8 @@ async def test_direct_fallback_marks_outbox_sent(monkeypatch):
 
         assert result.status == "sent"
         assert result.reason == "direct:no-broker"
-        assert called["slot_id"] == slot.id
+        assert called["user_id"] == slot.candidate_tg_id
+        assert called["notice"]
 
         async with async_session() as session:
             entry = await session.scalar(

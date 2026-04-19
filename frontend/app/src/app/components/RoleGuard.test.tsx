@@ -36,7 +36,8 @@ describe('RoleGuard', () => {
       </RoleGuard>
     )
 
-    expect(screen.getByText('Загрузка…')).toBeInTheDocument()
+    expect(screen.getByText('Проверяем доступ')).toBeInTheDocument()
+    expect(screen.getByText('Подготавливаем рабочую среду')).toBeInTheDocument()
   })
 
   it('shows login prompt on 401 errors', () => {
@@ -90,6 +91,7 @@ describe('RoleGuard', () => {
       expect(navigateMock).toHaveBeenCalledWith({ to: '/app/dashboard', replace: true })
     })
 
-    expect(screen.getByText('Раздел недоступен для текущей роли.')).toBeInTheDocument()
+    expect(screen.getByText('Раздел недоступен')).toBeInTheDocument()
+    expect(screen.getByText('Раздел недоступен для текущей роли. Перенаправляем на рабочий экран.')).toBeInTheDocument()
   })
 })

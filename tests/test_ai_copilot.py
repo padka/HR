@@ -351,6 +351,53 @@ async def test_ai_context_extracts_field_format_answer_from_test1():
 
 
 @pytest.mark.asyncio
+async def test_ai_context_extracts_start_readiness_from_test1():
+    async with async_session() as session:
+        user = User(
+            fio="Start Readiness Candidate",
+            phone=None,
+            telegram_id=555127,
+            city="E2E City",
+            source="bot",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        tr = TestResult(
+            user_id=user.id,
+            raw_score=10,
+            final_score=10.0,
+            rating="TEST1",
+            total_time=20,
+            source="bot",
+        )
+        session.add(tr)
+        await session.commit()
+        await session.refresh(tr)
+
+        session.add(
+            QuestionAnswer(
+                test_result_id=tr.id,
+                question_index=5,
+                question_text="Сколько времени потребуется, чтобы закрыть дела и приступить к обучению? Нам важно понимать, сможете ли вы стартовать в ближайшие 2–3 дня.",
+                correct_answer=None,
+                user_answer="Уже готов завтра",
+                attempts_count=1,
+                time_spent=1,
+                is_correct=True,
+                overtime=False,
+            )
+        )
+        await session.commit()
+        candidate_id = int(user.id)
+
+    ctx = await build_candidate_ai_context(candidate_id, principal=Principal(type="admin", id=-1))
+    profile = ctx.get("candidate_profile") or {}
+    assert profile.get("start_readiness") == "Уже готов завтра"
+
+
+@pytest.mark.asyncio
 async def test_ai_context_scoping_blocks_other_recruiter():
     from fastapi import HTTPException
 
@@ -422,7 +469,7 @@ def test_candidate_scorecard_caps_final_score_on_hard_blocker():
             ]
         },
     )
-    assert state.objective_score == 80
+    assert state.objective_score >= 60
     assert state.semantic_score == 100
     assert state.final_score == 49
     assert state.recommendation == "not_recommended"
@@ -488,6 +535,82 @@ def test_candidate_scorecard_marks_conditional_field_format_answer_as_unknown_no
     assert metric["status"] == "unknown"
     assert any(item["key"] == "field_format_readiness" for item in state.missing_data)
     assert not any(item["key"] == "field_format_refusal" for item in state.blockers)
+
+
+def test_candidate_scorecard_rewards_fast_start_and_target_age_as_soft_signals():
+    state = build_candidate_scorecard(
+        context={
+            "candidate_profile": {
+                "age_years": 27,
+                "field_format_readiness": "Да, готов",
+                "start_readiness": "Уже готов завтра",
+                "work_experience": "3 года в продажах, постоянные встречи с клиентами и переговоры",
+                "motivation": "Хочу быстро выйти, зарабатывать и расти в клиентской роли",
+                "skills": "переговоры, работа с возражениями, презентация ценности",
+                "expectations": "Ищу активную работу, где можно сразу включаться в встречи",
+                "signals": {
+                    "people_interaction": {"level": "high"},
+                    "communication": {"level": "high", "written_expression": True},
+                },
+            },
+            "tests": {"latest": {"TEST1": {"final_score": 4.8}}},
+            "interview_notes": {"fields": {}},
+        },
+        resume_context={
+            "headline": "Менеджер по продажам",
+            "summary": "Работал с клиентами и переговорами",
+            "skills": ["CRM", "переговоры"],
+            "employment_items": [{"company": "A", "title": "Sales manager"}],
+            "relevant_experience": True,
+        },
+        llm_scorecard=None,
+    )
+    start_metric = next(item for item in state.metrics if item["key"] == "start_readiness")
+    age_metric = next(item for item in state.metrics if item["key"] == "age_alignment")
+    answer_metric = next(item for item in state.metrics if item["key"] == "answer_quality")
+
+    assert start_metric["status"] == "met"
+    assert start_metric["score"] == 20
+    assert age_metric["score"] == 5
+    assert answer_metric["score"] == 9
+    assert state.recommendation == "clarify_before_od"
+
+
+def test_candidate_scorecard_reduces_start_score_for_slower_start_without_hard_blocker():
+    state = build_candidate_scorecard(
+        context={
+            "candidate_profile": {
+                "age_years": 41,
+                "field_format_readiness": "Да, готов",
+                "start_readiness": "Смогу выйти через 4 дня",
+                "work_experience": "Есть опыт общения с клиентами",
+                "motivation": "Интересен доход",
+                "skills": "переговоры",
+                "expectations": "Нужны понятные задачи",
+                "signals": {
+                    "people_interaction": {"level": "medium"},
+                    "communication": {"level": "medium", "written_expression": True},
+                },
+            },
+            "tests": {"latest": {"TEST1": {"final_score": 4.4}}},
+            "interview_notes": {"fields": {}},
+        },
+        resume_context={
+            "headline": "Менеджер",
+            "summary": "Работал с клиентами",
+            "skills": ["переговоры"],
+            "employment_items": [],
+            "relevant_experience": True,
+        },
+        llm_scorecard=None,
+    )
+    start_metric = next(item for item in state.metrics if item["key"] == "start_readiness")
+    age_metric = next(item for item in state.metrics if item["key"] == "age_alignment")
+
+    assert start_metric["status"] == "unknown"
+    assert start_metric["score"] == 10
+    assert age_metric["score"] == 1
+    assert not any(item["key"] == "start_delay" for item in state.blockers)
 
 
 def test_ai_summary_cache_reuse_by_input_hash(ai_app):

@@ -3,23 +3,23 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select
-
+from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.candidates import (
     _map_to_workflow_status,
-    delete_all_candidates,
-    get_candidate_detail,
-    get_candidate_cohort_comparison,
-    list_candidates,
     api_candidate_detail_payload,
+    delete_all_candidates,
+    get_candidate_cohort_comparison,
+    get_candidate_detail,
+    list_candidates,
     update_candidate_status,
     upsert_candidate,
 )
 from backend.apps.admin_ui.services.reschedule_intents import RescheduleIntent
-from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
 from backend.domain.candidates import (
     models as candidate_models,
+)
+from backend.domain.candidates import (
     services as candidate_services,
 )
 from backend.domain.candidates.status import CandidateStatus
@@ -33,7 +33,10 @@ from backend.domain.models import (
     SlotAssignmentStatus,
     SlotStatus,
 )
-from backend.domain.scheduling_repair_service import repair_slot_assignment_scheduling_conflict
+from backend.domain.scheduling_repair_service import (
+    repair_slot_assignment_scheduling_conflict,
+)
+from sqlalchemy import func, select
 
 
 @pytest.mark.asyncio
@@ -113,6 +116,75 @@ async def test_list_candidates_and_detail():
     assert "timeline" in detail
     assert detail["lifecycle_summary"]["record_state"] == "active"
     assert isinstance(detail["state_reconciliation"]["issues"], list)
+
+
+@pytest.mark.asyncio
+async def test_admin_candidate_views_hide_draft_intake_candidates() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=9990001,
+        fio="MAX Draft Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.LEAD,
+    )
+
+    async with async_session() as session:
+        db_candidate = await session.get(candidate_models.User, int(candidate.id))
+        assert db_candidate is not None
+        db_candidate.lifecycle_state = "draft"
+        await session.commit()
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="MAX Draft Candidate",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        principal=Principal(type="admin", id=-1),
+    )
+
+    assert payload["total"] == 0
+    assert await get_candidate_detail(candidate.id, principal=Principal(type="admin", id=-1)) is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_views_degrade_gracefully_when_max_rollout_runtime_is_unavailable(monkeypatch) -> None:
+    from backend.apps.admin_ui.services.candidates import helpers as candidate_helpers
+
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=9990002,
+        fio="MAX Runtime Fallback",
+        city="Москва",
+        initial_status=CandidateStatus.LEAD,
+    )
+
+    candidate_helpers._candidate_max_rollout_runtime.cache_clear()
+
+    def _raise_import_error():
+        raise ImportError("max rollout runtime is unavailable")
+
+    monkeypatch.setattr(candidate_helpers, "_candidate_max_rollout_runtime", _raise_import_error)
+
+    payload = await list_candidates(
+        page=1,
+        per_page=20,
+        search="MAX Runtime Fallback",
+        city=None,
+        is_active=None,
+        rating=None,
+        has_tests=None,
+        has_messages=None,
+        principal=Principal(type="admin", id=-1),
+    )
+
+    assert payload["total"] == 1
+    assert payload["views"]["candidates"][0]["max_rollout"] is None
+
+    detail = await api_candidate_detail_payload(candidate.id)
+    assert detail is not None
+    assert detail["max_rollout"] is None
 
 
 @pytest.mark.asyncio
@@ -521,7 +593,7 @@ async def test_list_candidates_kanban_totals_match_visible_candidate_cards() -> 
         await session.refresh(city)
         await session.refresh(recruiter)
 
-    waiting_candidate = await candidate_services.create_or_update_user(
+    await candidate_services.create_or_update_user(
         telegram_id=999903,
         fio="Consistency Candidate Waiting",
         city="Consistency City",
@@ -759,6 +831,22 @@ async def test_candidate_detail_does_not_autofix_test2_status_on_read():
         refreshed = await session.get(candidate_models.User, candidate.id)
         assert refreshed is not None
         assert refreshed.candidate_status == CandidateStatus.TEST2_SENT
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_without_test2_data_keeps_not_started_state() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999305,
+        fio="No Test2 Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.LEAD,
+    )
+
+    detail = await get_candidate_detail(candidate.id)
+
+    assert detail is not None
+    assert detail["candidate_status_slug"] == CandidateStatus.LEAD.value
+    assert detail["lifecycle_summary"]["stage"] == "lead"
 
 
 @pytest.mark.asyncio

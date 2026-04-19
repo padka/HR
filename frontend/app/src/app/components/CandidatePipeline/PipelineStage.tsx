@@ -35,7 +35,11 @@ export default function PipelineStage({
         'candidate-pipeline-stage',
         `candidate-pipeline-stage--${stage.status}`,
       )}
+      data-status={stage.status}
       aria-label={ariaLabel}
+      aria-current={stage.status === 'current' ? 'step' : undefined}
+      role="group"
+      tabIndex={0}
     >
       <div className="candidate-pipeline-stage__indicator-row">
         <StageIndicator status={stage.status} reducedMotion={reducedMotion} />

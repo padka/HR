@@ -1,6 +1,7 @@
 import { ReactNode, useEffect } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useProfile } from '@/app/hooks/useProfile'
+import { AuthCheckState, AuthRequiredState, EmptyState, ErrorState } from './AppStates'
 
 type RoleGuardProps = {
   allow: Array<'admin' | 'recruiter'>
@@ -21,10 +22,11 @@ export function RoleGuard({ allow, children }: RoleGuardProps) {
 
   if (isLoading) {
     return (
-      <div className="glass panel empty-state">
-        <h2 className="title">Загрузка…</h2>
-        <p className="subtitle">Проверяем доступ к разделу.</p>
-      </div>
+      <AuthCheckState
+        compact
+        title="Проверяем доступ"
+        description="Проверяем, доступен ли этот раздел для вашей роли."
+      />
     )
   }
 
@@ -32,35 +34,44 @@ export function RoleGuard({ allow, children }: RoleGuardProps) {
     const err = error as Error & { status?: number }
     if (err.status === 401) {
       return (
-        <div className="glass panel empty-state">
-          <h2 className="title">Нужен вход</h2>
-          <p className="subtitle">Сессия не активна. Авторизуйтесь, чтобы продолжить.</p>
-          <div className="action-row" style={{ justifyContent: 'center' }}>
-            <Link to="/app/login" className="glass action-link">Открыть вход</Link>
-            <a href="/auth/login?redirect_to=/app" className="glass action-link">Вход (прямой линк)</a>
-          </div>
-        </div>
+        <AuthRequiredState
+          compact
+          title="Нужен вход"
+          description="Сессия не активна. Авторизуйтесь, чтобы продолжить."
+          actions={(
+            <>
+              <Link to="/app/login" className="ui-btn ui-btn--primary">Открыть вход</Link>
+              <a href="/auth/login?redirect_to=/app" className="ui-btn ui-btn--ghost">Вход (прямой линк)</a>
+            </>
+          )}
+        />
       )
     }
 
     return (
-      <div className="glass panel empty-state">
-        <h2 className="title">Ошибка</h2>
-        <p className="subtitle">Не удалось проверить доступ: {err.message}</p>
-        <button className="ui-btn ui-btn--ghost" onClick={() => refetch()} style={{ marginTop: 12 }}>Повторить</button>
-      </div>
+      <ErrorState
+        compact
+        title="Не удалось проверить доступ"
+        description={`Не удалось проверить доступ: ${err.message}`}
+        actions={(
+          <button type="button" className="ui-btn ui-btn--primary" onClick={() => refetch()}>
+            Повторить
+          </button>
+        )}
+      />
     )
   }
 
   if (shouldRedirect) {
     return (
-      <div className="glass panel empty-state">
-        <h2 className="title">Перенаправляем…</h2>
-        <p className="subtitle">Раздел недоступен для текущей роли.</p>
-        <div className="action-row" style={{ justifyContent: 'center' }}>
-          <Link to="/app/dashboard" className="glass action-link">Вернуться на дашборд</Link>
-        </div>
-      </div>
+      <EmptyState
+        compact
+        title="Раздел недоступен"
+        description="Раздел недоступен для текущей роли. Перенаправляем на рабочий экран."
+        actions={(
+          <Link to="/app/dashboard" className="ui-btn ui-btn--ghost">Вернуться на дашборд</Link>
+        )}
+      />
     )
   }
 

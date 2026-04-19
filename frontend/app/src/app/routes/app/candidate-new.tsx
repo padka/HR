@@ -55,12 +55,11 @@ export function CandidateNewPage() {
   const [form, setForm] = useState({
     fio: '',
     phone: '',
-    telegram_id: '',
     city_id: '',
     recruiter_id: '',
     interview_date: getTomorrowDate(),
     interview_time: '10:00',
-    schedule_now: true,
+    schedule_now: false,
   })
 
   const [error, setError] = useState<string | null>(null)
@@ -105,11 +104,9 @@ export function CandidateNewPage() {
 
   const mutation = useMutation({
     mutationFn: async (): Promise<SubmitResult> => {
-      const telegramId = form.telegram_id.trim()
       const payload: {
         fio: string
         phone: string | null
-        telegram_id: number | null
         city_id: number | null
         recruiter_id: number | null
         interview_date?: string
@@ -117,7 +114,6 @@ export function CandidateNewPage() {
       } = {
         fio: form.fio.trim(),
         phone: form.phone.trim() || null,
-        telegram_id: telegramId ? Number(telegramId) : null,
         city_id: form.city_id ? Number(form.city_id) : null,
         recruiter_id: form.recruiter_id ? Number(form.recruiter_id) : null,
       }
@@ -173,7 +169,7 @@ export function CandidateNewPage() {
       if (result.schedule.status === 'warning') {
         setNotice({
           tone: 'warning',
-          message: `Кандидат создан. ${result.schedule.message} Назначьте слот позже из карточки кандидата.`,
+          message: `Кандидат создан как ручной лид. ${result.schedule.message} Отправьте кандидату ссылку на бота или назначьте слот позже из карточки.`,
           candidateId: result.candidate.id,
         })
         return
@@ -235,7 +231,7 @@ export function CandidateNewPage() {
             <div className="ui-form-header">
               <div>
                 <h1 className="title">Новый кандидат</h1>
-                <p className="subtitle">Создайте лид и назначьте собеседование</p>
+                <p className="subtitle">Ручной ввод нужен как fallback, если карточку надо завести до перехода кандидата в бота</p>
               </div>
               <Link to="/app/candidates" className="glass action-link">
                 ← К списку
@@ -290,15 +286,11 @@ export function CandidateNewPage() {
                     placeholder="+7 900 000-00-00"
                   />
                 </label>
-                <label className="ui-field">
-                  <span>Telegram ID</span>
-                  <input
-                    type="text"
-                    value={form.telegram_id}
-                    onChange={(e) => setForm({ ...form, telegram_id: e.target.value.replace(/[^\d]/g, '') })}
-                    placeholder="79991234567"
-                  />
-                </label>
+              </div>
+              <div className="ui-field__support">
+                <p className="ui-field__note">
+                  Telegram ID не нужен для ручного создания. Основной сценарий остаётся bot-first: кандидат проходит первый шаг в боте и уже потом выбирает слот.
+                </p>
               </div>
 
               <div className="ui-form-grid ui-form-grid--lg">
@@ -344,6 +336,11 @@ export function CandidateNewPage() {
                   Часовой пояс города: <strong>{cityTz}</strong> ({tzLabel})
                 </p>
               )}
+              <div className="ui-field__support">
+                <p className="ui-field__note">
+                  Мгновенную запись включайте только если кандидат уже готов к ручному назначению слота.
+                </p>
+              </div>
               <label className="ui-inline-checkbox candidate-new__toggle">
                 <input
                   type="checkbox"
@@ -460,7 +457,6 @@ export function CandidateNewPage() {
                 <div className="candidate-new__preview-list">
                   <div><strong>ФИО:</strong> {form.fio}</div>
                   {form.phone && <div><strong>Телефон:</strong> {form.phone}</div>}
-                  {form.telegram_id && <div><strong>Telegram ID:</strong> {form.telegram_id}</div>}
                   <div><strong>Город:</strong> {selectedCity?.name || '—'}</div>
                   <div><strong>Рекрутёр:</strong> {selectedRecruiter?.name || '—'}</div>
                   <div>

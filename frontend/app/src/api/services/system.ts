@@ -147,62 +147,6 @@ export type MessengerHealthChannel = {
 
 export type MessengerHealthPayload = {
   channels: Record<string, MessengerHealthChannel>
-  portal?: {
-    public_url?: string | null
-    public_ready?: boolean
-    public_error?: string | null
-    public_message?: string | null
-    max_entry_ready?: boolean
-    max_entry_error?: string | null
-    max_entry_message?: string | null
-    max_link_base?: string | null
-    token_valid?: boolean | null
-    bot_profile_resolved?: boolean
-    bot_profile_name?: string | null
-    max_link_base_resolved?: boolean
-    max_link_base_source?: 'env' | 'provider' | 'missing' | null
-    runtime_status?: string | null
-    runtime_ready?: boolean
-    adapter_ready?: boolean
-    public_entry_enabled?: boolean
-    webhook_url_public_ready?: boolean
-    dedupe_ready?: boolean
-    dedupe_mode?: string | null
-    dedupe_requires_redis?: boolean
-    dedupe_error?: string | null
-    dedupe_message?: string | null
-    webhook_public_ready?: boolean
-    webhook_url?: string | null
-    webhook_error?: string | null
-    webhook_message?: string | null
-    subscription_ready?: boolean
-    subscription_error?: string | null
-    subscription_message?: string | null
-    subscription_status?: {
-      status?: string | null
-      action?: string | null
-      url?: string | null
-      error?: string | null
-    } | null
-    readiness_blockers?: string[] | null
-    browser_portal_fallback_allowed?: boolean
-    telegram_business_fallback_allowed?: boolean
-    shared_contract_mode?: string | null
-    shared_access?: {
-      store_backend?: 'redis' | 'memory' | string
-      store_ready?: boolean
-      rate_limit_ready?: boolean
-      production_required?: boolean
-      production_ready?: boolean
-      challenge_started?: number
-      challenge_rate_limited?: number
-      verify_success?: number
-      verify_failed?: number
-      verify_expired?: number
-      delivery_channel_used?: Record<string, number>
-      delivery_block_reason?: Record<string, number>
-    } | null
-  } | null
 }
 
 export type QuestionGroup = {
@@ -255,7 +199,6 @@ export function fetchMessengerHealth() {
         },
       ]),
     ),
-    portal: payload.portal || null,
   }))
 }
 

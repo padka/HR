@@ -130,6 +130,15 @@ def test_metrics_forbidden_without_auth_or_allowlist(monkeypatch):
     assert resp.status_code == 403
 
 
+def test_notification_metrics_forbidden_without_auth_or_allowlist(monkeypatch):
+    monkeypatch.setenv("METRICS_ENABLED", "1")
+    monkeypatch.setenv("METRICS_IP_ALLOWLIST", "192.168.99.99")  # not testclient
+    app = _build_app(monkeypatch)
+    with TestClient(app) as client:
+        resp = client.get("/metrics/notifications")
+    assert resp.status_code == 403
+
+
 def test_metrics_allowed_for_authenticated_user(monkeypatch):
     monkeypatch.setenv("METRICS_ENABLED", "1")
     monkeypatch.setenv("METRICS_IP_ALLOWLIST", "192.168.99.99")  # not testclient
@@ -142,6 +151,96 @@ def test_metrics_allowed_for_authenticated_user(monkeypatch):
         )
         resp = client.get("/metrics")
     assert resp.status_code == 200
+
+
+def test_notification_metrics_allowed_for_authenticated_user(monkeypatch):
+    class _StubNotificationService:
+        class _Metrics:
+            outbox_queue_depth = 0
+            poll_skipped_total = 0
+            poll_skipped_reasons = {}
+            poll_backoff_total = 0
+            poll_backoff_reasons = {}
+            rate_limit_wait_total = 0
+            rate_limit_wait_seconds = 0.0
+            notifications_sent_total = {"candidate_rejection": 1}
+            notifications_failed_total = {}
+            poll_staleness_seconds = 0.0
+
+        async def health_snapshot(self):
+            return {
+                "started": True,
+                "loop_enabled": True,
+                "broker_backend": "memory",
+                "broker_kind": "InMemoryNotificationBroker",
+                "scheduler_job": False,
+                "watchdog_running": False,
+                "circuit_open": False,
+                "seconds_since_poll": None,
+                "metrics": {},
+            }
+
+        async def metrics_snapshot(self):
+            return self._Metrics()
+
+        async def broker_ping(self):
+            return True
+
+    monkeypatch.setenv("METRICS_ENABLED", "1")
+    monkeypatch.setenv("METRICS_IP_ALLOWLIST", "192.168.99.99")  # not testclient
+    app = _build_app(monkeypatch)
+    app.state.notification_service = _StubNotificationService()
+    with TestClient(app) as client:
+        client.post(
+            "/auth/login",
+            data={"username": "admin", "password": "admin", "redirect_to": "/"},
+            follow_redirects=False,
+        )
+        resp = client.get("/metrics/notifications")
+    assert resp.status_code == 200
+
+
+def test_bot_health_requires_authenticated_admin(monkeypatch):
+    app = _build_app(monkeypatch)
+    with TestClient(app) as client:
+        resp = client.get("/health/bot")
+    assert resp.status_code == 401
+
+
+def test_notification_health_requires_authenticated_admin(monkeypatch):
+    app = _build_app(monkeypatch)
+    with TestClient(app) as client:
+        resp = client.get("/health/notifications")
+    assert resp.status_code == 401
+
+
+def test_candidate_portal_routes_return_410(monkeypatch):
+    app = _build_app(monkeypatch)
+    with TestClient(app) as client:
+        root_resp = client.get("/candidate")
+        nested_resp = client.get("/candidate/start")
+    assert root_resp.status_code == 410
+    assert "unsupported" in root_resp.text.lower()
+    assert nested_resp.status_code == 410
+    assert "unsupported" in nested_resp.text.lower()
+
+
+def test_openapi_does_not_advertise_candidate_portal_or_legacy_mutating_get(monkeypatch):
+    app = _build_app(monkeypatch)
+    schema = app.openapi()
+    assert not any(path.startswith("/api/candidate/") for path in schema["paths"])
+    assert "/candidates/{candidate_id}/resend-test2" not in schema["paths"]
+
+
+def test_templates_list_route_registered_once(monkeypatch):
+    app = _build_app(monkeypatch)
+    matching_routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/templates/list"
+        and "GET" in getattr(route, "methods", set())
+    ]
+    assert len(matching_routes) == 1
 
 
 # ---------------------------------------------------------------------------

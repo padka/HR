@@ -12,6 +12,12 @@ def test_dashboard_keys_are_scoped_by_principal():
 
     assert keys.dashboard_counts(principal=a1).value != keys.dashboard_counts(principal=a2).value
     assert keys.dashboard_incoming(principal=a1, limit=6).value != keys.dashboard_incoming(principal=a2, limit=6).value
+    assert keys.dashboard_incoming(principal=a1, page=1, page_size=50, search="Иванов").value != keys.dashboard_incoming(
+        principal=a1,
+        page=1,
+        page_size=50,
+        search="Петров",
+    ).value
 
 
 def test_calendar_key_normalizes_statuses_order_and_case():
@@ -34,4 +40,3 @@ def test_calendar_key_normalizes_statuses_order_and_case():
         include_canceled=False,
     ).value
     assert k1 == k2
-

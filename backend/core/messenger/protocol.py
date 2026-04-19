@@ -4,25 +4,27 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class MessengerPlatform(str, enum.Enum):
     """Supported messaging platforms."""
 
     TELEGRAM = "telegram"
-    MAX = "max"  # VK Max (ex-ICQ New)
+    MAX = "max"
 
     @classmethod
-    def from_str(cls, value: str) -> "MessengerPlatform":
+    def from_str(cls, value: str) -> MessengerPlatform:
         """Parse platform from string, case-insensitive."""
         normalized = value.strip().lower()
         aliases = {
             "tg": cls.TELEGRAM,
             "telegram": cls.TELEGRAM,
             "max": cls.MAX,
-            "vk_max": cls.MAX,
             "vkmax": cls.MAX,
+            "vk_max": cls.MAX,
+            "vk-max": cls.MAX,
+            "vk max": cls.MAX,
             "icq": cls.MAX,
         }
         result = aliases.get(normalized)
@@ -36,9 +38,9 @@ class InlineButton:
     """A button attached to a message (inline keyboard)."""
 
     text: str
-    callback_data: Optional[str] = None
-    url: Optional[str] = None
-    kind: Optional[str] = None
+    callback_data: str | None = None
+    url: str | None = None
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,9 +48,9 @@ class SendResult:
     """Result of a send operation."""
 
     success: bool
-    message_id: Optional[str] = None
-    error: Optional[str] = None
-    raw_response: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    message_id: str | None = None
+    error: str | None = None
+    raw_response: dict[str, Any] | None = field(default=None, repr=False)
 
 
 class MessengerProtocol:
@@ -73,9 +75,9 @@ class MessengerProtocol:
         chat_id: int | str,
         text: str,
         *,
-        buttons: Optional[List[List[InlineButton]]] = None,
-        parse_mode: Optional[str] = None,
-        correlation_id: Optional[str] = None,
+        buttons: list[list[InlineButton]] | None = None,
+        parse_mode: str | None = None,
+        correlation_id: str | None = None,
     ) -> SendResult:
         """Send a text message, optionally with inline buttons.
 

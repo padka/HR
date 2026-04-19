@@ -2,6 +2,8 @@ import pytest
 
 from backend.apps.admin_ui.app import create_app
 from backend.core import settings as settings_module
+from backend.core.db import async_session
+from backend.domain.candidates.models import User
 from backend.domain.candidates import services as candidate_services
 
 
@@ -75,17 +77,6 @@ async def test_interview_declined_uses_status_service(monkeypatch, admin_app):
         city="Москва",
     )
 
-    called = {}
-
-    async def fake_decline(tg_id):
-        called["tg"] = tg_id
-        return True
-
-    monkeypatch.setattr(
-        "backend.apps.admin_ui.routers.candidates.set_status_interview_declined",
-        fake_decline,
-    )
-
     response = await _async_post(
         admin_app,
         f"/candidates/{candidate.id}/status",
@@ -94,4 +85,7 @@ async def test_interview_declined_uses_status_service(monkeypatch, admin_app):
 
     assert response.status_code == 303
     assert f"/candidates/{candidate.id}?ok=1" in response.headers["Location"]
-    assert called.get("tg") == candidate.telegram_id
+    async with async_session() as session:
+        stored = await session.get(User, candidate.id)
+    assert stored is not None
+    assert getattr(stored.candidate_status, "value", stored.candidate_status) == "interview_declined"

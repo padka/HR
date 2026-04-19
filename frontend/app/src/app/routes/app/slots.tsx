@@ -8,6 +8,7 @@ import {
 } from '@/api/services/slots'
 import { apiFetch } from '@/api/client'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
+import { EmptyState, PageLoader } from '@/app/components/AppStates'
 import { RoleGuard } from '@/app/components/RoleGuard'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
@@ -50,6 +51,22 @@ type RecruiterOption = {
   id: number
   name: string
   active?: boolean | null
+}
+
+const SLOT_STATUS_FILTER_LABELS: Record<Exclude<SlotStatusFilter, 'ALL'>, string> = {
+  FREE: 'Свободные',
+  BOOKED: 'Согласованные',
+  CONFIRMED_BY_CANDIDATE: 'Подтверждены',
+  PENDING: 'Ожидают',
+}
+
+const SLOT_SORT_FIELD_LABELS: Record<SlotSortField, string> = {
+  recruiter_time: 'Время рекрутёра',
+  region_time: 'Время региона/кандидата',
+  city: 'Город',
+  candidate: 'Кандидат',
+  status: 'Статус',
+  type: 'Тип слота',
 }
 
 export function SlotsPage() {
@@ -247,6 +264,111 @@ export function SlotsPage() {
   )
   const pagesTotal = Math.max(1, Math.ceil(total / perPage))
   const pagedItems = sortedItems.slice((page - 1) * perPage, page * perPage)
+  const slotActiveFilters = useMemo(() => {
+    const items: Array<{ key: string; label: string; clear: () => void }> = []
+
+    if (purposeFilter !== 'all') {
+      items.push({
+        key: 'purpose',
+        label: purposeFilter === 'intro_day' ? 'Тип: ознакомительный день' : 'Тип: собеседование',
+        clear: () => setPurposeFilter('all'),
+      })
+    }
+
+    if (statusFilter !== 'ALL') {
+      items.push({
+        key: 'status',
+        label: `Статус: ${SLOT_STATUS_FILTER_LABELS[statusFilter]}`,
+        clear: () => setStatusFilter('ALL'),
+      })
+    }
+
+    if (search.trim()) {
+      items.push({
+        key: 'search',
+        label: `Поиск: ${search.trim()}`,
+        clear: () => setSearch(''),
+      })
+    }
+
+    if (cityFilter !== 'all') {
+      items.push({
+        key: 'city',
+        label: `Город: ${cityFilter}`,
+        clear: () => setCityFilter('all'),
+      })
+    }
+
+    if (dateFrom) {
+      items.push({
+        key: 'date-from',
+        label: `С даты: ${dateFrom}`,
+        clear: () => setDateFrom(''),
+      })
+    }
+
+    if (dateTo) {
+      items.push({
+        key: 'date-to',
+        label: `По дату: ${dateTo}`,
+        clear: () => setDateTo(''),
+      })
+    }
+
+    if (candidateFilter !== 'all') {
+      items.push({
+        key: 'candidate',
+        label: candidateFilter === 'with' ? 'Кандидат: назначен' : 'Кандидат: свободный слот',
+        clear: () => setCandidateFilter('all'),
+      })
+    }
+
+    if (recruiterFilter !== 'all') {
+      items.push({
+        key: 'recruiter',
+        label: `Рекрутёр: ${recruiterFilter}`,
+        clear: () => setRecruiterFilter('all'),
+      })
+    }
+
+    if (tzRelationFilter !== 'all') {
+      items.push({
+        key: 'tz',
+        label: tzRelationFilter === 'same' ? 'TZ: совпадают' : 'TZ: разные',
+        clear: () => setTzRelationFilter('all'),
+      })
+    }
+
+    if (sortField !== 'recruiter_time') {
+      items.push({
+        key: 'sort-field',
+        label: `Сортировка: ${SLOT_SORT_FIELD_LABELS[sortField]}`,
+        clear: () => setSortField('recruiter_time'),
+      })
+    }
+
+    if (sortDir !== 'desc') {
+      items.push({
+        key: 'sort-dir',
+        label: 'Порядок: возрастание',
+        clear: () => setSortDir('desc'),
+      })
+    }
+
+    return items
+  }, [
+    candidateFilter,
+    cityFilter,
+    dateFrom,
+    dateTo,
+    purposeFilter,
+    recruiterFilter,
+    search,
+    sortDir,
+    sortField,
+    statusFilter,
+    tzRelationFilter,
+  ])
 
   const canPrev = page > 1
   const canNext = page < pagesTotal
@@ -609,46 +731,76 @@ export function SlotsPage() {
             </div>
           </div>
 
-          <div className="pagination app-page__toolbar">
-            <span className="pagination__info">Показано: {total} · Страница {page} / {pagesTotal}</span>
-            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canPrev} onClick={() => setPage((p) => Math.max(1, p - 1))}>Назад</button>
-            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>Вперёд</button>
-            <label className="filter-bar__item">
-              <span className="filter-bar__label">На странице</span>
-              <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
-                {[10, 20, 50, 100].map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-            </label>
+          {slotActiveFilters.length > 0 && (
+            <div className="slots-active-filters" data-testid="slots-active-filters">
+              {slotActiveFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  className="slots-filter-pill"
+                  onClick={filter.clear}
+                >
+                  <span>{filter.label}</span>
+                  <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="slots-results-toolbar app-page__toolbar" data-testid="slots-results-toolbar">
+            <div className="slots-results-toolbar__meta">
+              <strong>{total}</strong>
+              <span>{hasActiveFilters ? 'слотов после фильтров' : 'слотов в рабочей сетке'}</span>
+              <span className="text-muted text-sm">· страница {page} / {pagesTotal}</span>
+            </div>
+            <div className="slots-results-toolbar__controls">
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canPrev} onClick={() => setPage((p) => Math.max(1, p - 1))}>Назад</button>
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={!canNext} onClick={() => setPage((p) => p + 1)}>Вперёд</button>
+              <label className="filter-bar__item">
+                <span className="filter-bar__label">На странице</span>
+                <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}>
+                  {[10, 20, 50, 100].map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           {isLoading && (
-            <div className="loading-skeleton">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="loading-skeleton__row" />
-              ))}
-            </div>
+            <PageLoader
+              label="Загрузка слотов"
+              description="Подготавливаем расписание, доступность и текущую загрузку."
+              compact
+              cardClassName="slots-state-card"
+            />
           )}
           {isError && <ApiErrorBanner error={error} title="Не удалось загрузить слоты" onRetry={() => refetch()} />}
 
           {!isLoading && total === 0 && (
-            <div className="empty-state" data-testid="slots-empty-state">
-              <p className="empty-state__text">
-                {hasActiveFilters
-                  ? 'По текущим фильтрам слоты не найдены.'
-                  : 'Слотов пока нет. Создайте первую сетку слотов для запуска воронки.'}
-              </p>
-              <div className="toolbar">
-                {hasActiveFilters && (
-                  <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={clearAllFilters}>
-                    Сбросить фильтры
-                  </button>
+            <div data-testid="slots-empty-state">
+              <EmptyState
+                title={hasActiveFilters ? 'По текущим фильтрам слоты не найдены' : 'Слотов пока нет'}
+                description={
+                  hasActiveFilters
+                    ? 'Сбросьте фильтры или измените период, чтобы увидеть доступные окна.'
+                    : 'Создайте первую сетку слотов, чтобы запустить запись кандидатов.'
+                }
+                compact
+                cardClassName="slots-state-card"
+                actions={(
+                  <>
+                    {hasActiveFilters && (
+                      <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={clearAllFilters}>
+                        Сбросить фильтры
+                      </button>
+                    )}
+                    <Link to="/app/slots/create" className="ui-btn ui-btn--primary ui-btn--sm">
+                      + Создать слоты
+                    </Link>
+                  </>
                 )}
-                <Link to="/app/slots/create" className="ui-btn ui-btn--primary ui-btn--sm">
-                  + Создать слоты
-                </Link>
-              </div>
+              />
             </div>
           )}
 

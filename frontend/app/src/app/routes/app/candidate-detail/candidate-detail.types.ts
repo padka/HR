@@ -13,6 +13,8 @@ import type {
   CandidateDetail,
   CandidateFinalOutcome,
   CandidateHHSummary,
+  CandidateMaxLaunchInviteResponse,
+  CandidateMaxRollout,
   CandidateJourney,
   CandidatePendingSlotRequest,
   CandidateSlot,
@@ -40,6 +42,8 @@ export type {
   CandidateDetail,
   CandidateFinalOutcome,
   CandidateHHSummary,
+  CandidateMaxLaunchInviteResponse,
+  CandidateMaxRollout,
   CandidateJourney,
   CandidatePendingSlotRequest,
   CandidateSlot,
@@ -77,6 +81,18 @@ export type ReportPreviewState = {
 export type TestAttemptPreview = {
   testTitle: string
   attempt: TestAttempt
+}
+
+export type MaxRolloutPreviewState = {
+  title: string
+  rollout: CandidateMaxRollout
+}
+
+export type MaxRolloutResultState = {
+  title: string
+  ok: boolean
+  message?: string | null
+  response?: CandidateMaxLaunchInviteResponse | null
 }
 
 export type RejectState = {

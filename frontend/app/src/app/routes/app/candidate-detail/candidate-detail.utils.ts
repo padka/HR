@@ -1,4 +1,15 @@
-import type { CandidateArchive, CandidateDetail, CandidateHHSummary, CandidatePendingSlotRequest, CandidateSlot, TestSection } from '@/api/services/candidates'
+import type {
+  CandidateArchive,
+  CandidateDetail,
+  CandidateHHSummary,
+  CandidateMaxRollout,
+  CandidateMaxRolloutAction,
+  CandidateMaxRolloutActionKind,
+  CandidateMaxRolloutPreview,
+  CandidatePendingSlotRequest,
+  CandidateSlot,
+  TestSection,
+} from '@/api/services/candidates'
 import { translateSystemMessage } from '@/app/components/CandidatePipeline/pipeline.utils'
 import { formatDateTime, formatSlotTime } from '@/shared/utils/formatters'
 import type {
@@ -237,6 +248,50 @@ export function scorecardRecommendationShortLabel(
   if (value === 'clarify_before_od') return 'Уточнить'
   if (value === 'not_recommended') return 'Не рекомендуем'
   return 'Без оценки'
+}
+
+const MAX_ROLLOUT_ACTION_LABELS: Record<CandidateMaxRolloutActionKind, string> = {
+  preview: 'Предпросмотр',
+  send: 'Отправка',
+  reissue: 'Перевыпуск',
+  revoke: 'Отзыв',
+}
+
+export function resolveMaxRolloutPreview(rollout?: CandidateMaxRollout | null): CandidateMaxRolloutPreview | null {
+  if (!rollout) return null
+  return {
+    max_launch_url: rollout.preview?.max_launch_url || rollout.max_launch_url || null,
+    max_chat_url: rollout.preview?.max_chat_url || rollout.max_chat_url || null,
+    message_preview: rollout.preview?.message_preview || rollout.message_preview || null,
+    expires_at: rollout.preview?.expires_at || rollout.expires_at || null,
+    dry_run: rollout.preview?.dry_run ?? rollout.dry_run ?? false,
+  }
+}
+
+export function resolveMaxRolloutAction(
+  rollout: CandidateMaxRollout | null | undefined,
+  kind: CandidateMaxRolloutActionKind,
+): CandidateMaxRolloutAction | null {
+  if (!rollout) return null
+  const action =
+    rollout.actions?.[kind]
+    || rollout[`${kind}_action` as const]
+    || (rollout[`${kind}_action_key` as const]
+      ? {
+          key: String(rollout[`${kind}_action_key` as const]),
+          label: MAX_ROLLOUT_ACTION_LABELS[kind],
+          method: 'POST',
+          kind,
+        }
+      : null)
+
+  if (!action || !action.key) return null
+  return {
+    ...action,
+    label: action.label || MAX_ROLLOUT_ACTION_LABELS[kind],
+    method: action.method || 'POST',
+    kind,
+  }
 }
 
 export function journeyEventTitle(event: JourneyEventRecord): string {

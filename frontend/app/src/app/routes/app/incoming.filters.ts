@@ -8,6 +8,7 @@ export type IncomingStatusFilter =
 export type IncomingOwnerFilter = 'all' | 'mine' | 'assigned' | 'unassigned'
 export type IncomingWaitingFilter = 'all' | '24h' | '48h'
 export type IncomingAiFilter = 'all' | 'high' | 'medium' | 'low' | 'unknown'
+export type IncomingSortMode = 'priority' | 'waiting_desc' | 'recent_desc' | 'ai_score_desc' | 'name_asc'
 
 export type IncomingPersistedFilters = {
   search: string
@@ -16,6 +17,7 @@ export type IncomingPersistedFilters = {
   ownerFilter: IncomingOwnerFilter
   waitingFilter: IncomingWaitingFilter
   aiFilter: IncomingAiFilter
+  sortMode: IncomingSortMode
   showAdvancedFilters: boolean
 }
 
@@ -31,6 +33,7 @@ const STATUS_FILTERS: IncomingStatusFilter[] = [
 const OWNER_FILTERS: IncomingOwnerFilter[] = ['all', 'mine', 'assigned', 'unassigned']
 const WAITING_FILTERS: IncomingWaitingFilter[] = ['all', '24h', '48h']
 const AI_FILTERS: IncomingAiFilter[] = ['all', 'high', 'medium', 'low', 'unknown']
+const SORT_MODES: IncomingSortMode[] = ['priority', 'waiting_desc', 'recent_desc', 'ai_score_desc', 'name_asc']
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -60,6 +63,7 @@ export function parseIncomingPersistedFilters(raw: string | null): Partial<Incom
       ownerFilter: pickEnum(parsed.ownerFilter, OWNER_FILTERS, 'all'),
       waitingFilter: pickEnum(parsed.waitingFilter, WAITING_FILTERS, 'all'),
       aiFilter: pickEnum(parsed.aiFilter, AI_FILTERS, 'all'),
+      sortMode: pickEnum(parsed.sortMode, SORT_MODES, 'priority'),
       showAdvancedFilters: pickBoolean(parsed.showAdvancedFilters, false),
     }
   } catch {

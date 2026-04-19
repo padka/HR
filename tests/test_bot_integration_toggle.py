@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
-from fastapi.testclient import TestClient
-
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services.bot_service import (
-    BotService,
     BotSendResult,
+    BotService,
     IntegrationSwitch,
 )
 from backend.apps.bot.state_store import build_state_manager
+from fastapi.testclient import TestClient
+
+
+def _login(client: TestClient, username: str, password: str) -> None:
+    response = client.post(
+        "/auth/login",
+        data={"username": username, "password": password, "redirect_to": "/"},
+        follow_redirects=False,
+    )
+    assert response.status_code in {302, 303}
 
 
 @pytest.mark.asyncio
@@ -73,7 +79,8 @@ def test_api_integration_toggle(monkeypatch):
     settings = get_settings()
 
     with TestClient(app) as client:
-        client.auth = (
+        _login(
+            client,
             settings.admin_username or "admin",
             settings.admin_password or "admin",
         )
@@ -140,7 +147,8 @@ def test_runtime_disable_reflected_in_health(monkeypatch):
 
     settings = get_settings()
     with TestClient(app) as client:
-        client.auth = (
+        _login(
+            client,
             settings.admin_username or "admin",
             settings.admin_password or "admin",
         )
@@ -180,7 +188,8 @@ def test_disabled_bot_health_endpoints_return_200(monkeypatch):
 
     settings = settings_module.get_settings()
     with TestClient(app) as client:
-        client.auth = (
+        _login(
+            client,
             settings.admin_username or "admin",
             settings.admin_password or "admin",
         )

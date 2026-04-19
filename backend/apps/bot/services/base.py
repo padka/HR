@@ -45,14 +45,11 @@ from aiogram.types import (
 from pydantic import ValidationError
 
 from backend.core.db import async_session
+from backend.core.messenger.bootstrap import ensure_max_adapter
 from backend.core.settings import get_settings
 from backend.domain import analytics
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import User
-from backend.domain.candidates.portal_service import (
-    build_candidate_public_portal_url,
-    ensure_candidate_portal_session,
-)
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import (
     set_status_waiting_slot,
@@ -439,6 +436,7 @@ class SlotSnapshot:
     slot_id: int
     start_utc: datetime
     candidate_id: Optional[int]
+    candidate_external_id: Optional[str]
     candidate_fio: str
     candidate_tz: str
     candidate_city_id: Optional[int]
@@ -779,6 +777,12 @@ async def _build_slot_snapshot(slot: Slot) -> SlotSnapshot:
         slot, state=state, recruiter=recruiter
     )
     candidate_id = int(slot.candidate_tg_id) if slot.candidate_tg_id is not None else None
+    candidate_external_id = None
+    if slot.candidate_id is not None:
+        async with async_session() as session:
+            candidate_external_id = await session.scalar(
+                select(User.max_user_id).where(User.candidate_id == slot.candidate_id)
+            )
     slot_tz = getattr(slot, "tz_name", None)
     city_name = ""
     if slot.city_id:
@@ -799,6 +803,7 @@ async def _build_slot_snapshot(slot: Slot) -> SlotSnapshot:
         slot_id=slot.id,
         start_utc=slot.start_utc,
         candidate_id=candidate_id,
+        candidate_external_id=str(candidate_external_id).strip() if candidate_external_id else None,
         candidate_fio=slot.candidate_fio or "",
         candidate_tz=candidate_tz,
         candidate_city_id=getattr(slot, "candidate_city_id", None),
@@ -815,6 +820,7 @@ def _snapshot_payload(snapshot: SlotSnapshot) -> Dict[str, Any]:
         "slot_id": snapshot.slot_id,
         "start_utc": snapshot.start_utc.isoformat(),
         "candidate_id": snapshot.candidate_id,
+        "candidate_external_id": snapshot.candidate_external_id,
         "candidate_fio": snapshot.candidate_fio,
         "candidate_tz": snapshot.candidate_tz,
         "candidate_city_id": snapshot.candidate_city_id,
@@ -846,6 +852,7 @@ def _snapshot_from_payload(payload: Optional[Dict[str, Any]]) -> Optional[SlotSn
         slot_id=int(payload.get("slot_id") or 0),
         start_utc=start_utc,
         candidate_id=payload.get("candidate_id"),
+        candidate_external_id=payload.get("candidate_external_id"),
         candidate_fio=str(payload.get("candidate_fio") or ""),
         candidate_tz=str(candidate_tz),
         candidate_city_id=payload.get("candidate_city_id"),
@@ -901,17 +908,23 @@ async def _send_reschedule_prompt(snapshot: SlotSnapshot) -> bool:
 
 
 async def _send_final_rejection_notice(snapshot: SlotSnapshot) -> bool:
-    if snapshot.candidate_id is None:
+    if snapshot.candidate_id is None and not snapshot.candidate_external_id:
         return False
 
-    state = await _load_candidate_state(snapshot.candidate_id)
+    state: State = {}
+    if snapshot.candidate_id is not None:
+        state = await _load_candidate_state(snapshot.candidate_id)
     context = {
-        "candidate_name": snapshot.candidate_fio or state.get("fio", "") or str(snapshot.candidate_id),
+        "candidate_name": (
+            snapshot.candidate_fio
+            or state.get("fio", "")
+            or str(snapshot.candidate_id or snapshot.slot_id)
+        ),
         "candidate_fio": snapshot.candidate_fio or state.get("fio", ""),
-        "city_name": state.get("city_name") or "",
+        "city_name": state.get("city_name") or snapshot.city_name or "",
         "recruiter_name": snapshot.recruiter_name or "",
     }
-    
+
     provider = get_template_provider()
     rendered = await provider.render(
         "candidate_rejection",
@@ -923,23 +936,48 @@ async def _send_final_rejection_notice(snapshot: SlotSnapshot) -> bool:
     if not rendered or not rendered.text.strip():
         logger.warning("Rejection template produced empty message for candidate %s", snapshot.candidate_id)
         return False
-        
+
     text = rendered.text.strip()
 
-    bot = get_bot()
-    if not hasattr(bot, "send_message"):
-        logger.warning("Bot instance missing send_message; cannot send rejection message")
-        return False
-
     try:
-        await bot.send_message(snapshot.candidate_id, text)
-        def _mark_rejected(st: State) -> Tuple[State, None]:
-            st["flow"] = "rejected"
-            st["picked_slot_id"] = None
-            st["picked_recruiter_id"] = None
-            return st, None
+        if snapshot.candidate_external_id:
+            adapter = await ensure_max_adapter(settings=get_settings())
+            if adapter is None:
+                logger.warning(
+                    "MAX adapter unavailable; cannot send rejection message",
+                    extra={"slot_id": snapshot.slot_id, "candidate_id": snapshot.candidate_id},
+                )
+                return False
+            result = await adapter.send_message(
+                snapshot.candidate_external_id,
+                text,
+                correlation_id=f"direct-reject:{snapshot.slot_id}:{uuid.uuid4().hex}",
+            )
+            if not getattr(result, "success", False):
+                logger.warning(
+                    "MAX adapter rejected rejection message",
+                    extra={
+                        "slot_id": snapshot.slot_id,
+                        "candidate_id": snapshot.candidate_id,
+                        "error": getattr(result, "error", None) or "unknown",
+                    },
+                )
+                return False
+        else:
+            bot = get_bot()
+            if not hasattr(bot, "send_message"):
+                logger.warning("Bot instance missing send_message; cannot send rejection message")
+                return False
+            await bot.send_message(snapshot.candidate_id, text)
 
-        await _update_candidate_state(snapshot.candidate_id, _mark_rejected)
+        if snapshot.candidate_id is not None:
+            def _mark_rejected(st: State) -> Tuple[State, None]:
+                st["flow"] = "rejected"
+                st["picked_slot_id"] = None
+                st["picked_recruiter_id"] = None
+                return st, None
+
+            await _update_candidate_state(snapshot.candidate_id, _mark_rejected)
         return True
     except RuntimeError:
         logger.warning("Bot is not configured; cannot send rejection message")
@@ -1172,7 +1210,6 @@ class CandidateAssignmentControls:
     recruiter_tg_id: Optional[int]
     city_name: str
     meeting_link: Optional[str] = None
-    portal_url: Optional[str] = None
     confirm_token: Optional[str] = None
     reschedule_token: Optional[str] = None
     decline_token: Optional[str] = None
@@ -1234,32 +1271,6 @@ async def _ensure_assignment_action_token(
         )
     )
     return token_value
-
-
-async def _build_candidate_portal_url(
-    session,
-    *,
-    candidate_tg_id: int,
-) -> Optional[str]:
-    candidate = await session.scalar(
-        select(User).where(
-            or_(
-                User.telegram_id == candidate_tg_id,
-                User.telegram_user_id == candidate_tg_id,
-            )
-        )
-    )
-    if candidate is None or not getattr(candidate, "candidate_id", None):
-        return None
-    journey = await ensure_candidate_portal_session(session, candidate, entry_channel="telegram")
-    return build_candidate_public_portal_url(
-        candidate_uuid=str(candidate.candidate_id),
-        telegram_id=candidate_tg_id,
-        entry_channel="telegram",
-        source_channel="telegram_bot_schedule",
-        journey_session_id=int(journey.id),
-        session_version=int(journey.session_version or 1),
-    ) or None
 
 
 async def get_candidate_assignment_controls(
@@ -1370,15 +1381,6 @@ async def get_candidate_assignment_controls(
                         min_expires_at=expires_at,
                     )
 
-            portal_url = None
-            try:
-                portal_url = await _build_candidate_portal_url(session, candidate_tg_id=int(candidate_tg_id))
-            except Exception:
-                logger.exception(
-                    "candidate.portal_link_build_failed",
-                    extra={"candidate_tg_id": candidate_tg_id, "assignment_id": assignment.id},
-                )
-
             return CandidateAssignmentControls(
                 assignment_id=int(assignment.id),
                 candidate_tg_id=int(candidate_tg_id),
@@ -1393,7 +1395,6 @@ async def get_candidate_assignment_controls(
                 recruiter_tg_id=getattr(recruiter, "tg_chat_id", None),
                 city_name=city_name,
                 meeting_link=_resolve_recruiter_meeting_link(recruiter),
-                portal_url=portal_url,
                 confirm_token=confirm_token,
                 reschedule_token=reschedule_token,
                 decline_token=decline_token,
@@ -1407,7 +1408,6 @@ def build_candidate_active_meeting_keyboard(
         return None
     return kb_slot_assignment_active(
         controls.assignment_id,
-        portal_url=controls.portal_url,
         reschedule_token=controls.reschedule_token,
         decline_token=controls.decline_token,
     )
@@ -1433,8 +1433,6 @@ def render_candidate_assignment_details(controls: CandidateAssignmentControls) -
     else:
         lines.append("")
         lines.append("Время этой встречи уже прошло.")
-    if controls.portal_url:
-        lines.append("Материалы о компании и текущий этап доступны в кабинете кандидата.")
     return "\n".join(lines)
 
 

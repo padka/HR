@@ -209,6 +209,48 @@ async def update_candidate_status(
             return result
 
 
+async def update_candidate_status_by_candidate_id(
+    candidate_id: str,
+    new_status: CandidateStatus,
+    *,
+    force: bool = False,
+    session: Optional[AsyncSession] = None,
+) -> bool:
+    normalized_candidate_id = str(candidate_id or "").strip()
+    if not normalized_candidate_id:
+        return False
+
+    async def _update(sess: AsyncSession) -> bool:
+        user = await sess.scalar(
+            select(User).where(User.candidate_id == normalized_candidate_id)
+        )
+        if not user:
+            logger.warning(
+                "Candidate not found: candidate_id=%s",
+                normalized_candidate_id,
+            )
+            return False
+        analytics_user_id = (
+            getattr(user, "telegram_id", None)
+            or getattr(user, "telegram_user_id", None)
+        )
+        return await _apply_status_transition(
+            sess,
+            user,
+            new_status,
+            force=force,
+            analytics_user_id=analytics_user_id,
+        )
+
+    if session:
+        return await _update(session)
+
+    async with async_session() as sess:
+        async with sess.begin():
+            result = await _update(sess)
+        return result
+
+
 async def get_candidate_status(telegram_id: int) -> Optional[CandidateStatus]:
     """Get current status of a candidate.
 

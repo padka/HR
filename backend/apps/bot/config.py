@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple, TypedDict
 import hashlib
 import json
-import time
-
 import logging
+import os
+import time
+from copy import deepcopy
+from typing import Any, TypedDict
 
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -30,7 +30,7 @@ PASS_THRESHOLD = 0.75
 MAX_ATTEMPTS = 3
 TIME_LIMIT = 120  # сек на вопрос (Тест 2)
 
-RemKey = Tuple[int, int]
+RemKey = tuple[int, int]
 
 
 class State(TypedDict, total=False):
@@ -40,49 +40,50 @@ class State(TypedDict, total=False):
     # Monotonic revision of the in-memory question bank used to build this state.
     # Allows the bot to sync active sessions when admins update questions.
     questions_bank_version: int
-    t1_idx: Optional[int]
-    t1_current_idx: Optional[int]
-    test1_answers: Dict[str, str]
-    t1_last_prompt_id: Optional[int]
+    t1_idx: int | None
+    t1_current_idx: int | None
+    test1_answers: dict[str, str]
+    t1_last_prompt_id: int | None
     t1_last_question_text: str
     t1_requires_free_text: bool
-    t1_sequence: List[Dict[str, Any]]
+    t1_sequence: list[dict[str, Any]]
 
     fio: str
     city_name: str
-    city_id: Optional[int]
+    city_id: int | None
     candidate_tz: str
 
-    t2_attempts: Dict[int, Dict[str, Any]]
-    picked_recruiter_id: Optional[int]
-    picked_slot_id: Optional[int]
+    t2_attempts: dict[int, dict[str, Any]]
+    picked_recruiter_id: int | None
+    picked_slot_id: int | None
 
-    format_choice: Optional[str]
-    study_mode: Optional[str]
-    study_schedule: Optional[str]
-    study_flex: Optional[str]
-    test1_payload: Dict[str, Any]
+    format_choice: str | None
+    study_mode: str | None
+    study_schedule: str | None
+    study_flex: str | None
+    test1_payload: dict[str, Any]
 
     manual_contact_prompt_sent: bool
     manual_availability_expected: bool
-    manual_availability_last_note: Optional[str]
+    manual_availability_last_note: str | None
 
-    slot_assignment_id: Optional[int]
-    slot_assignment_state: Optional[str]
-    slot_assignment_action_token: Optional[str]
-    slot_assignment_candidate_tz: Optional[str]
-    awaiting_slot_assignment_decline_reason: Dict[str, Any]
+    slot_assignment_id: int | None
+    slot_assignment_state: str | None
+    slot_assignment_action_token: str | None
+    slot_assignment_candidate_tz: str | None
+    awaiting_slot_assignment_decline_reason: dict[str, Any]
 
 
 logger = logging.getLogger(__name__)
 
-_QUESTIONS_BANK: Dict[str, List[Dict[str, Any]]] = {}
-TEST1_QUESTIONS: List[Dict[str, Any]] = []
-TEST2_QUESTIONS: List[Dict[str, Any]] = []
+_QUESTIONS_BANK: dict[str, list[dict[str, Any]]] = {}
+TEST1_QUESTIONS: list[dict[str, Any]] = []
+TEST2_QUESTIONS: list[dict[str, Any]] = []
 _QUESTIONS_BANK_VERSION: int = 0
 _QUESTIONS_BANK_HASH: str = ""
 _QUESTIONS_BANK_LOADED_AT: float = 0.0
 _QUESTIONS_BANK_SOURCE: str = "unknown"
+_OPENAPI_MODE_ENV = "RECRUITSMART_OPENAPI_MODE"
 
 
 def refresh_questions_bank(*, include_inactive: bool = False) -> None:
@@ -144,13 +145,27 @@ def refresh_questions_bank(*, include_inactive: bool = False) -> None:
             _QUESTIONS_BANK_HASH = new_hash
 
 
+def maybe_prime_questions_bank() -> None:
+    """Prime the in-memory bank unless tooling explicitly requests quiet schema mode."""
+
+    if str(os.getenv(_OPENAPI_MODE_ENV, "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        logger.info("Skipping question bank warmup in OpenAPI tooling mode.")
+        return
+    refresh_questions_bank()
+
+
 def get_questions_bank_version() -> int:
     """Return the current in-memory question bank revision."""
 
     return int(_QUESTIONS_BANK_VERSION)
 
 
-def get_questions_bank_meta() -> Dict[str, object]:
+def get_questions_bank_meta() -> dict[str, object]:
     """Return a small diagnostic snapshot of the in-memory question bank."""
 
     return {
@@ -165,8 +180,8 @@ def get_questions_bank_meta() -> Dict[str, object]:
     }
 
 
-# Prime question bank at import so existing imports keep working
-refresh_questions_bank()
+# Prime question bank at import so existing imports keep working in normal runtime.
+maybe_prime_questions_bank()
 
 FOLLOWUP_NOTICE_PERIOD = {
     "id": "notice_period",
@@ -232,6 +247,7 @@ __all__ = [
     "TEST2_QUESTIONS",
     "get_questions_bank_meta",
     "get_questions_bank_version",
+    "maybe_prime_questions_bank",
     "refresh_questions_bank",
     "TIME_FMT",
     "TIME_LIMIT",

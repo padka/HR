@@ -5,6 +5,7 @@ import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import { fadeIn, slideInRight } from '@/shared/motion'
 import { useCandidateChat, type CandidateAiController } from './candidate-detail.api'
+import { formatChannelDeliveryStatus } from './candidate-detail.constants'
 
 const CandidateChatMessageCard = memo(function CandidateChatMessageCard({
   author,
@@ -63,6 +64,7 @@ export function CandidateChatDrawer({
   const refetchChatRef = useRef(query.refetch)
   const markReadRef = useRef(markReadMutation.mutate)
   const chatMessages = (query.data?.messages || []).slice().reverse()
+  const deliveryIssueLabel = `Не удалось доставить сообщение через ${channelLabel}`
 
   useEffect(() => {
     refetchChatRef.current = query.refetch
@@ -158,10 +160,10 @@ export function CandidateChatDrawer({
                   <h3 className="candidate-chat-drawer__title">Чат с кандидатом</h3>
                   <p className="subtitle">
                     Ответ будет отправлен через {channelLabel}
-                    {channelHealth?.last_outbound_delivery?.status ? ` · last send: ${channelHealth.last_outbound_delivery.status}` : ''}
+                    {channelHealth?.last_outbound_delivery?.status ? ` · последняя отправка: ${formatChannelDeliveryStatus(channelHealth.last_outbound_delivery.status)}` : ''}
                   </p>
                   {channelHealth?.last_outbound_delivery?.error ? (
-                    <p className="subtitle subtitle--danger" style={{ marginTop: 4 }}>{channelHealth.last_outbound_delivery.error}</p>
+                    <p className="subtitle subtitle--danger" style={{ marginTop: 4 }}>{deliveryIssueLabel}</p>
                   ) : null}
                 </div>
                 <button className="ui-btn ui-btn--ghost" onClick={onClose}>Закрыть</button>

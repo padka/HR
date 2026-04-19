@@ -17,10 +17,6 @@ def _set_admin_credentials(monkeypatch):
     monkeypatch.setenv("ADMIN_USER", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "S3cureAdm1nPass!")
     monkeypatch.setenv("BOT_CALLBACK_SECRET", "prod-callback-secret-0123456789abcdef0123456789abcd")
-    monkeypatch.setenv("MAX_WEBHOOK_SECRET", "prod-max-webhook-secret-0123456789abcdef")
-    monkeypatch.setenv("MAX_WEBHOOK_URL", "https://max.example.test/webhook")
-    monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "https://crm.example.test")
-    monkeypatch.setenv("MAX_BOT_LINK_BASE", "https://max.ru/recruitsmartbot")
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
 
 
@@ -160,93 +156,6 @@ def test_prod_rejects_missing_bot_backend_url_when_bot_enabled(monkeypatch):
         with pytest.raises(RuntimeError) as exc_info:
             settings_module.get_settings()
         assert "BOT_BACKEND_URL" in str(exc_info.value)
-    finally:
-        settings_module.get_settings.cache_clear()
-        import shutil
-        if Path(temp_dir).exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_prod_rejects_missing_max_webhook_secret_when_max_bot_enabled(monkeypatch):
-    """Production must fail if MAX bot is enabled without MAX_WEBHOOK_SECRET."""
-    from backend.core import settings as settings_module
-
-    settings_module.get_settings.cache_clear()
-
-    temp_dir = tempfile.mkdtemp(prefix="test_prod_")
-    try:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        _set_admin_credentials(monkeypatch)
-        monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
-        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-        monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
-        monkeypatch.setenv("DATA_DIR", temp_dir)
-        monkeypatch.setenv("SESSION_SECRET", "test-prod-secret-32chars-long-0123456789abcdef")
-        monkeypatch.setenv("MAX_BOT_ENABLED", "1")
-        monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
-        monkeypatch.delenv("MAX_WEBHOOK_SECRET", raising=False)
-
-        with pytest.raises(RuntimeError) as exc_info:
-            settings_module.get_settings()
-        assert "MAX_WEBHOOK_SECRET" in str(exc_info.value)
-    finally:
-        settings_module.get_settings.cache_clear()
-        import shutil
-        if Path(temp_dir).exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_prod_rejects_missing_max_webhook_url_when_max_bot_enabled(monkeypatch):
-    """Production must fail if MAX bot is enabled without a public webhook URL."""
-    from backend.core import settings as settings_module
-
-    settings_module.get_settings.cache_clear()
-
-    temp_dir = tempfile.mkdtemp(prefix="test_prod_")
-    try:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        _set_admin_credentials(monkeypatch)
-        monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
-        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-        monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
-        monkeypatch.setenv("DATA_DIR", temp_dir)
-        monkeypatch.setenv("SESSION_SECRET", "test-prod-secret-32chars-long-0123456789abcdef")
-        monkeypatch.setenv("MAX_BOT_ENABLED", "1")
-        monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
-        monkeypatch.delenv("MAX_WEBHOOK_URL", raising=False)
-
-        with pytest.raises(RuntimeError) as exc_info:
-            settings_module.get_settings()
-        assert "MAX_WEBHOOK_URL" in str(exc_info.value)
-    finally:
-        settings_module.get_settings.cache_clear()
-        import shutil
-        if Path(temp_dir).exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_prod_rejects_non_public_candidate_portal_url_when_max_bot_enabled(monkeypatch):
-    """Production must fail if MAX bot cannot resolve a public HTTPS candidate portal URL."""
-    from backend.core import settings as settings_module
-
-    settings_module.get_settings.cache_clear()
-
-    temp_dir = tempfile.mkdtemp(prefix="test_prod_")
-    try:
-        monkeypatch.setenv("ENVIRONMENT", "production")
-        _set_admin_credentials(monkeypatch)
-        monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
-        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-        monkeypatch.setenv("NOTIFICATION_BROKER", "redis")
-        monkeypatch.setenv("DATA_DIR", temp_dir)
-        monkeypatch.setenv("SESSION_SECRET", "test-prod-secret-32chars-long-0123456789abcdef")
-        monkeypatch.setenv("MAX_BOT_ENABLED", "1")
-        monkeypatch.setenv("MAX_BOT_TOKEN", "test_max_token")
-        monkeypatch.setenv("CANDIDATE_PORTAL_PUBLIC_URL", "http://localhost:8000")
-
-        with pytest.raises(RuntimeError) as exc_info:
-            settings_module.get_settings()
-        assert "CANDIDATE_PORTAL_PUBLIC_URL" in str(exc_info.value)
     finally:
         settings_module.get_settings.cache_clear()
         import shutil

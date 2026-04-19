@@ -241,7 +241,6 @@ def kb_slot_assignment_reschedule_options(
 def kb_slot_assignment_active(
     assignment_id: int,
     *,
-    portal_url: str | None = None,
     reschedule_token: str | None = None,
     decline_token: str | None = None,
 ) -> InlineKeyboardMarkup:
@@ -270,9 +269,6 @@ def kb_slot_assignment_active(
         )
     if action_row:
         rows.append(action_row)
-    if portal_url:
-        rows.append([InlineKeyboardButton(text="🏢 Компания и этап", web_app=WebAppInfo(url=portal_url))])
-        rows.append([InlineKeyboardButton(text="🌐 Открыть в браузере", url=portal_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

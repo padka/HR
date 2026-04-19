@@ -1190,6 +1190,7 @@ async def _confirm_slot_by_candidate_in_session(
     update_candidate_status: bool = True,
 ) -> CandidateConfirmationResult:
     status_update_candidate_tg_id: Optional[int] = None
+    status_update_candidate_id: Optional[str] = None
     status_update_is_intro_day = False
     slot = await session.scalar(
         select(Slot)
@@ -1258,6 +1259,7 @@ async def _confirm_slot_by_candidate_in_session(
         await _sync_matching_slot_assignment()
         if update_candidate_status:
             status_update_candidate_tg_id = candidate_tg_id
+            status_update_candidate_id = slot.candidate_id
             status_update_is_intro_day = (slot.purpose or "").lower() == "intro_day"
         slot.start_utc = _to_aware_utc(slot.start_utc)
         result = CandidateConfirmationResult(status="already_confirmed", slot=slot)
@@ -1266,6 +1268,7 @@ async def _confirm_slot_by_candidate_in_session(
         await _sync_matching_slot_assignment()
         if update_candidate_status:
             status_update_candidate_tg_id = candidate_tg_id
+            status_update_candidate_id = slot.candidate_id
             status_update_is_intro_day = (slot.purpose or "").lower() == "intro_day"
 
         with session.no_autoflush:
@@ -1297,24 +1300,47 @@ async def _confirm_slot_by_candidate_in_session(
 
     await session.flush()
 
-    if update_candidate_status and status_update_candidate_tg_id is not None:
+    if update_candidate_status and (
+        status_update_candidate_tg_id is not None or status_update_candidate_id
+    ):
         try:
             from backend.domain.candidates.status_service import (
-                set_status_interview_confirmed,
-                set_status_intro_day_confirmed_preliminary,
+                update_candidate_status,
+                update_candidate_status_by_candidate_id,
             )
 
             if status_update_is_intro_day:
-                await set_status_intro_day_confirmed_preliminary(
-                    status_update_candidate_tg_id,
-                    force=True,
-                )
+                if status_update_candidate_tg_id is not None:
+                    await update_candidate_status(
+                        status_update_candidate_tg_id,
+                        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+                        force=True,
+                        session=session,
+                    )
+                elif status_update_candidate_id:
+                    await update_candidate_status_by_candidate_id(
+                        status_update_candidate_id,
+                        CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+                        force=True,
+                        session=session,
+                    )
             else:
-                await set_status_interview_confirmed(status_update_candidate_tg_id)
+                if status_update_candidate_tg_id is not None:
+                    await update_candidate_status(
+                        status_update_candidate_tg_id,
+                        CandidateStatus.INTERVIEW_CONFIRMED,
+                        session=session,
+                    )
+                elif status_update_candidate_id:
+                    await update_candidate_status_by_candidate_id(
+                        status_update_candidate_id,
+                        CandidateStatus.INTERVIEW_CONFIRMED,
+                        session=session,
+                    )
         except Exception:
             logger.exception(
                 "Failed to update candidate status for candidate %s",
-                status_update_candidate_tg_id,
+                status_update_candidate_tg_id or status_update_candidate_id,
             )
 
     if result.slot is not None:
@@ -1322,24 +1348,53 @@ async def _confirm_slot_by_candidate_in_session(
     return result
 
 
-async def _update_candidate_status_after_slot_confirmation(slot: Slot) -> None:
+async def _update_candidate_status_after_slot_confirmation(
+    slot: Slot,
+    *,
+    session: AsyncSession | None = None,
+) -> None:
     candidate_tg_id = slot.candidate_tg_id
-    if candidate_tg_id is None:
+    candidate_id = slot.candidate_id
+    if candidate_tg_id is None and not candidate_id:
         return
     try:
         from backend.domain.candidates.status_service import (
-            set_status_interview_confirmed,
-            set_status_intro_day_confirmed_preliminary,
+            update_candidate_status,
+            update_candidate_status_by_candidate_id,
         )
 
         if (slot.purpose or "").lower() == "intro_day":
-            await set_status_intro_day_confirmed_preliminary(candidate_tg_id, force=True)
+            if candidate_tg_id is not None:
+                await update_candidate_status(
+                    candidate_tg_id,
+                    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+                    force=True,
+                    session=session,
+                )
+            elif candidate_id:
+                await update_candidate_status_by_candidate_id(
+                    candidate_id,
+                    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+                    force=True,
+                    session=session,
+                )
         else:
-            await set_status_interview_confirmed(candidate_tg_id)
+            if candidate_tg_id is not None:
+                await update_candidate_status(
+                    candidate_tg_id,
+                    CandidateStatus.INTERVIEW_CONFIRMED,
+                    session=session,
+                )
+            elif candidate_id:
+                await update_candidate_status_by_candidate_id(
+                    candidate_id,
+                    CandidateStatus.INTERVIEW_CONFIRMED,
+                    session=session,
+                )
     except Exception:
         logger.exception(
             "Failed to update candidate status for candidate %s",
-            candidate_tg_id,
+            candidate_tg_id or candidate_id,
         )
 
 
@@ -1626,6 +1681,16 @@ async def reserve_slot(
                 await set_status_slot_pending(candidate_tg_id)
             except Exception:
                 logger.exception("Failed to update candidate status to SLOT_PENDING for %s", candidate_tg_id)
+    elif candidate_uuid and purpose == "interview":
+        try:
+            from backend.domain.candidates.status_service import update_candidate_status_by_candidate_id
+
+            await update_candidate_status_by_candidate_id(
+                candidate_uuid,
+                CandidateStatus.SLOT_PENDING,
+            )
+        except Exception:
+            logger.exception("Failed to update candidate status to SLOT_PENDING for %s", candidate_uuid)
     return ReservationResult(status="reserved", slot=slot)
 
 
@@ -1649,6 +1714,18 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
                 return slot
 
             slot.status = SlotStatus.BOOKED
+            candidate: Optional[User] = None
+            messenger_channel = "telegram"
+            outbox_candidate_external_id: Optional[str] = None
+            if slot.candidate_id:
+                candidate = await session.scalar(
+                    select(User).where(User.candidate_id == slot.candidate_id)
+                )
+                if candidate is not None:
+                    messenger_channel = _candidate_messenger_channel(candidate)
+                    outbox_candidate_external_id = (
+                        str(getattr(candidate, "max_user_id", "") or "").strip() or None
+                    )
 
             if slot.candidate_tg_id is not None:
                 # Update candidate status to INTERVIEW_SCHEDULED
@@ -1666,14 +1743,52 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
                         "event": "approved",
                         "slot_id": slot.id,
                     },
+                    messenger_channel=messenger_channel,
                     session=session,
                 )
+            elif slot.candidate_id is not None:
+                try:
+                    from backend.domain.candidates.status_service import update_candidate_status_by_candidate_id
+
+                    await update_candidate_status_by_candidate_id(
+                        slot.candidate_id,
+                        CandidateStatus.INTERVIEW_SCHEDULED,
+                        session=session,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to update candidate status to INTERVIEW_SCHEDULED for candidate %s",
+                        slot.candidate_id,
+                    )
+
+                if outbox_candidate_external_id is not None:
+                    await add_outbox_notification(
+                        notification_type="interview_confirmed_candidate",
+                        booking_id=slot.id,
+                        candidate_tg_id=None,
+                        payload={
+                            "event": "approved",
+                            "slot_id": slot.id,
+                            "candidate_external_id": outbox_candidate_external_id,
+                        },
+                        messenger_channel=messenger_channel,
+                        session=session,
+                    )
 
         if not slot:
             return None
         await session.refresh(slot)
         slot.start_utc = _to_aware_utc(slot.start_utc)
         return slot
+
+
+def _candidate_messenger_channel(candidate: User | None) -> str:
+    if candidate is None:
+        return "telegram"
+    return (
+        str(getattr(candidate, "messenger_platform", "") or "").strip().lower()
+        or ("max" if getattr(candidate, "max_user_id", None) else "telegram")
+    )
 
 
 async def _reject_slot_in_session(
@@ -1692,6 +1807,31 @@ async def _reject_slot_in_session(
     candidate_tg_id = slot.candidate_tg_id
     candidate_id = slot.candidate_id
     recruiter_id = slot.recruiter_id
+    candidate: Optional[User] = None
+    if candidate_id is not None:
+        candidate = await session.scalar(select(User).where(User.candidate_id == candidate_id))
+    elif candidate_tg_id is not None:
+        candidate = await session.scalar(select(User).where(User.telegram_id == candidate_tg_id))
+    messenger_channel = _candidate_messenger_channel(candidate)
+    outbox_candidate_external_id = (
+        str(getattr(candidate, "max_user_id", "") or "").strip() or None
+        if candidate is not None
+        else None
+    )
+    rejection_payload = dict(outbox_payload or {})
+    rejection_payload.setdefault("event", outbox_type or "candidate_rejection")
+    rejection_payload.setdefault("booking_id", slot.id)
+    rejection_payload.setdefault("slot_id", slot.id)
+    rejection_payload.setdefault("candidate_id", candidate_id)
+    rejection_payload.setdefault("candidate_tg_id", candidate_tg_id)
+    rejection_payload.setdefault("candidate_name", slot.candidate_fio or getattr(candidate, "fio", None))
+    rejection_payload.setdefault("candidate_fio", slot.candidate_fio or getattr(candidate, "fio", None))
+    rejection_payload.setdefault("candidate_tz", slot.candidate_tz or slot.tz_name)
+    rejection_payload.setdefault("candidate_city_id", slot.candidate_city_id)
+    rejection_payload.setdefault("start_utc", _to_aware_utc(slot.start_utc).isoformat())
+    rejection_payload.setdefault("recruiter_id", recruiter_id)
+    if outbox_candidate_external_id is not None:
+        rejection_payload.setdefault("candidate_external_id", outbox_candidate_external_id)
 
     active_assignment_statuses = (
         SlotAssignmentStatus.OFFERED,
@@ -1751,7 +1891,7 @@ async def _reject_slot_in_session(
                 SlotReservationLock.reservation_date == reservation_date,
             )
         )
-    if update_candidate_status and candidate_tg_id is not None:
+    if update_candidate_status and (candidate_tg_id is not None or candidate_id is not None):
         slot_purpose = getattr(slot, "purpose", "interview")
         try:
             if slot_purpose == "intro_day":
@@ -1759,22 +1899,55 @@ async def _reject_slot_in_session(
                     get_candidate_status,
                     set_status_intro_day_declined_invitation,
                     set_status_intro_day_declined_day_of,
+                    update_candidate_status_by_candidate_id,
                 )
-                from backend.domain.candidates.status import CandidateStatus
+                from backend.domain.candidates.status import CandidateStatus as _CandidateStatus
 
-                current_status = await get_candidate_status(candidate_tg_id)
+                current_status = None
+                if candidate_tg_id is not None:
+                    current_status = await get_candidate_status(candidate_tg_id)
+                elif candidate_id is not None:
+                    candidate = await session.scalar(
+                        select(User).where(User.candidate_id == candidate_id)
+                    )
+                    current_status = getattr(candidate, "candidate_status", None)
 
-                if current_status == CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
-                    await set_status_intro_day_declined_day_of(candidate_tg_id)
+                if current_status == _CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY:
+                    if candidate_id is not None:
+                        await update_candidate_status_by_candidate_id(
+                            candidate_id,
+                            _CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
+                            force=True,
+                            session=session,
+                        )
+                    elif candidate_tg_id is not None:
+                        await set_status_intro_day_declined_day_of(candidate_tg_id)
                 else:
-                    await set_status_intro_day_declined_invitation(candidate_tg_id)
+                    if candidate_id is not None:
+                        await update_candidate_status_by_candidate_id(
+                            candidate_id,
+                            _CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
+                            session=session,
+                        )
+                    elif candidate_tg_id is not None:
+                        await set_status_intro_day_declined_invitation(candidate_tg_id)
             else:
-                from backend.domain.candidates.status_service import set_status_interview_declined
-                await set_status_interview_declined(candidate_tg_id)
+                from backend.domain.candidates.status_service import (
+                    set_status_interview_declined,
+                    update_candidate_status_by_candidate_id,
+                )
+                if candidate_id is not None:
+                    await update_candidate_status_by_candidate_id(
+                        candidate_id,
+                        CandidateStatus.INTERVIEW_DECLINED,
+                        session=session,
+                    )
+                elif candidate_tg_id is not None:
+                    await set_status_interview_declined(candidate_tg_id)
         except Exception:
             logger.exception(
                 "Failed to update candidate status to DECLINED for candidate %s (purpose=%s)",
-                candidate_tg_id,
+                candidate_tg_id or candidate_id,
                 slot_purpose,
             )
 
@@ -1785,13 +1958,14 @@ async def _reject_slot_in_session(
     slot.candidate_tz = None
     slot.candidate_city_id = None
     slot.purpose = "interview"
-    if outbox_type and candidate_tg_id is not None:
+    if outbox_type and (candidate_tg_id is not None or candidate_id is not None):
         await add_outbox_notification(
             notification_type=outbox_type,
             booking_id=slot.id,
             candidate_tg_id=candidate_tg_id,
             recruiter_tg_id=None,
-            payload=outbox_payload or {"event": outbox_type},
+            payload=rejection_payload,
+            messenger_channel=messenger_channel,
             session=session,
         )
     await session.flush()

@@ -19,6 +19,108 @@ export type CandidateAction = {
   requires_slot?: boolean
 }
 
+export type CandidateMaxRolloutActionKind = 'preview' | 'send' | 'reissue' | 'revoke'
+
+export type CandidateMaxRolloutAction = CandidateAction & {
+  kind?: CandidateMaxRolloutActionKind
+}
+
+export type CandidateMaxRolloutPreview = {
+  max_launch_url?: string | null
+  max_chat_url?: string | null
+  message_preview?: string | null
+  expires_at?: string | null
+  dry_run?: boolean
+}
+
+export type CandidateMaxLaunchArtifact = {
+  launch_url?: string | null
+  launch_url_redacted?: string | null
+  chat_url_redacted?: string | null
+}
+
+export type CandidateMaxLaunchObservation = {
+  launched?: boolean
+  launched_at?: string | null
+  access_session_id?: number | null
+  provider_bound?: boolean
+}
+
+export type CandidateMaxLaunchInviteRequest = {
+  application_id?: number | null
+  dry_run?: boolean
+  send?: boolean
+  reuse_policy?: 'reuse_active' | 'rotate_active'
+}
+
+export type CandidateMaxLaunchInviteResponse = {
+  ok?: boolean
+  status?: 'preview_ready' | 'issued' | 'sent' | 'send_failed' | 'revoked' | string
+  dry_run?: boolean
+  send_requested?: boolean
+  reused_existing?: boolean
+  invite_state?: 'active' | 'launched' | 'revoked' | 'expired' | string
+  send_state?: 'preview_only' | 'sent' | 'failed' | 'not_sent' | string
+  launch_state?: 'not_launched' | 'launched' | string
+  message_preview?: string | null
+  expires_at?: string | null
+  revoked_at?: string | null
+  access_token_id?: number | null
+  correlation_id?: string | null
+  application_id?: number | null
+  launch_observation?: CandidateMaxLaunchObservation | null
+  launch_artifact?: CandidateMaxLaunchArtifact | null
+  summary?: CandidateMaxRollout | null
+}
+
+export type CandidateMaxRollout = {
+  enabled?: boolean
+  status?: string | null
+  status_label?: string | null
+  summary?: string | null
+  hint?: string | null
+  issued_at?: string | null
+  sent_at?: string | null
+  expires_at?: string | null
+  revoked_at?: string | null
+  dry_run?: boolean
+  application_id?: number | null
+  max_launch_url?: string | null
+  max_chat_url?: string | null
+  message_preview?: string | null
+  preview?: CandidateMaxRolloutPreview | null
+  actions?: Partial<Record<CandidateMaxRolloutActionKind, CandidateMaxRolloutAction | null>> | null
+  preview_action?: CandidateMaxRolloutAction | null
+  send_action?: CandidateMaxRolloutAction | null
+  reissue_action?: CandidateMaxRolloutAction | null
+  revoke_action?: CandidateMaxRolloutAction | null
+  preview_action_key?: string | null
+  send_action_key?: string | null
+  reissue_action_key?: string | null
+  revoke_action_key?: string | null
+  invite_state?: 'active' | 'launched' | 'revoked' | 'expired' | 'not_issued' | string
+  send_state?: 'preview_only' | 'sent' | 'failed' | 'not_sent' | string
+  launch_state?: 'not_launched' | 'launched' | string
+  launch_observation?: CandidateMaxLaunchObservation | null
+  access_token_id?: number | null
+  correlation_id?: string | null
+  flow_statuses?: Array<{
+    key?: string | null
+    label?: string | null
+    status?: string | null
+    status_label?: string | null
+    detail?: string | null
+  }>
+}
+
+export type CandidateMaxRolloutSnapshot = {
+  enabled?: boolean
+  invite_state?: 'active' | 'launched' | 'revoked' | 'expired' | 'not_issued' | string
+  send_state?: 'preview_only' | 'sent' | 'failed' | 'not_sent' | string
+  launch_state?: 'not_launched' | 'launched' | string
+  launched_at?: string | null
+}
+
 export type CandidateSlot = {
   id: number
   status?: string | null
@@ -29,47 +131,17 @@ export type CandidateSlot = {
   candidate_tz?: string | null
 }
 
-export type CandidateMaxLinkPayload = {
-  public_link?: string | null
-  portal_public_url?: string | null
-  portal_entry_ready?: boolean
-  max_entry_ready?: boolean
-  token_valid?: boolean | null
-  bot_profile_resolved?: boolean
-  bot_profile_name?: string | null
-  max_link_base_resolved?: boolean
-  max_link_base_source?: 'env' | 'provider' | 'missing' | null
-  browser_link?: string | null
-  invite_token: string
-  deep_link?: string | null
-  mini_app_link?: string | null
-  invite?: {
-    channel?: string | null
-    status?: string | null
-    rotated?: boolean
-  } | null
-  journey?: {
-    id?: number
-    session_version?: number
-    restarted?: boolean
-  } | null
-  issued_at?: string | null
-  config_errors?: string[] | null
-  delivery_ready?: boolean
-  delivery_block_reason?: string | null
-  readiness_reason?: string | null
-  delivery?: {
-    status?: string | null
-    sent?: boolean
-    attempted?: boolean
-    error?: string | null
-    skipped_reason?: string | null
-  } | null
-}
-
 export type CandidateChannelHealth = {
   candidate_id: number
+  source?: string | null
+  source_label?: string | null
   preferred_channel?: string | null
+  telegram_linked?: boolean
+  max_linked?: boolean
+  linked_channels?: {
+    telegram?: boolean
+    max?: boolean
+  } | null
   telegram?: {
     linked?: boolean
     telegram_id?: number | null
@@ -89,85 +161,14 @@ export type CandidateChannelHealth = {
     conflict?: boolean
   } | null
   last_inbound_at?: string | null
-  last_outbound?: {
-    channel?: string | null
-    status?: string | null
-    delivery_stage?: string | null
-    error?: string | null
-    created_at?: string | null
-    author?: string | null
-    text?: string | null
-  } | null
-  last_portal_access_delivery?: {
-    channel?: string | null
-    status?: string | null
-    delivery_stage?: string | null
-    error?: string | null
-    created_at?: string | null
-    author?: string | null
-    text?: string | null
-  } | null
-  portal_public_url?: string | null
-  shared_portal_url?: string | null
-  shared_portal_ready?: boolean
-  shared_portal_block_reason?: string | null
-  last_shared_portal_sent_at?: string | null
-  last_otp_delivery_channel?: string | null
-  public_link?: string | null
-  portal_entry_ready?: boolean
-  max_entry_ready?: boolean
-  telegram_entry_ready?: boolean
-  token_valid?: boolean | null
-  bot_profile_resolved?: boolean
-  bot_profile_name?: string | null
-  max_link_base_resolved?: boolean
-  max_link_base_source?: 'env' | 'provider' | 'missing' | null
-  browser_link?: string | null
-  mini_app_link?: string | null
-  telegram_link?: string | null
-  config_errors?: string[] | null
-  active_journey_id?: number | null
-  session_version?: number | null
-  last_entry_channel?: string | null
-  last_link_issued_at?: string | null
-  restart_allowed?: boolean
-  delivery_ready?: boolean
-  delivery_block_reason?: string | null
-  telegram_linked?: boolean
-  max_linked?: boolean
+  last_outbound_at?: string | null
   last_outbound_delivery?: {
-    channel?: string | null
     status?: string | null
     delivery_stage?: string | null
     error?: string | null
+    channel?: string | null
     created_at?: string | null
   } | null
-  conflict_badge?: boolean
-  degraded_channels?: Record<string, { status?: string | null; degraded_reason?: string | null; reason?: string | null }> | null
-}
-
-export type CandidateHhEntryDelivery = {
-  ready?: boolean
-  blocked_reason?: string | null
-  hh_entry_url?: string | null
-  shared_portal_url?: string | null
-  shared_portal_ready?: boolean
-  cabinet_url?: string | null
-  last_sent_at?: string | null
-  last_status?: string | null
-  last_block_reason?: string | null
-  last_action_name?: string | null
-  last_otp_delivery_channel?: string | null
-  selected_channel?: string | null
-  fallback_channel_options?: string[]
-  channels?: Record<string, {
-    channel?: string | null
-    enabled?: boolean
-    launch_url?: string | null
-    reason_if_blocked?: string | null
-    requires_bot_start?: boolean
-    type?: string | null
-  }>
 }
 
 export type TestQuestionAnswer = {
@@ -350,6 +351,16 @@ export type CandidateListCard = {
   telegram_user_id?: number | string | null
   telegram_username?: string | null
   telegram_linked_at?: string | null
+  linked_channels?: {
+    telegram?: boolean
+    max?: boolean
+  } | null
+  max?: {
+    linked?: boolean
+    max_user_id?: string | null
+  } | null
+  preferred_channel?: string | null
+  max_rollout?: CandidateMaxRolloutSnapshot | null
   status?: CandidateStatusView | null
   journey?: CandidateJourney | null
   archive?: CandidateArchive | null
@@ -376,9 +387,13 @@ export type CandidateListCard = {
   group?: { key?: string | null; label?: string | null } | null
   average_score?: number | null
   avg_score?: number | null
+  ai_relevance_score?: number | null
+  ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
+  ai_relevance_updated_at?: string | null
   recruiter_id?: number | null
   recruiter_name?: string | null
   recruiter?: { id?: number | null; name?: string | null } | null
+  candidate_actions?: CandidateAction[]
 }
 
 export type CandidateListItem = {
@@ -387,15 +402,31 @@ export type CandidateListItem = {
   city?: string | null
   status?: CandidateStatusView | null
   telegram_id?: number | string | null
+  telegram_username?: string | null
+  telegram_linked_at?: string | null
+  linked_channels?: {
+    telegram?: boolean
+    max?: boolean
+  } | null
+  max?: {
+    linked?: boolean
+    max_user_id?: string | null
+  } | null
+  preferred_channel?: string | null
+  max_rollout?: CandidateMaxRolloutSnapshot | null
   recruiter_id?: number | null
   recruiter_name?: string | null
   recruiter?: { id?: number | null; name?: string | null } | null
   average_score?: number | null
+  ai_relevance_score?: number | null
+  ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
+  ai_relevance_updated_at?: string | null
   tests_total?: number | null
   primary_event_at?: string | null
   latest_message?: { created_at?: string | null } | null
   latest_slot?: { start_utc?: string | null } | null
   upcoming_slot?: { start_utc?: string | null } | null
+  candidate_actions?: CandidateAction[]
 }
 
 export type CandidateCalendarDay = {
@@ -491,10 +522,19 @@ export type CandidateDetail = {
   hh_vacancy_id?: string | null
   hh_sync_status?: string | null
   hh_sync_error?: string | null
+  source?: string | null
+  source_label?: string | null
   messenger_platform?: string | null
-  max_user_id?: string | null
+  linked_channels?: {
+    telegram?: boolean
+    max?: boolean
+  } | null
+  max?: {
+    linked?: boolean
+    max_user_id?: string | null
+  } | null
   channel_health?: CandidateChannelHealth | null
-  candidate_portal_url?: string | null
+  max_rollout?: CandidateMaxRollout | null
   phone?: string | null
   is_active?: boolean
   stage?: string | null
@@ -686,55 +726,6 @@ export type CandidateHHSummary = {
     created_at?: string | null
     finished_at?: string | null
   }>
-  entry_delivery?: CandidateHhEntryDelivery | null
-}
-
-export type CandidateHhSendEntryPayload = {
-  ok: boolean
-  sent?: boolean
-  blocked_reason?: string | null
-  fallback_channel_options?: string[]
-  cabinet_url?: string | null
-  hh_entry_url?: string | null
-  shared_portal_url?: string | null
-  action_id?: string | null
-  action_name?: string | null
-  resulting_employer_state?: {
-    id?: string | null
-    name?: string | null
-  } | null
-  channels?: CandidateHhEntryDelivery['channels']
-}
-
-export type CandidateBulkSharedPortalSendPayload = {
-  ok: boolean
-  sent: Array<{
-    candidate_id: number
-    fio?: string | null
-    shared_portal_url?: string | null
-    cabinet_url?: string | null
-    action_id?: string | null
-  }>
-  blocked: Array<{
-    candidate_id: number
-    fio?: string | null
-    reason?: string | null
-    shared_portal_url?: string | null
-    cabinet_url?: string | null
-  }>
-  skipped: Array<{
-    candidate_id: number
-    fio?: string | null
-    reason?: string | null
-    shared_portal_url?: string | null
-    cabinet_url?: string | null
-  }>
-  summary: {
-    requested: number
-    sent: number
-    blocked: number
-    skipped: number
-  }
 }
 
 export type AIRiskItem = {
@@ -999,32 +990,38 @@ export function fetchCandidateDetail(candidateId: number) {
   return apiFetch<CandidateDetail>(`/candidates/${candidateId}`)
 }
 
+export function issueCandidateMaxLaunchInvite(
+  candidateId: number,
+  payload: CandidateMaxLaunchInviteRequest,
+) {
+  return apiFetch<CandidateMaxLaunchInviteResponse>(
+    `/candidates/${candidateId}/max-launch-invite`,
+    {
+      method: 'POST',
+      body: payload,
+    },
+  )
+}
+
+export function revokeCandidateMaxLaunchInvite(
+  candidateId: number,
+  applicationId?: number | null,
+) {
+  const search = applicationId ? `?application_id=${encodeURIComponent(String(applicationId))}` : ''
+  return apiFetch<CandidateMaxLaunchInviteResponse>(
+    `/candidates/${candidateId}/max-launch-invite/revoke${search}`,
+    {
+      method: 'POST',
+    },
+  )
+}
+
 export function fetchCandidateChannelHealth(candidateId: number) {
-  return apiFetch<CandidateChannelHealth>(`/candidates/${candidateId}/channel-health`).then((payload) => ({
-    ...payload,
-    telegram_linked: Boolean(payload.telegram?.linked),
-    max_linked: Boolean(payload.max?.linked),
-    last_outbound_delivery: payload.last_outbound ?? null,
-    last_portal_access_delivery: payload.last_portal_access_delivery ?? null,
-    conflict_badge: Boolean(payload.active_invite?.conflict),
-  }))
+  return apiFetch<CandidateChannelHealth>(`/candidates/${candidateId}/channel-health`)
 }
 
 export function fetchCandidateHHSummary(candidateId: number) {
   return apiFetch<CandidateHHSummary>(`/candidates/${candidateId}/hh`)
-}
-
-export function sendCandidateHhEntryLink(candidateId: number) {
-  return apiFetch<CandidateHhSendEntryPayload>(`/candidates/${candidateId}/hh/send-entry-link`, {
-    method: 'POST',
-  })
-}
-
-export function bulkSendSharedPortalInHh(candidateIds: number[]) {
-  return apiFetch<CandidateBulkSharedPortalSendPayload>('/candidates/hh/send-shared-portal', {
-    method: 'POST',
-    body: JSON.stringify({ candidate_ids: candidateIds }),
-  })
 }
 
 export function fetchCandidateCohortComparison(candidateId: number) {
@@ -1058,18 +1055,6 @@ export function sendCandidateChatMessage(candidateId: number, text: string, clie
 
 export function markCandidateChatRead(candidateId: number) {
   return apiFetch(`/candidate-chat/threads/${candidateId}/read`, {
-    method: 'POST',
-  })
-}
-
-export function createCandidateMaxLink(candidateId: number) {
-  return apiFetch<CandidateMaxLinkPayload>(`/candidates/${candidateId}/channels/max-link`, {
-    method: 'POST',
-  })
-}
-
-export function restartCandidatePortal(candidateId: number) {
-  return apiFetch<CandidateMaxLinkPayload>(`/candidates/${candidateId}/portal/restart`, {
     method: 'POST',
   })
 }

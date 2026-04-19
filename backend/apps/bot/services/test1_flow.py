@@ -1,14 +1,61 @@
+# ruff: noqa: E402,F403,F405,I001,UP037
+from __future__ import annotations
+
+from sqlalchemy import select
+
+from backend.core.db import async_session
+from backend.domain.applications import (
+    ApplicationEventCommand,
+    ApplicationEventPublisher,
+    ApplicationEventType,
+    PrimaryApplicationResolver,
+    ResolutionStatus,
+    ResolverContext,
+    SqlAlchemyApplicationEventRepository,
+    SqlAlchemyApplicationResolverRepository,
+    SqlAlchemyApplicationUnitOfWork,
+)
+from backend.domain.candidates.models import (
+    CandidateJourneySession,
+    CandidateJourneyStepState,
+    TestResult,
+    User,
+)
+from backend.domain.candidates.test1_shared import (
+    TEST1_STEP_KEY,
+    Test1DraftState,
+    complete_test1_for_candidate,
+    serialize_step_payload,
+)
+from backend.domain.candidates.screening_decision import (
+    ScreeningDecisionOutcome,
+    ScreeningDecisionResult,
+    ScreeningSignals,
+    ScreeningTestResultSnapshot,
+)
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.status_service import (
+    apply_candidate_status,
+    set_status_test1_completed,
+    set_status_waiting_slot,
+)
+from backend.domain.slot_offer_policy import (
+    InterviewOfferMode,
+    InterviewOfferPlan,
+)
+
 """Test 1 flow services."""
 
 from . import base as _base
+from .base import *  # noqa: F403
+from .broadcast import _share_test1_with_recruiters, notify_recruiters_waiting_slot
+from .slot_flow import send_manual_scheduling_prompt
 
 for _name in dir(_base):
     if _name.startswith("__") and _name.endswith("__"):
         continue
     globals()[_name] = getattr(_base, _name)
 
-from .broadcast import _share_test1_with_recruiters, notify_recruiters_waiting_slot
-from .slot_flow import send_manual_scheduling_prompt
 
 @dataclass
 class Test1AnswerResult:
@@ -18,6 +65,15 @@ class Test1AnswerResult:
     reason: Optional[str] = None
     template_key: Optional[str] = None
     template_context: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Test1CompletionScreeningResult:
+    candidate: User
+    screening_decision: ScreeningDecisionResult | Dict[str, Any] | None
+    interview_offer: Dict[str, Any] | None = None
+    required_next_action: str | None = None
+    current_step_key: str | None = None
 
 
 REJECTION_TEMPLATES: Dict[str, str] = {
@@ -433,6 +489,538 @@ def _shorten_answer(text: str, limit: int = 80) -> str:
     return clean[: limit - 1] + "…"
 
 
+def _build_test1_result_snapshot(
+    *,
+    test_result: TestResult,
+    sequence: List[Dict[str, Any]],
+    answers: Dict[str, Any],
+) -> ScreeningTestResultSnapshot:
+    answered_questions = 0
+    for idx, question in enumerate(sequence):
+        qid = _ensure_question_id(question, idx)
+        if str(answers.get(qid, "")).strip():
+            answered_questions += 1
+    return ScreeningTestResultSnapshot(
+        raw_score=test_result.raw_score,
+        final_score=test_result.final_score,
+        total_questions=len(sequence),
+        answered_questions=answered_questions,
+        completed_at=test_result.created_at,
+        rating=test_result.rating,
+        source=test_result.source,
+    )
+
+
+def _build_test1_question_data(
+    *,
+    sequence: List[Dict[str, Any]],
+    answers: Dict[str, Any],
+) -> list[dict[str, Any]]:
+    question_data: list[dict[str, Any]] = []
+    for idx, question in enumerate(sequence, start=1):
+        prompt = question.get("prompt", "")
+        qid = question.get("id")
+        answer = answers.get(qid, "")
+        question_data.append(
+            {
+                "question_index": idx,
+                "question_text": prompt,
+                "correct_answer": None,
+                "user_answer": answer,
+                "attempts_count": 1 if answer else 0,
+                "time_spent": 0,
+                "is_correct": True,
+                "overtime": False,
+            }
+        )
+    return question_data
+
+
+def _build_test1_screening_signals(
+    *,
+    state: Dict[str, Any],
+    candidate: User | None,
+) -> ScreeningSignals:
+    missing_data: list[str] = []
+    if not str(state.get("fio") or "").strip():
+        missing_data.append("fio")
+    if state.get("city_id") is None:
+        missing_data.append("city_id")
+    if not str(state.get("candidate_tz") or "").strip():
+        missing_data.append("candidate_tz")
+    if candidate is None or not str(candidate.candidate_id or "").strip():
+        missing_data.append("candidate_anchor")
+
+    clarification_signals: list[str] = []
+    if str(state.get("format_choice") or "").strip() == "Нужен гибкий график":
+        clarification_signals.append("format_requires_clarification")
+
+    soft_blockers: list[str] = []
+    if str(state.get("study_schedule") or "").strip() == "Смогу, но нужен запас по времени":
+        soft_blockers.append("study_schedule_needs_buffer")
+
+    return ScreeningSignals(
+        hard_blockers=(),
+        soft_blockers=tuple(soft_blockers),
+        missing_data=tuple(missing_data),
+        clarification_signals=tuple(clarification_signals),
+        operational_holds=(),
+        notes=(),
+    )
+
+
+def _screening_followup_text(
+    *,
+    done_text: str,
+    decision: ScreeningDecisionResult | Dict[str, Any],
+) -> str:
+    outcome = getattr(decision, "outcome", None)
+    if not isinstance(outcome, ScreeningDecisionOutcome):
+        raw_outcome = outcome if isinstance(outcome, str) else None
+        if raw_outcome is None and isinstance(decision, dict):
+            raw_outcome = str(decision.get("outcome") or "").strip()
+        try:
+            outcome = ScreeningDecisionOutcome(str(raw_outcome))
+        except ValueError:
+            return done_text
+
+    outcome_notes = {
+        ScreeningDecisionOutcome.MANUAL_REVIEW: (
+            "Анкета передана рекрутеру на ручную проверку. "
+            "Мы свяжемся с вами после проверки."
+        ),
+        ScreeningDecisionOutcome.ASK_CLARIFICATION: (
+            "Нужно уточнить несколько деталей по анкете. "
+            "Рекрутер свяжется с вами после проверки."
+        ),
+        ScreeningDecisionOutcome.HOLD: (
+            "Анкета сохранена. Сейчас автоматически продолжить процесс нельзя, "
+            "поэтому рекрутер вернётся к вам позже."
+        ),
+        ScreeningDecisionOutcome.NOT_QUALIFIED_REQUIRES_HUMAN_REVIEW: (
+            "Анкета передана рекрутеру на дополнительную проверку. "
+            "Финальное решение будет принимать человек."
+        ),
+    }
+    note = outcome_notes.get(outcome)
+    if not note:
+        return done_text
+    if done_text:
+        return f"{done_text}\n\n{note}"
+    return note
+
+
+def _render_interview_offer_plan_message(
+    *,
+    plan: InterviewOfferPlan,
+    candidate_tz: str,
+) -> str:
+    if plan.mode == InterviewOfferMode.SINGLE:
+        title = "Мы подобрали ближайшее время для собеседования:"
+    else:
+        title = "Мы подобрали несколько ближайших вариантов для собеседования:"
+
+    lines = [title]
+    for index, option in enumerate(plan.options, start=1):
+        dt_label = fmt_dt_local(option.start_utc, candidate_tz)
+        prefix = "Рекомендуем" if option.is_recommended else f"Вариант {index}"
+        lines.append(f"{prefix}: {dt_label}")
+    lines.append("")
+    lines.append("Ниже можно продолжить назначение через стандартный сценарий.")
+    return "\n".join(lines)
+
+
+def _render_interview_offer_payload_message(
+    *,
+    offer_payload: Dict[str, Any],
+    candidate_tz: str,
+) -> str:
+    mode = str(offer_payload.get("mode") or InterviewOfferMode.SHORTLIST.value)
+    if mode == InterviewOfferMode.SINGLE.value:
+        title = "Мы подобрали ближайшее время для собеседования:"
+    else:
+        title = "Мы подобрали несколько ближайших вариантов для собеседования:"
+
+    lines = [title]
+    for index, option in enumerate(list(offer_payload.get("options") or []), start=1):
+        raw_start = str(option.get("start_utc") or "")
+        dt_label = raw_start
+        if raw_start:
+            try:
+                dt_label = fmt_dt_local(datetime.fromisoformat(raw_start), candidate_tz)
+            except ValueError:
+                dt_label = raw_start
+        prefix = "Рекомендуем" if option.get("is_recommended") else f"Вариант {index}"
+        lines.append(f"{prefix}: {dt_label}")
+    lines.append("")
+    lines.append("Ниже можно продолжить назначение через стандартный сценарий.")
+    return "\n".join(lines)
+
+
+def _build_test1_status_dual_write_request(
+    *,
+    candidate_id: int,
+    status_from: str | None,
+    status_to: CandidateStatus,
+    source_ref: str,
+    correlation_id: str,
+    base_idempotency_key: str,
+) -> object:
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        CandidateStatusDualWriteRequest,
+        build_candidate_status_payload_fingerprint,
+    )
+
+    return CandidateStatusDualWriteRequest(
+        idempotency_key=f"{base_idempotency_key}:{status_to.value}",
+        correlation_id=correlation_id,
+        payload_fingerprint=build_candidate_status_payload_fingerprint(
+            candidate_id=candidate_id,
+            status_to=status_to,
+            reason=None,
+            comment=None,
+            principal_type="system",
+            principal_id="bot_test1_flow",
+            source_ref=source_ref,
+        ),
+        principal_type="system",
+        principal_id="bot_test1_flow",
+        source_ref=source_ref,
+    )
+
+
+def _resolve_screening_application_anchor_sync(
+    sync_session,
+    *,
+    candidate_id: int,
+    correlation_id: str,
+) -> tuple[int, int | None]:
+    uow = SqlAlchemyApplicationUnitOfWork(sync_session)
+    resolver = PrimaryApplicationResolver(
+        SqlAlchemyApplicationResolverRepository(sync_session, uow=uow)
+    )
+    with uow.begin():
+        resolution = resolver.ensure_application_for_candidate(
+            candidate_id,
+            ResolverContext(
+                producer_family="bot_test1_screening",
+                source_system="bot",
+                source_ref="bot:test1:screening_anchor",
+                candidate_id=candidate_id,
+                actor_type="system",
+                actor_id="bot_test1_flow",
+                correlation_id=correlation_id,
+                allow_create=True,
+                require_application_anchor=True,
+            ),
+        )
+        if resolution.status not in {ResolutionStatus.RESOLVED, ResolutionStatus.CREATED}:
+            raise RuntimeError(
+                "bot test1 screening could not resolve a primary application"
+            )
+        if resolution.application_id is None:
+            raise RuntimeError("bot test1 screening returned no application id")
+        return resolution.application_id, resolution.requisition_id
+
+
+def _publish_test1_screening_events_sync(
+    sync_session,
+    *,
+    candidate_id: int,
+    application_id: int,
+    requisition_id: int | None,
+    test_result: TestResult,
+    decision: ScreeningDecisionResult,
+    correlation_id: str,
+    base_idempotency_key: str,
+) -> None:
+    uow = SqlAlchemyApplicationUnitOfWork(sync_session)
+    publisher = ApplicationEventPublisher(
+        SqlAlchemyApplicationEventRepository(sync_session, uow=uow)
+    )
+    base_metadata = {
+        "test_kind": "test1",
+        "test_result_id": int(test_result.id),
+        "decision_outcome": decision.outcome.value,
+        "reason_code": decision.reason_code,
+        "required_next_action": decision.required_next_action.value,
+        "strictness": decision.strictness.value,
+        "screening_payload": dict(decision.event_payload),
+    }
+    with uow.begin():
+        publisher.publish_application_event(
+            ApplicationEventCommand(
+                producer_family="bot_test1_screening",
+                idempotency_key=f"{base_idempotency_key}:assessment.completed",
+                event_type=ApplicationEventType.ASSESSMENT_COMPLETED.value,
+                candidate_id=candidate_id,
+                source_system="bot",
+                source_ref="bot:test1:assessment_completed",
+                correlation_id=correlation_id,
+                actor_type="system",
+                actor_id="bot_test1_flow",
+                application_id=application_id,
+                requisition_id=requisition_id,
+                channel="telegram",
+                metadata_json=base_metadata,
+            )
+        )
+        publisher.publish_application_event(
+            ApplicationEventCommand(
+                producer_family="bot_test1_screening",
+                idempotency_key=f"{base_idempotency_key}:screening.decision_made",
+                event_type=ApplicationEventType.SCREENING_DECISION_MADE.value,
+                candidate_id=candidate_id,
+                source_system="bot",
+                source_ref="bot:test1:screening_decision",
+                correlation_id=correlation_id,
+                actor_type="system",
+                actor_id="bot_test1_flow",
+                application_id=application_id,
+                requisition_id=requisition_id,
+                channel="telegram",
+                metadata_json=base_metadata,
+            )
+        )
+
+
+async def _apply_test1_screening_statuses(
+    *,
+    candidate: User,
+    decision: ScreeningDecisionResult,
+    test_result: TestResult,
+) -> tuple[int | None, int | None]:
+    from backend.apps.admin_ui.services.candidates.application_dual_write import (
+        claim_candidate_status_transition,
+        finalize_candidate_status_dual_write,
+    )
+
+    if not get_settings().candidate_status_dual_write_enabled:
+        await set_status_test1_completed(candidate.telegram_id)
+        if decision.outcome == ScreeningDecisionOutcome.INVITE_TO_INTERVIEW:
+            await set_status_waiting_slot(candidate.telegram_id)
+        return None, None
+
+    correlation_id = f"bot-test1-{candidate.id}-{test_result.id}"
+    base_idempotency_key = f"bot-test1-{candidate.id}-{test_result.id}"
+
+    async with async_session() as session:
+        async with session.begin():
+            user = await session.scalar(
+                select(User).where(User.id == candidate.id).with_for_update()
+            )
+            if user is None:
+                raise RuntimeError("candidate not found for bot test1 screening status update")
+
+            application_id: int | None = None
+            requisition_id: int | None = None
+
+            async def _transition(target_status: CandidateStatus, *, source_ref: str) -> None:
+                nonlocal application_id, requisition_id
+                current_status = getattr(getattr(user, "candidate_status", None), "value", None)
+                if current_status == target_status.value:
+                    return
+                request = _build_test1_status_dual_write_request(
+                    candidate_id=int(user.id),
+                    status_from=current_status,
+                    status_to=target_status,
+                    source_ref=source_ref,
+                    correlation_id=correlation_id,
+                    base_idempotency_key=base_idempotency_key,
+                )
+                claim = await claim_candidate_status_transition(session, request)
+                if claim.reused:
+                    return
+                await apply_candidate_status(
+                    user,
+                    target_status,
+                    session=session,
+                    force=True,
+                    actor_type="system",
+                    actor_id=None,
+                    reason="bot test1 screening",
+                )
+                result = await finalize_candidate_status_dual_write(
+                    session,
+                    candidate_id=int(user.id),
+                    status_from=current_status,
+                    status_to=target_status.value,
+                    reason=None,
+                    comment=None,
+                    request=request,
+                )
+                application_id = result.application_id
+                requisition_id = result.requisition_id
+
+            await _transition(
+                CandidateStatus.TEST1_COMPLETED,
+                source_ref="bot:test1:test1_completed",
+            )
+            if decision.outcome == ScreeningDecisionOutcome.INVITE_TO_INTERVIEW:
+                await _transition(
+                    CandidateStatus.WAITING_SLOT,
+                    source_ref="bot:test1:waiting_slot",
+                )
+
+            if application_id is None:
+                application_id, requisition_id = await session.run_sync(
+                    _resolve_screening_application_anchor_sync,
+                    candidate_id=int(user.id),
+                    correlation_id=correlation_id,
+                )
+
+            await session.run_sync(
+                _publish_test1_screening_events_sync,
+                candidate_id=int(user.id),
+                application_id=application_id,
+                requisition_id=requisition_id,
+                test_result=test_result,
+                decision=decision,
+                correlation_id=correlation_id,
+                base_idempotency_key=base_idempotency_key,
+            )
+
+            return application_id, requisition_id
+
+
+async def _persist_test1_completion_and_screening(
+    *,
+    user_id: int,
+    state: Dict[str, Any],
+    sequence: List[Dict[str, Any]],
+    answers: Dict[str, Any],
+    screening_enabled: bool,
+) -> Test1CompletionScreeningResult:
+    fio = state.get("fio") or f"TG {user_id}"
+    city_name = state.get("city_name") or ""
+    username = state.get("username") or None
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=user_id,
+        fio=fio,
+        city=city_name,
+        username=username,
+    )
+    draft_payload = dict(state.get("test1_payload") or {})
+    if state.get("fio") is not None:
+        draft_payload.setdefault("fio", state.get("fio"))
+    if state.get("city_id") is not None:
+        draft_payload["city_id"] = state.get("city_id")
+    if state.get("city_name") is not None:
+        draft_payload["city_name"] = state.get("city_name")
+    draft_payload["candidate_tz"] = state.get("candidate_tz") or DEFAULT_TZ
+    for key in (
+        "age",
+        "status",
+        "format_choice",
+        "study_mode",
+        "study_schedule",
+        "study_flex",
+    ):
+        if state.get(key) is not None:
+            draft_payload[key] = state.get(key)
+
+    draft_state = Test1DraftState(
+        answers={str(key): str(value) for key, value in dict(answers or {}).items()},
+        payload=draft_payload,
+        question_ids=[_ensure_question_id(question, idx) for idx, question in enumerate(sequence)],
+        city_id=state.get("city_id"),
+        city_name=state.get("city_name"),
+        candidate_tz=str(state.get("candidate_tz") or DEFAULT_TZ),
+    )
+
+    async with async_session() as session:
+        async with session.begin():
+            candidate_record = await session.scalar(
+                select(User).where(User.id == int(candidate.id)).with_for_update()
+            )
+            if candidate_record is None:
+                raise RuntimeError("candidate not found for bot Test1 completion")
+
+            journey_session = await session.scalar(
+                select(CandidateJourneySession)
+                .where(
+                    CandidateJourneySession.candidate_id == int(candidate.id),
+                    CandidateJourneySession.entry_channel == "telegram",
+                )
+                .order_by(CandidateJourneySession.id.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            if journey_session is None:
+                journey_session = CandidateJourneySession(
+                    candidate_id=int(candidate.id),
+                    entry_channel="telegram",
+                    current_step_key=TEST1_STEP_KEY,
+                    last_surface="telegram_bot",
+                    last_auth_method="telegram_bot",
+                )
+                session.add(journey_session)
+                await session.flush()
+
+            journey_session.current_step_key = TEST1_STEP_KEY
+            journey_session.last_surface = "telegram_bot"
+            journey_session.last_auth_method = "telegram_bot"
+
+            step_state = await session.scalar(
+                select(CandidateJourneyStepState)
+                .where(
+                    CandidateJourneyStepState.session_id == int(journey_session.id),
+                    CandidateJourneyStepState.step_key == TEST1_STEP_KEY,
+                )
+                .limit(1)
+                .with_for_update()
+            )
+            if step_state is None:
+                step_state = CandidateJourneyStepState(
+                    session_id=int(journey_session.id),
+                    step_key=TEST1_STEP_KEY,
+                    step_type="form",
+                )
+                session.add(step_state)
+                await session.flush()
+
+            step_state.payload_json = serialize_step_payload(
+                draft_state=draft_state,
+                source="bot",
+                surface="telegram_bot",
+            )
+            step_state.status = "in_progress"
+            step_state.completed_at = None
+
+            shared_completion = await complete_test1_for_candidate(
+                session=session,
+                candidate=candidate_record,
+                journey_session=journey_session,
+                step_state=step_state,
+                source="bot",
+                channel="telegram",
+                surface="telegram_bot",
+                actor_type="system",
+                actor_id="bot_test1_flow",
+            )
+
+    if not screening_enabled and candidate.telegram_id is not None:
+        try:
+            await set_status_waiting_slot(candidate.telegram_id)
+        except Exception:
+            logger.exception(
+                "Failed to preserve legacy waiting_slot status for user %s",
+                candidate.telegram_id,
+            )
+
+    persisted_candidate = await candidate_services.get_user_by_telegram_id(user_id)
+    if persisted_candidate is None:
+        persisted_candidate = candidate
+
+    return Test1CompletionScreeningResult(
+        candidate=persisted_candidate,
+        screening_decision=shared_completion.screening_decision,
+        interview_offer=shared_completion.interview_offer,
+        required_next_action=shared_completion.required_next_action,
+        current_step_key=shared_completion.current_step_key,
+    )
+
+
 async def _mark_test1_question_answered(user_id: int, summary: str) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
@@ -811,6 +1399,7 @@ async def handle_test1_option(callback: CallbackQuery) -> None:
 async def finalize_test1(user_id: int) -> None:
     bot = get_bot()
     state_manager = get_state_manager()
+    settings = get_settings()
     state = await state_manager.get(user_id) or {}
     sequence = state.get("t1_sequence", list(TEST1_QUESTIONS))
     answers = state.get("test1_answers") or {}
@@ -852,62 +1441,34 @@ async def finalize_test1(user_id: int) -> None:
 
     done_text = await _render_tpl(state.get("city_id"), "t1_done")
     manual_prompt_sent = False
+    offer_menu_presented = False
+    screening_enabled = settings.test1_screening_decision_enabled
+    auto_offer_enabled = settings.auto_interview_offer_after_test1_enabled
 
     candidate = None
+    screening_decision = None
     try:
-        fio = state.get("fio") or f"TG {user_id}"
-        city_name = state.get("city_name") or ""
-        username = state.get("username") or None
-        candidate = await candidate_services.create_or_update_user(
-            telegram_id=user_id,
-            fio=fio,
-            city=city_name,
-            username=username,
+        completion = await _persist_test1_completion_and_screening(
+            user_id=user_id,
+            state=state,
+            sequence=sequence,
+            answers=answers,
+            screening_enabled=screening_enabled,
         )
+        candidate = completion.candidate
+        screening_decision = completion.screening_decision
+        screening_outcome = getattr(screening_decision, "outcome", None)
+        if not isinstance(screening_outcome, ScreeningDecisionOutcome):
+            raw_outcome = screening_outcome if isinstance(screening_outcome, str) else None
+            if raw_outcome is None and isinstance(screening_decision, dict):
+                raw_outcome = str(screening_decision.get("outcome") or "")
+            try:
+                screening_outcome = ScreeningDecisionOutcome(str(raw_outcome or ""))
+            except ValueError:
+                screening_outcome = None
 
-        answers = state.get("test1_answers") or {}
-        question_data = []
-        for idx, question in enumerate(sequence, start=1):
-            prompt = question.get("prompt", "")
-            qid = question.get("id")
-            answer = answers.get(qid, "")
-            question_data.append(
-                {
-                    "question_index": idx,
-                    "question_text": prompt,
-                    "correct_answer": None,
-                    "user_answer": answer,
-                    "attempts_count": 1 if answer else 0,
-                    "time_spent": 0,
-                    "is_correct": True,
-                    "overtime": False,
-                }
-            )
-
-        await candidate_services.save_test_result(
-            user_id=candidate.id,
-            raw_score=len(question_data),
-            final_score=float(len(question_data)),
-            rating="TEST1",
-            total_time=int(state.get("test1_duration") or 0),
-            question_data=question_data,
-            source="bot",
-        )
-
-        # Update candidate status to TEST1_COMPLETED (and mark waiting if no slots)
-        try:
-            from backend.domain.candidates.status_service import (
-                set_status_test1_completed,
-                set_status_waiting_slot,
-            )
-
-            await set_status_test1_completed(candidate.telegram_id)
-
-            # В любом случае после теста фиксируем статус ожидания слота,
-            # чтобы кандидат попал во «Входящие». Дополнительно, если слотов нет —
-            # шлём уведомление рекрутёрам.
-            status_updated = await set_status_waiting_slot(candidate.telegram_id)
-
+        if screening_decision is None:
+            status_updated = True
             if candidate.city:
                 city_record = await find_city_by_plain_name(candidate.city)
                 if city_record and not await city_has_available_slots(city_record.id):
@@ -936,8 +1497,92 @@ async def finalize_test1(user_id: int) -> None:
                                 "Failed to prompt candidate %s for manual schedule window",
                                 candidate.telegram_id,
                             )
-        except Exception:
-            logger.exception("Failed to update candidate Test1/slot status for user %s", candidate.telegram_id)
+        elif screening_outcome == ScreeningDecisionOutcome.INVITE_TO_INTERVIEW:
+            if not auto_offer_enabled:
+                status_updated = True
+                if candidate.city:
+                    city_record = await find_city_by_plain_name(candidate.city)
+                    if city_record and not await city_has_available_slots(city_record.id):
+                        if status_updated:
+                            try:
+                                candidate_name = state.get("fio") or f"User {candidate.telegram_id}"
+                                city_name = state.get("city_name") or candidate.city
+                                await notify_recruiters_waiting_slot(
+                                    user_id=candidate.telegram_id,
+                                    candidate_name=candidate_name,
+                                    city_name=city_name,
+                                    city_id=city_record.id,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Failed to notify recruiters about waiting_slot for candidate %s",
+                                    candidate.telegram_id
+                                )
+                            try:
+                                manual_prompt_sent = await send_manual_scheduling_prompt(
+                                    candidate.telegram_id,
+                                    notice=done_text,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Failed to prompt candidate %s for manual schedule window",
+                                    candidate.telegram_id,
+                                )
+            else:
+                interview_offer = dict(completion.interview_offer or {})
+                if (
+                    str(interview_offer.get("mode") or "") == InterviewOfferMode.FALLBACK.value
+                    or not list(interview_offer.get("options") or [])
+                ):
+                    if candidate.city:
+                        city_record = await find_city_by_plain_name(candidate.city)
+                        if city_record is not None:
+                            try:
+                                candidate_name = state.get("fio") or f"User {candidate.telegram_id}"
+                                city_name = state.get("city_name") or candidate.city
+                                await notify_recruiters_waiting_slot(
+                                    user_id=candidate.telegram_id,
+                                    candidate_name=candidate_name,
+                                    city_name=city_name,
+                                    city_id=city_record.id,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Failed to notify recruiters about waiting_slot for candidate %s",
+                                    candidate.telegram_id
+                                )
+                    manual_prompt_sent = await send_manual_scheduling_prompt(
+                        candidate.telegram_id,
+                        notice=done_text,
+                    )
+                else:
+                    combined_text = _screening_followup_text(
+                        done_text=done_text,
+                        decision=screening_decision,
+                    )
+                    if combined_text:
+                        await bot.send_message(candidate.telegram_id, combined_text)
+                    await bot.send_message(
+                        candidate.telegram_id,
+                        _render_interview_offer_payload_message(
+                            offer_payload=interview_offer,
+                            candidate_tz=state.get("candidate_tz") or DEFAULT_TZ,
+                        ),
+                    )
+                    try:
+                        offer_menu_presented = await show_recruiter_menu(candidate.telegram_id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to present recruiter menu after auto-offer for user %s",
+                            candidate.telegram_id,
+                        )
+        else:
+            followup_text = _screening_followup_text(
+                done_text=done_text,
+                decision=screening_decision,
+            )
+            if followup_text:
+                await bot.send_message(candidate.telegram_id, followup_text)
 
         try:
             report_dir = REPORTS_DIR / str(candidate.id)
@@ -952,7 +1597,15 @@ async def finalize_test1(user_id: int) -> None:
     except Exception:  # pragma: no cover - auxiliary sync must not break flow
         logger.exception("Failed to persist candidate profile for Test1")
 
-    if not manual_prompt_sent:
+    should_show_legacy_menu = (
+        screening_decision is None
+        or getattr(screening_decision, "outcome", None) == ScreeningDecisionOutcome.INVITE_TO_INTERVIEW
+        or (
+            isinstance(screening_decision, dict)
+            and screening_decision.get("outcome") == ScreeningDecisionOutcome.INVITE_TO_INTERVIEW.value
+        )
+    )
+    if should_show_legacy_menu and not manual_prompt_sent and not offer_menu_presented:
         try:
             await show_recruiter_menu(user_id, notice=done_text)
         except Exception:

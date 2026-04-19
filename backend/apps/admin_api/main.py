@@ -1,24 +1,68 @@
-from contextlib import asynccontextmanager
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Dict, Any
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, Response
-from fastapi.responses import JSONResponse
-from starlette.middleware.sessions import SessionMiddleware
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.middleware.sessions import SessionMiddleware
 
-from backend.core.db import async_engine, async_session
 from backend.apps.admin_api.admin import mount_admin
-from backend.apps.admin_api.webapp.routers import router as webapp_router
-from backend.apps.admin_api.slot_assignments import router as slot_assignments_router
+from backend.apps.admin_api.candidate_access.router import (
+    router as candidate_access_router,
+)
 from backend.apps.admin_api.hh_integration import router as hh_integration_router
 from backend.apps.admin_api.hh_sync import router as hh_sync_router
+from backend.apps.admin_api.max_launch import router as max_launch_router
+from backend.apps.admin_api.max_miniapp import router as max_miniapp_router
+from backend.apps.admin_api.max_webhook import router as max_webhook_router
+from backend.apps.admin_api.slot_assignments import router as slot_assignments_router
+from backend.apps.admin_api.webapp.recruiter_routers import (
+    router as recruiter_webapp_router,
+)
+from backend.apps.admin_api.webapp.routers import router as webapp_router
+from backend.core.cache import (
+    CacheConfig,
+    connect_cache,
+    disconnect_cache,
+    get_cache,
+    init_cache,
+)
+from backend.core.db import async_engine, async_session
+from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.protocol import MessengerPlatform
+from backend.core.messenger.registry import unregister_adapter
 from backend.core.settings import get_settings
-from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache, get_cache
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SPA_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+SPA_MANIFEST_FILE = SPA_DIST_DIR / "manifest.json"
+SPA_ICONS_DIR = SPA_DIST_DIR / "icons"
+
+
+def _max_launch_validation_detail(exc: RequestValidationError) -> dict[str, str]:
+    errors = exc.errors()
+    normalized_locations = [
+        ".".join(str(part) for part in error.get("loc", ()))
+        for error in errors
+        if isinstance(error, dict)
+    ]
+    if any(location.endswith("init_data") for location in normalized_locations):
+        return {
+            "code": "invalid_init_data",
+            "message": "Откройте кабинет внутри MAX, чтобы передать корректный launch-контекст.",
+        }
+    return {
+        "code": "invalid_launch_request",
+        "message": "MAX launch request is invalid.",
+    }
 
 
 @asynccontextmanager
@@ -52,9 +96,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Cache disabled (no REDIS_URL)")
 
+    max_adapter = None
     try:
+        try:
+            max_adapter = await ensure_max_adapter(settings=settings)
+        except Exception:
+            logger.exception("admin_api.max_adapter_bootstrap_failed")
         yield
     finally:
+        if max_adapter is not None:
+            try:
+                await max_adapter.close()
+            except Exception:
+                logger.debug("admin_api.max_adapter_close_error", exc_info=True)
+            unregister_adapter(MessengerPlatform.MAX)
         # Disconnect cache
         try:
             await disconnect_cache()
@@ -65,6 +120,32 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="TG Bot Admin API", lifespan=lifespan)
+    assets_dir = SPA_DIST_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="spa-assets")
+        logger.info("SPA assets mounted at /assets")
+    else:
+        logger.warning("SPA assets directory not found at %s. Build frontend to enable /miniapp.", assets_dir)
+    if SPA_ICONS_DIR.exists():
+        app.mount("/icons", StaticFiles(directory=str(SPA_ICONS_DIR)), name="spa-icons")
+        logger.info("SPA icons mounted at /icons")
+    else:
+        logger.warning("SPA icons directory not found at %s.", SPA_ICONS_DIR)
+
+    @app.get("/manifest.json", include_in_schema=False, response_class=FileResponse)
+    async def spa_manifest() -> FileResponse:
+        if not SPA_MANIFEST_FILE.exists():
+            raise HTTPException(status_code=404, detail="SPA manifest is not available.")
+        return FileResponse(str(SPA_MANIFEST_FILE))
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/max/launch":
+            detail = _max_launch_validation_detail(exc)
+            logger.warning("admin_api.max_launch_request_invalid", extra={"code": detail["code"]})
+            return JSONResponse(status_code=422, content={"detail": detail})
+        return await request_validation_exception_handler(request, exc)
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -77,8 +158,19 @@ def create_app() -> FastAPI:
     app.include_router(webapp_router, prefix="/api/webapp", tags=["webapp"])
     logger.info("WebApp API router mounted at /api/webapp")
 
+    # Mount bounded MAX mini-app launch boundary
+    app.include_router(max_launch_router, prefix="/api/max", tags=["max"])
+    logger.info("MAX API router mounted at /api/max")
+    app.include_router(max_webhook_router, prefix="/api/max", tags=["max"])
+    logger.info("MAX webhook router mounted at /api/max")
+    app.include_router(max_miniapp_router)
+    logger.info("MAX mini-app shell mounted at /miniapp")
+
+    # Mount shared candidate-access API for candidate-facing surfaces
+    app.include_router(candidate_access_router, prefix="/api/candidate-access", tags=["candidate-access"])
+    logger.info("Candidate access API router mounted at /api/candidate-access")
+
     # Mount Recruiter WebApp API endpoints for Telegram Mini App
-    from backend.apps.admin_api.webapp.recruiter_routers import router as recruiter_webapp_router
     app.include_router(recruiter_webapp_router, prefix="/api/webapp/recruiter", tags=["webapp-recruiter"])
     logger.info("Recruiter WebApp API router mounted at /api/webapp/recruiter")
 
@@ -103,7 +195,7 @@ def create_app() -> FastAPI:
             - 503 if any component is unhealthy
         """
         start_time = time.time()
-        components: Dict[str, Dict[str, Any]] = {}
+        components: dict[str, dict[str, Any]] = {}
         overall_status = "healthy"
         settings = get_settings()
 
@@ -165,7 +257,7 @@ def create_app() -> FastAPI:
         # Build response
         response_data = {
             "status": overall_status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "components": components,
             "response_time_ms": round((time.time() - start_time) * 1000, 2)
         }

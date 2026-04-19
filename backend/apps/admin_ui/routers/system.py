@@ -1,14 +1,32 @@
 import logging
-from typing import Dict
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from sqlalchemy import text
 
+from backend.apps.admin_ui.routers.metrics import (
+    _is_metrics_client_allowlisted,
+    _metrics_enabled,
+)
+from backend.apps.admin_ui.security import (
+    require_admin,
+    require_csrf_token,
+    try_get_current_principal,
+)
 from backend.apps.admin_ui.services.bot_service import (
     BOT_RUNTIME_AVAILABLE,
     IntegrationSwitch,
 )
+from backend.apps.admin_ui.services.max_runtime import (
+    get_max_runtime_snapshot,
+    sync_max_runtime_snapshot,
+)
+from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 
@@ -122,7 +140,11 @@ async def health_check(request: Request) -> JSONResponse:
     )
 
 
-@router.get("/health/bot", include_in_schema=False)
+@router.get(
+    "/health/bot",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin)],
+)
 async def bot_health(request: Request) -> JSONResponse:
     settings = get_settings()
     bot_service = getattr(request.app.state, "bot_service", None)
@@ -150,7 +172,7 @@ async def bot_health(request: Request) -> JSONResponse:
         else "null"
     )
 
-    telegram_probe: Dict[str, object]
+    telegram_probe: dict[str, object]
     if not enabled:
         telegram_probe = {"ok": False, "error": "bot_feature_disabled"}
     elif not runtime_enabled:
@@ -167,7 +189,7 @@ async def bot_health(request: Request) -> JSONResponse:
         except Exception as exc:  # pragma: no cover - network/environment errors
             telegram_probe = {"ok": False, "error": str(exc)}
 
-    state_metrics: Dict[str, object] = {}
+    state_metrics: dict[str, object] = {}
     if state_manager is not None and hasattr(state_manager, "metrics"):
         metrics = state_manager.metrics
         backend = getattr(
@@ -229,7 +251,11 @@ async def bot_health(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
-@router.get("/health/notifications", include_in_schema=False)
+@router.get(
+    "/health/notifications",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin)],
+)
 async def notifications_health(request: Request) -> JSONResponse:
     settings = get_settings()
     switch: IntegrationSwitch | None = getattr(
@@ -343,7 +369,38 @@ async def notifications_health(request: Request) -> JSONResponse:
     return JSONResponse(payload, status_code=status_code)
 
 
-def _format_prometheus_labels(labels: Dict[str, str]) -> str:
+@router.get(
+    "/health/max",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin)],
+)
+async def max_runtime_health() -> JSONResponse:
+    return JSONResponse(await get_max_runtime_snapshot())
+
+
+@router.post(
+    "/health/max/sync",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin)],
+)
+async def sync_max_runtime_health(request: Request) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload, status_code = await sync_max_runtime_snapshot()
+    sync_payload = payload.get("sync") if isinstance(payload, dict) else {}
+    changes = {
+        "ok": bool(sync_payload.get("ok")) if isinstance(sync_payload, dict) else False,
+        "status_code": status_code,
+        "error": sync_payload.get("error") if isinstance(sync_payload, dict) else None,
+    }
+    if isinstance(sync_payload, dict):
+        subscriptions = sync_payload.get("subscriptions")
+        if isinstance(subscriptions, dict):
+            changes["subscription_count"] = int(subscriptions.get("count", 0) or 0)
+    await log_audit_action("max_runtime_sync", "system", 0, changes=changes)
+    return JSONResponse(payload, status_code=status_code)
+
+
+def _format_prometheus_labels(labels: dict[str, str]) -> str:
     if not labels:
         return ""
     escaped = []
@@ -360,6 +417,12 @@ def _format_prometheus_labels(labels: Dict[str, str]) -> str:
 
 @router.get("/metrics/notifications", include_in_schema=False)
 async def notifications_metrics(request: Request) -> PlainTextResponse:
+    if not _metrics_enabled():
+        return PlainTextResponse("metrics disabled\n", status_code=404)
+    principal = await try_get_current_principal(request)
+    if principal is None and not _is_metrics_client_allowlisted(request):
+        return PlainTextResponse("metrics access forbidden\n", status_code=403)
+
     notification_service = getattr(request.app.state, "notification_service", None)
     if notification_service is None:
         return PlainTextResponse(
@@ -373,7 +436,6 @@ async def notifications_metrics(request: Request) -> PlainTextResponse:
     broker_status = await notification_service.broker_ping()
 
     seconds_since_poll = snapshot.get("seconds_since_poll") or 0.0
-    metrics_payload = snapshot.get("metrics", {})
     lines = []
 
     def _emit(name: str, value: float, *, metric_type: str, help_text: str, labels=None):

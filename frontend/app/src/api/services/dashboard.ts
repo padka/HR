@@ -89,8 +89,10 @@ export type IncomingCandidate = {
   ai_relevance_score?: number | null
   ai_relevance_level?: 'high' | 'medium' | 'low' | 'unknown' | null
   ai_relevance_updated_at?: string | null
+  ai_relevance_state?: 'ready' | 'stale' | 'warming' | 'unknown' | null
   ai_recommendation?: 'od_recommended' | 'clarify_before_od' | 'not_recommended' | null
   ai_risk_hint?: string | null
+  ai_reasons?: Array<{ tone: 'positive' | 'risk' | 'missing'; label: string }>
   requested_another_time?: boolean
   requested_another_time_at?: string | null
   requested_another_time_comment?: string | null
@@ -106,6 +108,27 @@ export type IncomingCandidate = {
 
 export type IncomingPayload = {
   items: IncomingCandidate[]
+  queue_total: number
+  total: number
+  page: number
+  page_size: number
+  returned_count: number
+  has_next: boolean
+  has_prev: boolean
+  sort: string
+}
+
+export type FetchDashboardIncomingParams = {
+  limit?: number
+  page?: number
+  pageSize?: number
+  search?: string
+  cityId?: number | null
+  status?: string
+  owner?: string
+  waiting?: string
+  aiLevel?: string
+  sort?: string
 }
 
 export function fetchDashboardSummary() {
@@ -118,6 +141,22 @@ export function fetchDashboardRecruiters() {
 
 export function fetchDashboardIncoming(limit: number) {
   return apiFetch<IncomingPayload>(`/dashboard/incoming?limit=${limit}`)
+}
+
+export function fetchDashboardIncomingWindow(params: FetchDashboardIncomingParams) {
+  const query = new URLSearchParams()
+  if (typeof params.limit === 'number') query.set('limit', String(params.limit))
+  if (typeof params.page === 'number') query.set('page', String(params.page))
+  if (typeof params.pageSize === 'number') query.set('page_size', String(params.pageSize))
+  if (params.search?.trim()) query.set('search', params.search.trim())
+  if (typeof params.cityId === 'number') query.set('city_id', String(params.cityId))
+  if (params.status) query.set('status', params.status)
+  if (params.owner) query.set('owner', params.owner)
+  if (params.waiting) query.set('waiting', params.waiting)
+  if (params.aiLevel) query.set('ai_level', params.aiLevel)
+  if (params.sort) query.set('sort', params.sort)
+  const suffix = query.toString()
+  return apiFetch<IncomingPayload>(`/dashboard/incoming${suffix ? `?${suffix}` : ''}`)
 }
 
 export function fetchCurrentKpis(querySuffix = '') {

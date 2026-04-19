@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ErrorState } from './AppStates'
 
 type ApiErrorBannerProps = {
   error: unknown
@@ -29,22 +30,21 @@ export function ApiErrorBanner({
 }: ApiErrorBannerProps) {
   const message = extractErrorMessage(error)
   return (
-    <div
-      className={className || 'glass panel text-danger'}
-      role="alert"
-      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-    >
-      <strong>{title}</strong>
-      <span>{message}</span>
-      {children}
-      {onRetry && (
-        <div>
+    <ErrorState
+      compact
+      title={title}
+      description={message}
+      cardClassName={className}
+      actions={
+        onRetry ? (
           <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={onRetry}>
             {retryLabel}
           </button>
-        </div>
-      )}
-    </div>
+        ) : undefined
+      }
+    >
+      {children}
+    </ErrorState>
   )
 }
 

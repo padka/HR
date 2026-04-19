@@ -26,7 +26,6 @@ from backend.apps.bot.services import (
     _handle_test1_rejection,
     _resolve_test1_options,
 )
-from backend.domain.candidates.portal_service import CandidateActivityGuard
 from backend.apps.bot.state_store import InMemoryStateStore, StateManager
 
 USER_ID = 555
@@ -702,14 +701,6 @@ async def test_begin_interview_blocks_existing_candidate_with_active_stage(bot_c
         AsyncMock(return_value=SimpleNamespace(id=1)),
     )
     monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.async_session", lambda: _FakeSession())
-    monkeypatch.setattr(
-        "backend.apps.bot.services.onboarding_flow.ensure_candidate_portal_session",
-        AsyncMock(return_value=SimpleNamespace(id=7, session_version=1)),
-    )
-    monkeypatch.setattr(
-        "backend.apps.bot.services.onboarding_flow.resolve_candidate_activity_guard",
-        AsyncMock(return_value=CandidateActivityGuard(blocked=True, code="candidate_screening_locked", state="blocked")),
-    )
     monkeypatch.setattr("backend.apps.bot.services.onboarding_flow._send_active_candidate_summary", summary_mock)
 
     await begin_interview(USER_ID)

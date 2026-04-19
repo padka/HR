@@ -251,7 +251,7 @@ async def recruiter_send_message(
     auth: Dict[str, Any] = Depends(get_recruiter_webapp_auth),
     bot_service: BotService = Depends(provide_bot_service),
 ) -> SuccessResponse:
-    """Send a Telegram message to a candidate from the Mini App."""
+    """Send a candidate message from the Mini App using the candidate's active channel."""
     recruiter = auth["recruiter"]
     from backend.apps.admin_ui.services.recruiter_access import get_candidate_for_recruiter
     from backend.apps.admin_ui.services.chat import send_chat_message
@@ -260,9 +260,6 @@ async def recruiter_send_message(
 
     if candidate is None:
         raise HTTPException(status_code=404, detail="Кандидат не найден")
-
-    if not candidate.telegram_id:
-        raise HTTPException(status_code=400, detail="У кандидата нет Telegram")
 
     result = await send_chat_message(
         candidate.id,

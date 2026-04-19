@@ -7,7 +7,9 @@ from backend.apps.admin_ui.services.dashboard import (
     dashboard_counts,
     get_recruiter_leaderboard,
     get_waiting_candidates,
+    get_waiting_candidates_payload,
 )
+from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.reschedule_intents import get_candidate_reschedule_intent
 from backend.apps.admin_ui.services.slots import api_slots_payload, create_slot, list_slots
 from backend.core.db import async_session
@@ -52,9 +54,63 @@ async def test_waiting_candidates_list_is_capped_to_hundred(monkeypatch):
 
     default_items = await get_waiting_candidates()
     explicit_items = await get_waiting_candidates(limit=500)
+    payload = await get_waiting_candidates_payload(limit=500)
 
     assert len(default_items) == 100
     assert len(explicit_items) == 100
+    assert payload["queue_total"] == 130
+    assert payload["total"] == 130
+    assert len(payload["items"]) == 100
+    assert payload["page"] == 1
+    assert payload["page_size"] == 100
+    assert payload["returned_count"] == 100
+    assert payload["has_next"] is True
+    assert payload["has_prev"] is False
+    assert payload["sort"] == "priority"
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_payload_recomputes_when_cached_shape_is_incomplete(monkeypatch):
+    monkeypatch.delenv("PERF_CACHE_BYPASS", raising=False)
+
+    async with async_session() as session:
+        city = models.City(name="Incoming Legacy Cache City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        candidate = User(
+            fio="Legacy Cache Candidate",
+            city="Incoming Legacy Cache City",
+            telegram_id=910001,
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=datetime.now(timezone.utc) - timedelta(hours=3),
+            last_activity=datetime.now(timezone.utc) - timedelta(hours=3),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+    async def fake_get_or_compute(*_args, **_kwargs):
+        return {
+            "items": [{"id": candidate.id, "name": candidate.fio}],
+            "total": 1,
+        }
+
+    async def fake_set_cached(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("backend.apps.admin_ui.services.dashboard.get_or_compute", fake_get_or_compute)
+    monkeypatch.setattr("backend.apps.admin_ui.services.dashboard.set_cached", fake_set_cached)
+
+    payload = await get_waiting_candidates_payload(page=1, page_size=50)
+
+    assert payload["queue_total"] == 1
+    assert payload["total"] == 1
+    assert payload["returned_count"] == 1
+    assert payload["page"] == 1
+    assert payload["page_size"] == 50
+    assert payload["items"][0]["id"] == candidate.id
 
 
 @pytest.mark.asyncio
@@ -394,8 +450,15 @@ async def test_waiting_candidates_ignore_expired_ai_outputs(monkeypatch):
     row = next(item for item in items if item["id"] == candidate.id)
     assert row["ai_relevance_score"] == 61
     assert row["ai_relevance_level"] == "medium"
+    assert row["ai_relevance_state"] == "ready"
     assert row["ai_recommendation"] == "clarify_before_od"
     assert row["ai_risk_hint"] == "Готовность к полевому формату"
+    assert row["ai_reasons"] == [
+        {
+            "tone": "missing",
+            "label": "Готовность к полевому формату",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -435,8 +498,10 @@ async def test_waiting_candidates_returns_null_ai_and_schedules_background_warm_
     row = next(item for item in items if item["id"] == candidate.id)
     assert row["ai_relevance_score"] is None
     assert row["ai_relevance_level"] is None
+    assert row["ai_relevance_state"] == "warming"
     assert row["ai_recommendation"] is None
     assert row["ai_risk_hint"] is None
+    assert row["ai_reasons"] == []
     assert scheduled_candidate_ids == [candidate.id]
 
 
@@ -476,9 +541,204 @@ async def test_waiting_candidates_limits_background_ai_warm_budget(monkeypatch):
         session.add_all(users)
         await session.commit()
 
-    items = await get_waiting_candidates(limit=20)
+    payload = await get_waiting_candidates_payload(limit=20)
+    items = payload["items"]
     assert len(items) == 12
     assert len(scheduled_candidate_ids) == 10
+    warming_count = sum(1 for item in items if item["ai_relevance_state"] == "warming")
+    unknown_count = sum(1 for item in items if item["ai_relevance_state"] == "unknown")
+    assert warming_count == 10
+    assert unknown_count == 2
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_marks_ai_output_stale_when_candidate_changed_after_snapshot(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City AI Stale", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        candidate = User(
+            fio="AI Stale Candidate",
+            city="Incoming City AI Stale",
+            telegram_id=950001,
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=now - timedelta(minutes=5),
+            last_activity=now - timedelta(minutes=5),
+            is_active=True,
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+
+        session.add(
+            AIOutput(
+                scope_type="candidate",
+                scope_id=candidate.id,
+                kind="candidate_summary_v1",
+                input_hash="stale",
+                payload_json={
+                    "fit": {"score": 88, "level": "high"},
+                    "scorecard": {
+                        "final_score": 88,
+                        "recommendation": "od_recommended",
+                        "metrics": [
+                            {
+                                "key": "field_ready",
+                                "label": "Готов к полевому формату",
+                                "score": 18,
+                                "status": "met",
+                                "evidence": "Подтвердил готовность к разъездному формату.",
+                            }
+                        ],
+                        "blockers": [],
+                        "missing_data": [],
+                    },
+                },
+                created_at=now - timedelta(hours=2),
+                expires_at=now + timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+    payload = await get_waiting_candidates_payload(limit=20)
+    row = next(item for item in payload["items"] if item["id"] == candidate.id)
+    assert row["ai_relevance_state"] == "stale"
+    assert row["ai_reasons"] == [
+        {
+            "tone": "positive",
+            "label": "Готов к полевому формату",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_payload_supports_server_side_paging_and_filters(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City Paging", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        session.add_all(
+            [
+                User(
+                    fio="Alice Incoming",
+                    city="Incoming City Paging",
+                    telegram_id=960001,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=5),
+                    last_activity=now - timedelta(hours=5),
+                    is_active=True,
+                ),
+                User(
+                    fio="Boris Incoming",
+                    city="Incoming City Paging",
+                    telegram_id=960002,
+                    candidate_status=CandidateStatus.STALLED_WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=30),
+                    last_activity=now - timedelta(hours=30),
+                    is_active=True,
+                ),
+                User(
+                    fio="Cedric Incoming",
+                    city="Incoming City Paging",
+                    telegram_id=960003,
+                    candidate_status=CandidateStatus.SLOT_PENDING,
+                    status_changed_at=now - timedelta(hours=3),
+                    last_activity=now - timedelta(hours=3),
+                    is_active=True,
+                ),
+            ]
+        )
+        await session.commit()
+
+    name_sorted_payload = await get_waiting_candidates_payload(
+        page=2,
+        page_size=1,
+        sort="name_asc",
+    )
+    assert name_sorted_payload["queue_total"] == 3
+    assert name_sorted_payload["total"] == 3
+    assert name_sorted_payload["returned_count"] == 1
+    assert name_sorted_payload["has_prev"] is True
+    assert name_sorted_payload["has_next"] is True
+    assert name_sorted_payload["items"][0]["name"] == "Boris Incoming"
+
+    filtered_payload = await get_waiting_candidates_payload(
+        page=1,
+        page_size=10,
+        waiting="24h",
+    )
+    assert filtered_payload["queue_total"] == 3
+    assert filtered_payload["total"] == 1
+    assert filtered_payload["items"][0]["name"] == "Boris Incoming"
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_payload_keeps_recruiter_visibility_rules(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City Recruiter Scope", tz="Europe/Moscow", active=True)
+        owner = models.Recruiter(name="Owner Recruiter", tz="Europe/Moscow", active=True)
+        other = models.Recruiter(name="Other Recruiter", tz="Europe/Moscow", active=True)
+        owner.cities.append(city)
+        session.add_all([city, owner, other])
+        await session.commit()
+        await session.refresh(owner)
+
+        session.add_all(
+            [
+                User(
+                    fio="Assigned To Owner",
+                    city="Incoming City Recruiter Scope",
+                    telegram_id=970001,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=8),
+                    last_activity=now - timedelta(hours=8),
+                    responsible_recruiter_id=owner.id,
+                    is_active=True,
+                ),
+                User(
+                    fio="Unassigned In City",
+                    city="Incoming City Recruiter Scope",
+                    telegram_id=970002,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=4),
+                    last_activity=now - timedelta(hours=4),
+                    responsible_recruiter_id=None,
+                    is_active=True,
+                ),
+                User(
+                    fio="Assigned To Other",
+                    city="Incoming City Recruiter Scope",
+                    telegram_id=970003,
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=2),
+                    last_activity=now - timedelta(hours=2),
+                    responsible_recruiter_id=other.id,
+                    is_active=True,
+                ),
+            ]
+        )
+        await session.commit()
+
+    payload = await get_waiting_candidates_payload(
+        page=1,
+        page_size=10,
+        principal=Principal(type="recruiter", id=owner.id),
+    )
+    assert payload["queue_total"] == 2
+    assert payload["total"] == 2
+    names = {item["name"] for item in payload["items"]}
+    assert names == {"Assigned To Owner", "Unassigned In City"}
 
 
 @pytest.mark.asyncio

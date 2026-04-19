@@ -4,7 +4,7 @@
 - Purpose: Матрица сред и условий, в которых проверяются backend, frontend, browser flows и release candidate.
 - Owner: QA / Platform
 - Status: Canonical, P0
-- Last Reviewed: 2026-03-25
+- Last Reviewed: 2026-04-18
 - Source Paths: `backend/`, `frontend/app/`, `Makefile`, `package.json`, `docs/qa/*`
 - Related Diagrams: `docs/qa/release-gate-v2.md`, `docs/qa/master-test-plan.md`
 - Change Policy: Обновлять при изменении окружений, переменных, портов, тестовых стендов и команд верификации.
@@ -26,6 +26,18 @@
 - Frontend: API base URL, auth/session context, feature flags если есть
 - Bots: runtime-specific credentials и transport-specific endpoints
 - Browser E2E: стабильный base URL, test users, seeded records
+
+## MAX Controlled Pilot Inventory
+| Variable | Where used | Status | Notes |
+| --- | --- | --- | --- |
+| `MAX_INVITE_ROLLOUT_ENABLED` | admin UI rollout gates | active | default-off; controls preview/issue/send/revoke surfaces for pilot recruiters |
+| `MAX_ADAPTER_ENABLED` | settings, MAX launch, runtime bootstrap | active | canonical switch; `MAX_BOT_ENABLED` is a compatibility alias only |
+| `MAX_BOT_TOKEN` | initData validation, adapter bootstrap, send auth | active | required for real launch/send smoke; empty value keeps shell fail-closed |
+| `MAX_PUBLIC_BOT_NAME` | adapter/runtime snapshots | active | used for display and bootstrap metadata |
+| `MAX_MINIAPP_URL` | adapter/runtime snapshots | active | enables open-link affordances in launch capabilities |
+| `MAX_BOT_API_SECRET` | MAX webhook ingress | active | validated via `X-Max-Bot-Api-Secret`; `MAX_WEBHOOK_SECRET` remains a legacy fallback |
+| `MAX_WEBHOOK_URL` | settings inventory | reserved | stored in settings, but not consumed by a current live code path |
+| `MAX_INIT_DATA_MAX_AGE_SECONDS` | launch/auth freshness window | active | default `86400`, minimum `60` |
 
 ## Минимальный набор команд по средам
 ```bash
@@ -49,4 +61,3 @@ stateDiagram-v2
     FullE2E --> Staging
     Staging --> Production
 ```
-

@@ -537,9 +537,12 @@ async def list_threads(
                 "status_slug": _status_slug(user),
                 "profile_url": f"/app/candidates/{user.id}",
                 "telegram_username": user.telegram_username or user.username,
-                "preferred_channel": str(user.messenger_platform or "").strip().lower() or None,
+                "preferred_channel": (
+                    str(getattr(user, "messenger_platform", "") or "").strip().lower()
+                    or ("max" if getattr(user, "max_user_id", None) else "telegram" if (user.telegram_id or user.telegram_user_id) else None)
+                ),
                 "telegram_linked": bool(user.telegram_id or user.telegram_user_id),
-                "max_linked": bool(str(user.max_user_id or "").strip()),
+                "max_linked": bool(getattr(user, "max_user_id", None)),
                 "created_at": _iso(event_at) or datetime.now(timezone.utc).isoformat(),
                 "last_message_at": _iso(last_message_at),
                 "archived_at": _iso(archived_at),

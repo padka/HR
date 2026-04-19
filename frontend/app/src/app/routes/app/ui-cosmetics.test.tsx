@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CandidatePipeline from '@/app/components/CandidatePipeline/CandidatePipeline'
 import { CandidateDetailPage } from './candidate-detail'
+import { CandidatesPage } from './candidates'
 import {
   useCandidateAi,
   useCandidateChat,
@@ -22,6 +23,7 @@ const useQueryMock = vi.fn()
 const useMutationMock = vi.fn()
 const apiFetchMock = vi.fn()
 const navigateMock = vi.fn()
+const invalidateQueriesMock = vi.fn()
 
 type QueryOptionsLike = {
   queryKey?: unknown
@@ -83,7 +85,7 @@ vi.mock('@tanstack/react-query', () => ({
   useQuery: (options: unknown) => useQueryMock(options),
   useMutation: (options: unknown) => useMutationMock(options),
   useQueryClient: () => ({
-    invalidateQueries: vi.fn(),
+    invalidateQueries: invalidateQueriesMock,
     setQueryData: vi.fn(),
   }),
 }))
@@ -104,6 +106,7 @@ const candidateDetailData = {
   city: 'Москва',
   phone: '8 929 001 8227',
   telegram_id: 79990001122,
+  hh_profile_url: 'https://hh.ru/resume/1',
   is_active: true,
   workflow_status: 'intro_day_ready',
   workflow_status_label: 'Готов к ознакомительному дню',
@@ -289,6 +292,35 @@ const candidateDetailData = {
     tests_total: 1,
     average_score: 66.7,
   },
+  max_rollout: {
+    status: 'ready',
+    status_label: 'Готово к предпросмотру',
+    summary: 'Приглашение подготовлено и готово к отправке кандидату.',
+    hint: 'Проверьте предпросмотр перед отправкой.',
+    issued_at: '2031-07-01T08:45:00Z',
+    expires_at: '2031-07-02T08:45:00Z',
+    dry_run: true,
+    launch_state: 'launched',
+    launch_observation: {
+      launched: true,
+      launched_at: '2031-07-01T09:10:00Z',
+      access_session_id: 41,
+      provider_bound: true,
+    },
+    preview: {
+      start_param: 'launch-token',
+      max_launch_url: 'https://max.ru/id312260558067_bot?startapp=launch-token',
+      max_chat_url: 'https://max.ru/id312260558067_bot?start=launch-token',
+      message_preview: '[DRY RUN] Откройте мини-приложение MAX, чтобы продолжить путь кандидата.',
+      expires_at: '2031-07-02T08:45:00Z',
+      dry_run: true,
+    },
+    actions: {
+      send: { key: 'max_pilot_send', label: 'Отправить', method: 'POST' },
+      reissue: { key: 'max_pilot_reissue', label: 'Перевыпустить', method: 'POST' },
+      revoke: { key: 'max_pilot_revoke', label: 'Отозвать', method: 'POST' },
+    },
+  },
 }
 
 const cohortComparisonData = {
@@ -407,6 +439,14 @@ const slotsData = [
 ]
 
 const incomingData = {
+  queue_total: 3,
+  total: 1,
+  page: 1,
+  page_size: 50,
+  returned_count: 1,
+  has_next: true,
+  has_prev: false,
+  sort: 'priority',
   items: [
     {
       id: 11,
@@ -425,8 +465,13 @@ const incomingData = {
       responsible_recruiter_name: 'Рекрутер',
       ai_relevance_score: 74,
       ai_relevance_level: 'medium',
+      ai_relevance_state: 'ready',
       ai_recommendation: 'clarify_before_od',
       ai_risk_hint: 'Нужно отдельно подтвердить готовность к разъездному формату.',
+      ai_reasons: [
+        { tone: 'risk', label: 'Нужно подтвердить готовность к полевому формату' },
+        { tone: 'positive', label: 'Хорошо проходит первичный тест' },
+      ],
       lifecycle_summary: {
         stage: 'waiting_interview_slot',
         stage_label: 'Ожидает слот на интервью',
@@ -574,6 +619,124 @@ const candidateChannelHealthData = {
   },
 }
 
+const candidateListData = {
+  items: [
+    {
+      id: 201,
+      fio: 'Тест Telegram',
+      city: 'Москва',
+      telegram_id: 79990002211,
+      telegram_username: 'telegram_201',
+      telegram_linked_at: '2031-07-01T08:10:00Z',
+      linked_channels: {
+        telegram: true,
+        max: false,
+      },
+      max: {
+        linked: false,
+      },
+      preferred_channel: 'telegram',
+      max_rollout: {
+        invite_state: 'not_issued',
+        send_state: 'not_sent',
+        launch_state: 'not_launched',
+      },
+      recruiter_id: 7,
+      recruiter_name: 'Анна Смирнова',
+      average_score: 77,
+      primary_event_at: '2031-07-02T08:00:00Z',
+      status: {
+        slug: 'lead',
+        label: 'Лид',
+        tone: 'info',
+      },
+      lifecycle_summary: {
+        stage: 'lead',
+        stage_label: 'Лид',
+        record_state: 'active',
+      },
+      candidate_next_action: {
+        label: 'Откройте профиль',
+        explanation: 'Следующий шаг появится после открытия профиля кандидата.',
+        enabled: true,
+      },
+      operational_summary: {
+        worklist_bucket: 'incoming',
+        worklist_bucket_label: 'Входящие',
+        urgency: 'attention',
+        urgency_label: 'Нужно сейчас',
+        next_action_label: 'Откройте профиль',
+        queue_state_label: 'В работе',
+        state_context_line: 'Лид',
+        scheduling_context_line: null,
+      },
+    },
+    {
+      id: 202,
+      fio: 'Тест MAX',
+      city: 'Казань',
+      telegram_id: 79990003322,
+      telegram_username: 'max_202',
+      telegram_linked_at: '2031-07-01T08:15:00Z',
+      linked_channels: {
+        telegram: true,
+        max: true,
+      },
+      max: {
+        linked: true,
+        max_user_id: 'max-202',
+      },
+      preferred_channel: 'max',
+      max_rollout: {
+        invite_state: 'active',
+        send_state: 'sent',
+        launch_state: 'not_launched',
+      },
+      recruiter_id: 7,
+      recruiter_name: 'Анна Смирнова',
+      average_score: 62,
+      primary_event_at: '2031-07-02T09:00:00Z',
+      status: {
+        slug: 'lead',
+        label: 'Лид',
+        tone: 'info',
+      },
+      lifecycle_summary: {
+        stage: 'lead',
+        stage_label: 'Лид',
+        record_state: 'active',
+      },
+      candidate_next_action: {
+        label: 'Откройте профиль',
+        explanation: 'Следующий шаг появится после открытия профиля кандидата.',
+        enabled: true,
+      },
+      operational_summary: {
+        worklist_bucket: 'incoming',
+        worklist_bucket_label: 'Входящие',
+        urgency: 'attention',
+        urgency_label: 'Нужно сейчас',
+        next_action_label: 'Откройте профиль',
+        queue_state_label: 'В работе',
+        state_context_line: 'Лид',
+        scheduling_context_line: null,
+      },
+    },
+  ],
+  total: 2,
+  page: 1,
+  pages_total: 1,
+  filters: {
+    state_options: [{ value: '', label: 'Все кандидаты', kind: 'all' }],
+  },
+  pipeline_options: [{ slug: 'interview', label: 'Интервью' }],
+  views: {
+    candidates: [],
+    kanban: { columns: [] },
+    calendar: { days: [] },
+  },
+}
+
 describe('UI cosmetics smoke', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'scrollTo', {
@@ -585,6 +748,7 @@ describe('UI cosmetics smoke', () => {
     useQueryMock.mockReset()
     useMutationMock.mockReset()
     apiFetchMock.mockReset()
+    invalidateQueriesMock.mockReset()
 
     useProfileMock.mockReturnValue({
       isLoading: false,
@@ -635,6 +799,9 @@ describe('UI cosmetics smoke', () => {
       }
       if (key === 'slots') {
         return { ...baseQueryResult, data: slotsData }
+      }
+      if (key === 'candidates') {
+        return { ...baseQueryResult, data: candidateListData }
       }
       if (key === 'cities') {
         return { ...baseQueryResult, data: [{ id: 1, name: 'Москва', tz: 'Europe/Moscow' }] }
@@ -734,29 +901,41 @@ describe('UI cosmetics smoke', () => {
     expect(filterBar).toBeInTheDocument()
     expect(filterBar).toHaveClass('filter-bar')
 
-    expect(screen.getByTestId('incoming-lanes')).toBeInTheDocument()
-    expect(screen.getByText('Требует разбора')).toBeInTheDocument()
-    const cards = screen.getAllByTestId('incoming-card')
-    expect(cards.length).toBeGreaterThan(0)
-    expect(cards[0]).toHaveClass('incoming-card')
-    expect(screen.getByText('Ожидает слот на интервью')).toBeInTheDocument()
+    expect(screen.getByTestId('incoming-list')).toBeInTheDocument()
+    const rows = screen.getAllByTestId('incoming-row')
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows[0]).toHaveClass('incoming-row')
+    expect(screen.getByText('Во входящих')).toBeInTheDocument()
+    expect(screen.getByTestId('incoming-queue-total')).toHaveTextContent('3')
+    expect(screen.getByText('Показано 1–1')).toBeInTheDocument()
+    expect(screen.getByText('Страница 1 из 1')).toBeInTheDocument()
+    expect(screen.getAllByText('Ожидает слот на интервью').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Обработать перенос').length).toBeGreaterThan(0)
-    expect(screen.getByText('Есть рассинхрон состояния')).toBeInTheDocument()
-    expect(screen.getByText('Кандидат запросил перенос времени. Требуется новый слот.')).toBeInTheDocument()
+    expect(screen.getByText('Сейчас')).toBeInTheDocument()
+    expect(screen.getByText('Требует проверки')).toBeInTheDocument()
+    expect(screen.queryByText('Кандидат запросил перенос времени. Требуется новый слот.')).not.toBeInTheDocument()
+    expect(within(rows[0]).queryByText('AI relevance')).not.toBeInTheDocument()
+    const aiScore = screen.getByTestId('incoming-ai-score')
+    expect(within(aiScore).getByText('74')).toBeInTheDocument()
 
     const advancedToggle = screen.getByTestId('incoming-advanced-filters-toggle')
     fireEvent.click(advancedToggle)
     expect(document.querySelector('.ui-filter-bar__advanced--open')).toBeTruthy()
 
-    const moreToggle = screen.getByTestId('incoming-card-more-toggle')
+    const moreToggle = within(rows[0]).getByRole('button', { name: 'Подробнее' })
     fireEvent.click(moreToggle)
     expect(moreToggle).toHaveTextContent('Скрыть детали')
+    const details = screen.getByTestId('incoming-row-details-11')
+    expect(details).toBeInTheDocument()
     expect(screen.getByText(/workflow_status расходится/)).toBeInTheDocument()
     expect(screen.getByText(/Хочет окно:/)).toBeInTheDocument()
-    expect(screen.getByText(/AI: Нужно отдельно подтвердить готовность к разъездному формату/)).toBeInTheDocument()
+    expect(within(details).getByText('AI relevance')).toBeInTheDocument()
+    expect(screen.getByText('74/100')).toBeInTheDocument()
+    expect(screen.getByText('Актуально')).toBeInTheDocument()
+    expect(screen.getAllByText('Нужно подтвердить готовность к полевому формату').length).toBeGreaterThan(0)
   })
 
-  it('renders incoming cards when AI enrichment is missing', () => {
+  it('renders incoming cards with quiet missing AI state in collapsed rows', () => {
     useQueryMock.mockImplementation((options: QueryOptionsLike) => {
       const rawKey = options?.queryKey
       const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
@@ -764,13 +943,20 @@ describe('UI cosmetics smoke', () => {
         return {
           ...baseQueryResult,
           data: {
+            ...incomingData,
+            queue_total: 1,
+            total: 1,
+            returned_count: 1,
+            has_next: false,
             items: [
               {
                 ...incomingData.items[0],
                 ai_relevance_score: null,
                 ai_relevance_level: null,
+                ai_relevance_state: 'unknown',
                 ai_recommendation: null,
                 ai_risk_hint: null,
+                ai_reasons: [],
               },
             ],
           },
@@ -781,10 +967,105 @@ describe('UI cosmetics smoke', () => {
 
     render(<IncomingPage />)
 
-    const card = screen.getByTestId('incoming-card')
-    expect(card).toBeInTheDocument()
-    expect(within(card).queryByText(/^AI\b/)).not.toBeInTheDocument()
-    expect(within(card).queryByText(/AI: /)).not.toBeInTheDocument()
+    const row = screen.getByTestId('incoming-row')
+    expect(row).toBeInTheDocument()
+    const aiScore = within(row).getByTestId('incoming-ai-score')
+    expect(within(aiScore).getByText('—')).toBeInTheDocument()
+    expect(within(row).queryByText('Unknown')).not.toBeInTheDocument()
+    expect(within(row).queryByText('Недостаточно данных')).not.toBeInTheDocument()
+  })
+
+  it('derives truthful queue totals when additive queue_total is missing or zeroed', () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'dashboard-incoming') {
+        return {
+          ...baseQueryResult,
+          data: {
+            ...incomingData,
+            queue_total: 0,
+            total: 21,
+            returned_count: 1,
+            has_next: true,
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    render(<IncomingPage />)
+
+    expect(screen.getByTestId('incoming-queue-total')).toHaveTextContent('21')
+    expect(screen.getByTestId('incoming-summary-detail')).toHaveTextContent('Показано 1–1')
+  })
+
+  it('keeps only one incoming disclosure open at a time', () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'dashboard-incoming') {
+        return {
+          ...baseQueryResult,
+          data: {
+            ...incomingData,
+            queue_total: 2,
+            total: 2,
+            returned_count: 2,
+            items: [
+              incomingData.items[0],
+              {
+                ...incomingData.items[0],
+                id: 12,
+                name: 'Мария Сергеева',
+                requested_another_time_comment: 'После обеда',
+                state_reconciliation: {
+                  issues: [],
+                  has_blockers: false,
+                },
+              },
+            ],
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    render(<IncomingPage />)
+
+    const moreButtons = screen.getAllByRole('button', { name: 'Подробнее' })
+    fireEvent.click(moreButtons[0])
+    expect(screen.getByTestId('incoming-row-details-11')).toBeInTheDocument()
+    fireEvent.click(moreButtons[1])
+    expect(screen.queryByTestId('incoming-row-details-11')).not.toBeInTheDocument()
+    expect(screen.getByTestId('incoming-row-details-12')).toBeInTheDocument()
+  })
+
+  it('uses server-driven incoming query params for paging and sorting', () => {
+    render(<IncomingPage />)
+
+    const incomingCalls = getQueryOptionsByKey('dashboard-incoming')
+    expect(incomingCalls.length).toBeGreaterThan(0)
+    const firstKey = incomingCalls[0]?.queryKey as [string, Record<string, unknown>]
+    expect(firstKey[1]).toMatchObject({
+      page: 1,
+      pageSize: 50,
+      statusFilter: 'all',
+      ownerFilter: 'all',
+      waitingFilter: 'all',
+      aiFilter: 'all',
+      sortMode: 'priority',
+    })
+
+    fireEvent.change(screen.getAllByDisplayValue('По приоритету')[0], { target: { value: 'ai_score_desc' } })
+    const afterSortCalls = getQueryOptionsByKey('dashboard-incoming')
+    const afterSortKey = (afterSortCalls[afterSortCalls.length - 1]?.queryKey ?? []) as [string, Record<string, unknown>]
+    expect(afterSortKey[1]).toMatchObject({ sortMode: 'ai_score_desc', page: 1 })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Дальше' }))
+    const afterPageCalls = getQueryOptionsByKey('dashboard-incoming')
+    const afterPageKey = (afterPageCalls[afterPageCalls.length - 1]?.queryKey ?? []) as [string, Record<string, unknown>]
+    expect(afterPageKey[1]).toMatchObject({ page: 2, sortMode: 'ai_score_desc' })
   })
 
   it('uses conservative polling for incoming queries', () => {
@@ -952,7 +1233,7 @@ describe('UI cosmetics smoke', () => {
   it('shows timezone preview and reminder hint in incoming schedule modal', () => {
     render(<IncomingPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Предложить время' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Подобрать время' }))
     expect(screen.getByTestId('incoming-schedule-modal')).toBeInTheDocument()
     expect(screen.getByText('Вы назначаете')).toBeInTheDocument()
     expect(screen.getByText('Кандидат увидит')).toBeInTheDocument()
@@ -964,9 +1245,9 @@ describe('UI cosmetics smoke', () => {
     const incomingFilterBar = screen.getByTestId('incoming-filter-bar')
     expect(incomingFilterBar).toBeInTheDocument()
 
-    const incomingCard = screen.getByTestId('incoming-card')
-    expect(incomingCard).toBeInTheDocument()
-    expect(screen.getByText('Требует разбора')).toBeInTheDocument()
+    const incomingRow = screen.getByTestId('incoming-row')
+    expect(incomingRow).toBeInTheDocument()
+    expect(screen.getByTestId('incoming-list')).toBeInTheDocument()
     expect(screen.getAllByText(/Обработать перенос/).length).toBeGreaterThan(0)
   })
 
@@ -986,6 +1267,8 @@ describe('UI cosmetics smoke', () => {
     render(<DashboardPage />)
 
     expect(screen.getByTestId('dashboard-triage-console')).toBeInTheDocument()
+    expect(screen.getByTestId('dashboard-triage-summary')).toBeInTheDocument()
+    expect(screen.getByTestId('dashboard-triage-filter-bar')).toBeInTheDocument()
     expect(screen.getByTestId('dashboard-triage-lanes')).toBeInTheDocument()
     expect(screen.getByText('Control Tower')).toBeInTheDocument()
     expect(screen.getByText('Требует действия сейчас')).toBeInTheDocument()
@@ -1000,6 +1283,9 @@ describe('UI cosmetics smoke', () => {
     const filterBar = screen.getByTestId('slots-filter-bar')
     expect(filterBar).toBeInTheDocument()
     expect(filterBar).toHaveClass('slots-filters-grid')
+
+    const resultsToolbar = screen.getByTestId('slots-results-toolbar')
+    expect(resultsToolbar).toBeInTheDocument()
 
     const table = screen.getByTestId('slots-table')
     expect(table).toBeInTheDocument()
@@ -1017,68 +1303,33 @@ describe('UI cosmetics smoke', () => {
     expect(header.querySelector('.status-pill')).toBeNull()
     expect(screen.getAllByText('Предложить время').length).toBeGreaterThan(0)
     expect(screen.getByText('Кандидат готов к назначению интервью.')).toBeInTheDocument()
-    expect(screen.getByText('Контекст назначения')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-channels')).toBeInTheDocument()
     expect(screen.getByTestId('candidate-detail-lifecycle')).toBeInTheDocument()
-    expect(screen.getByTestId('candidate-detail-scheduling')).toBeInTheDocument()
-    expect(screen.getByTestId('candidate-detail-risks')).toBeInTheDocument()
-    expect(screen.getByTestId('candidate-detail-context')).toBeInTheDocument()
-    expect(screen.getByText('Lifecycle')).toBeInTheDocument()
-    expect(screen.getByText('Scheduling')).toBeInTheDocument()
-    expect(screen.getByText('Risks & blockers')).toBeInTheDocument()
-    expect(screen.getByText('Context & history')).toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-detail-scheduling')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-detail-risks')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-detail-context')).not.toBeInTheDocument()
+    expect(screen.getByText('Путь кандидата')).toBeInTheDocument()
+    expect(screen.queryByText('Lifecycle')).not.toBeInTheDocument()
+    expect(screen.queryByText('Scheduling')).not.toBeInTheDocument()
+    expect(screen.queryByText('Risks & blockers')).not.toBeInTheDocument()
+    expect(screen.queryByText('Context & history')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Релевантность 82')).toBeInTheDocument()
     expect(within(header).getByText('82')).toBeInTheDocument()
     expect(within(header).getByText(/Рекомендуем|Уточнить|Не рекомендуем/)).toBeInTheDocument()
     expect(screen.queryByText('Слоты и интервью')).not.toBeInTheDocument()
     expect(screen.queryByText('AI-помощник')).not.toBeInTheDocument()
     expect(screen.getByTestId('candidate-insights-trigger')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-tests-trigger')).toBeInTheDocument()
+    expect(screen.getByTestId('candidate-hh-trigger')).toBeInTheDocument()
     expect(screen.queryByTestId('candidate-script-trigger')).not.toBeInTheDocument()
     expect(screen.queryByText('Детали')).not.toBeInTheDocument()
     expect(screen.queryByText('Скрипт интервью')).not.toBeInTheDocument()
 
     expect(screen.getByTestId('candidate-pipeline')).toBeInTheDocument()
-    expect(screen.getByTestId('candidate-tests-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('candidate-tests-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('candidate-insights-drawer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('interview-script-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('interview-script-modal')).not.toBeInTheDocument()
-  })
-
-  it('routes candidate chat through MAX when candidate is linked there', async () => {
-    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
-      const rawKey = options?.queryKey
-      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
-      if (key === 'candidate-detail') {
-        return {
-          ...baseQueryResult,
-          data: {
-            ...candidateDetailData,
-            telegram_id: null,
-            messenger_platform: 'max',
-            max_user_id: 'mx-user-1',
-          },
-        }
-      }
-      if (key === 'candidate-chat') {
-        return {
-          ...baseQueryResult,
-          data: {
-            messages: [],
-            has_more: false,
-            latest_message_at: null,
-          },
-        }
-      }
-      return { ...baseQueryResult }
-    })
-
-    render(<CandidateDetailPage />)
-
-    expect(screen.getByText('MAX')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Чат/ }))
-
-    await waitFor(() => {
-      expect(screen.getByText('Ответ будет отправлен через MAX')).toBeInTheDocument()
-    })
   })
 
   it('keeps candidate journey inside funnel stages and removes standalone journey block', async () => {
@@ -1152,7 +1403,9 @@ describe('UI cosmetics smoke', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Тесты' })).toHaveClass('ui-btn--primary')
+      expect(
+        screen.getAllByRole('button', { name: 'Тесты' }).some((button) => button.className.includes('ui-btn--primary')),
+      ).toBe(true)
     })
     expect(screen.getByTestId('candidate-tests-section')).toBeInTheDocument()
 
@@ -1178,7 +1431,77 @@ describe('UI cosmetics smoke', () => {
       expect(screen.queryByRole('button', { name: 'Открыть кабинет' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Отправить shared portal в HH' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Открыть MAX launcher' })).not.toBeInTheDocument()
+      expect(screen.queryByText('candidate_max')).not.toBeInTheDocument()
+      expect(screen.queryByText('max-101')).not.toBeInTheDocument()
+      expect(screen.queryByText('ID 79990001122')).not.toBeInTheDocument()
       expect(screen.getByTestId('candidate-channels')).toBeInTheDocument()
+      expect(screen.getByText('Telegram')).toBeInTheDocument()
+      expect(screen.getByText('HeadHunter')).toBeInTheDocument()
+    })
+  })
+
+  it('opens HH profile in modal from candidate detail', async () => {
+    render(<CandidateDetailPage />)
+
+    expect(screen.queryByTestId('candidate-detail-max-pilot')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('candidate-hh-trigger'))
+    expect(screen.getByText('Резюме HeadHunter')).toBeInTheDocument()
+    expect(screen.getByText('Быстрый просмотр профиля кандидата внутри RecruitSmart.')).toBeInTheDocument()
+  })
+
+  it('opens insights as notes-first drawer with compact HH block only', async () => {
+    render(<CandidateDetailPage />)
+
+    fireEvent.click(screen.getByTestId('candidate-insights-trigger'))
+
+    const drawer = await screen.findByTestId('candidate-insights-drawer')
+    expect(drawer).toBeInTheDocument()
+    expect(within(drawer).getByText('Заметки по кандидату')).toBeInTheDocument()
+    expect(within(drawer).getByTestId('candidate-quick-notes')).toBeInTheDocument()
+    expect(within(drawer).getByTestId('candidate-insights-hh')).toBeInTheDocument()
+    expect(within(drawer).getByText('HeadHunter')).toBeInTheDocument()
+    expect(within(drawer).getByText('Резюме Ивана Петрова')).toBeInTheDocument()
+    expect(within(drawer).getByRole('link', { name: 'Открыть в HH' })).toHaveAttribute('href', 'https://hh.ru/resume/1')
+    expect(within(drawer).queryByText('Карточка кандидата')).not.toBeInTheDocument()
+    expect(within(drawer).queryByText('AI-помощник')).not.toBeInTheDocument()
+    expect(within(drawer).queryByText('Подсказки рекрутеру')).not.toBeInTheDocument()
+    expect(within(drawer).queryByText('Хронология')).not.toBeInTheDocument()
+  })
+
+  it('renders bounded channel badges and compact MAX filter in the candidates list', async () => {
+    render(<CandidatesPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('candidates-advanced-filters-toggle')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('candidates-advanced-filters-toggle'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('candidates-channel-filter')).toBeInTheDocument()
+      expect(screen.getByTestId('candidates-preferred-channel-filter')).toBeInTheDocument()
+      expect(screen.getAllByTestId('candidate-channel-badges')).toHaveLength(2)
+      expect(screen.getByText('Тест Telegram')).toBeInTheDocument()
+      expect(screen.getByText('Тест MAX')).toBeInTheDocument()
+      expect(within(screen.getAllByTestId('candidate-channel-badges')[0]).getByText('TG')).toBeInTheDocument()
+      expect(within(screen.getAllByTestId('candidate-channel-badges')[0]).getByText('MAX')).toBeInTheDocument()
+      expect(within(screen.getAllByTestId('candidate-channel-badges')[1]).getByText('MAX')).toBeInTheDocument()
+      expect(within(screen.getAllByTestId('candidate-channel-badges')[1]).getByText('Отправлено')).toBeInTheDocument()
+    })
+
+    fireEvent.click(within(screen.getByTestId('candidates-channel-filter')).getByRole('button', { name: 'MAX' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Тест MAX')).toBeInTheDocument()
+      expect(screen.queryByText('Тест Telegram')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(within(screen.getByTestId('candidates-channel-filter')).getByRole('button', { name: 'Все' }))
+    fireEvent.click(within(screen.getByTestId('candidates-preferred-channel-filter')).getByRole('button', { name: 'Telegram' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Тест Telegram')).toBeInTheDocument()
+      expect(screen.queryByText('Тест MAX')).not.toBeInTheDocument()
     })
   })
 

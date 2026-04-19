@@ -144,350 +144,6 @@
         }
       }
     },
-    "/api/candidate/session/exchange": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Exchange Candidate Portal Session",
-        "operationId": "exchange_candidate_portal_session_api_candidate_session_exchange_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalExchangePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/session/logout": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Logout Candidate Portal Session",
-        "operationId": "logout_candidate_portal_session_api_candidate_session_logout_post",
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          }
-        }
-      }
-    },
-    "/api/candidate/journey": {
-      "get": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Get Candidate Portal Journey",
-        "operationId": "get_candidate_portal_journey_api_candidate_journey_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/profile": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Save Candidate Portal Profile",
-        "operationId": "save_candidate_portal_profile_api_candidate_profile_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalProfilePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/screening/save": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Save Candidate Portal Screening Draft",
-        "operationId": "save_candidate_portal_screening_draft_api_candidate_screening_save_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalScreeningPayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/screening/complete": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Complete Candidate Portal Screening",
-        "operationId": "complete_candidate_portal_screening_api_candidate_screening_complete_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalScreeningPayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/slots/reserve": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Reserve Candidate Portal Slot Route",
-        "operationId": "reserve_candidate_portal_slot_route_api_candidate_slots_reserve_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalReservePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/slots/confirm": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Confirm Candidate Portal Slot Route",
-        "operationId": "confirm_candidate_portal_slot_route_api_candidate_slots_confirm_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/slots/cancel": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Cancel Candidate Portal Slot Route",
-        "operationId": "cancel_candidate_portal_slot_route_api_candidate_slots_cancel_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/slots/reschedule": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Reschedule Candidate Portal Slot Route",
-        "operationId": "reschedule_candidate_portal_slot_route_api_candidate_slots_reschedule_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalReschedulePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/candidate/messages": {
-      "post": {
-        "tags": [
-          "candidate-portal"
-        ],
-        "summary": "Send Candidate Portal Message Route",
-        "operationId": "send_candidate_portal_message_route_api_candidate_messages_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidatePortalMessagePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/hh-integration/webhooks/{webhook_key}": {
       "post": {
         "tags": [
@@ -1896,6 +1552,61 @@
         }
       }
     },
+    "/api/slot-assignments/{assignment_id}/repair": {
+      "post": {
+        "tags": [
+          "slot-assignments"
+        ],
+        "summary": "Api Repair Slot Assignment",
+        "operationId": "api_repair_slot_assignment_api_slot_assignments__assignment_id__repair_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulingRepairRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/candidates/{candidate_id}/state": {
       "get": {
         "tags": [
@@ -2348,101 +2059,6 @@
         }
       }
     },
-    "/candidates/detailization": {
-      "get": {
-        "tags": [
-          "candidates"
-        ],
-        "summary": "Candidates Detailization",
-        "operationId": "candidates_detailization_candidates_detailization_get",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "status",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "hired or not_hired",
-              "title": "Status"
-            },
-            "description": "hired or not_hired"
-          },
-          {
-            "name": "search",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "per_page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 5,
-              "default": 100,
-              "title": "Per Page"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/candidates/new": {
       "get": {
         "tags": [
@@ -2727,52 +2343,6 @@
         "summary": "Candidates Set Status",
         "description": "Update candidate status via UI or AJAX/kanban board.\n\nDEPRECATED: Use POST /api/candidates/{id}/actions/{action_key} instead.\nThis endpoint is only available when ENABLE_LEGACY_STATUS_API=true.",
         "operationId": "candidates_set_status_candidates__candidate_id__status_post",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "candidate_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Candidate Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/candidates/{candidate_id}/resend-test2": {
-      "get": {
-        "tags": [
-          "candidates"
-        ],
-        "summary": "Candidates Resend Test2",
-        "description": "Resend Test 2 invite to a candidate via bot.",
-        "operationId": "candidates_resend_test2_candidates__candidate_id__resend_test2_get",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4894,56 +4464,6 @@
         ]
       }
     },
-    "/api/ai/chat": {
-      "get": {
-        "tags": [
-          "ai"
-        ],
-        "summary": "Api Ai Agent Chat State",
-        "description": "Retrieve current AI agent chat thread state and messages.",
-        "operationId": "api_ai_agent_chat_state_api_ai_chat_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/ai/chat/message": {
-      "post": {
-        "tags": [
-          "ai"
-        ],
-        "summary": "Api Ai Agent Chat Send",
-        "description": "Send a message to AI agent chat and get response.",
-        "operationId": "api_ai_agent_chat_send_api_ai_chat_message_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
     "/api/ai/cities/{city_id}/candidates/recommendations": {
       "get": {
         "tags": [
@@ -5668,228 +5188,6 @@
         }
       }
     },
-    "/api/kb/documents": {
-      "get": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Documents List",
-        "operationId": "api_kb_documents_list_api_kb_documents_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Document Create",
-        "operationId": "api_kb_document_create_api_kb_documents_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/kb/documents/{document_id}": {
-      "get": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Document Get",
-        "operationId": "api_kb_document_get_api_kb_documents__document_id__get",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Document Update",
-        "operationId": "api_kb_document_update_api_kb_documents__document_id__put",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Document Delete",
-        "operationId": "api_kb_document_delete_api_kb_documents__document_id__delete",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/kb/documents/{document_id}/reindex": {
-      "post": {
-        "tags": [
-          "kb"
-        ],
-        "summary": "Api Kb Document Reindex",
-        "operationId": "api_kb_document_reindex_api_kb_documents__document_id__reindex_post",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/simulator/runs": {
       "post": {
         "tags": [
@@ -5979,282 +5277,6 @@
             "schema": {
               "type": "integer",
               "title": "Run Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/detailization": {
-      "get": {
-        "tags": [
-          "detailization"
-        ],
-        "summary": "Api Detailization List",
-        "operationId": "api_detailization_list_api_detailization_get",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "date_from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "name": "date_to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "detailization"
-        ],
-        "summary": "Api Detailization Create",
-        "operationId": "api_detailization_create_api_detailization_post",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DetailizationCreatePayload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/detailization/export.csv": {
-      "get": {
-        "tags": [
-          "detailization"
-        ],
-        "summary": "Api Detailization Export",
-        "operationId": "api_detailization_export_api_detailization_export_csv_get",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "date_from",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date From"
-            }
-          },
-          {
-            "name": "date_to",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Date To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/detailization/{entry_id}": {
-      "patch": {
-        "tags": [
-          "detailization"
-        ],
-        "summary": "Api Detailization Update",
-        "operationId": "api_detailization_update_api_detailization__entry_id__patch",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "entry_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Entry Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DetailizationUpdatePayload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "detailization"
-        ],
-        "summary": "Api Detailization Delete",
-        "operationId": "api_detailization_delete_api_detailization__entry_id__delete",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "entry_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Entry Id"
             }
           }
         ],
@@ -7608,8 +6630,11 @@
     },
     "/api/templates/list": {
       "get": {
-        "summary": "List Templates",
-        "operationId": "list_templates_api_templates_list_get",
+        "tags": [
+          "content_api"
+        ],
+        "summary": "Api Templates List",
+        "operationId": "api_templates_list_api_templates_list_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7957,7 +6982,7 @@
           "api"
         ],
         "summary": "Api Dashboard Incoming",
-        "description": "Candidates who passed test1 and are waiting for a free interview slot.",
+        "description": "Unified incoming queue with server-driven paging, filtering, and advisory AI signals.",
         "operationId": "api_dashboard_incoming_api_dashboard_incoming_get",
         "security": [
           {
@@ -7970,11 +6995,129 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "maximum": 2000,
-              "minimum": 1,
-              "default": 100,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Limit"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 200,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "City Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "waiting",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Waiting"
+            }
+          },
+          {
+            "name": "ai_level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Ai Level"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "priority",
+              "title": "Sort"
             }
           }
         ],
@@ -11014,6 +10157,238 @@
         }
       }
     },
+    "/api/candidates/{candidate_id}/max-rollout/issue": {
+      "post": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Candidate Max Rollout Issue",
+        "operationId": "api_candidate_max_rollout_issue_api_candidates__candidate_id__max_rollout_issue_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateMaxRolloutIssuePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidates/{candidate_id}/max-launch-invite": {
+      "post": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Candidate Max Rollout Issue",
+        "operationId": "api_candidate_max_rollout_issue_api_candidates__candidate_id__max_launch_invite_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateMaxRolloutIssuePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidates/{candidate_id}/max-rollout/revoke": {
+      "post": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Candidate Max Rollout Revoke",
+        "operationId": "api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_rollout_revoke_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "application_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidates/{candidate_id}/max-launch-invite/revoke": {
+      "post": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Candidate Max Rollout Revoke",
+        "operationId": "api_candidate_max_rollout_revoke_api_candidates__candidate_id__max_launch_invite_revoke_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "application_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/candidates/{candidate_id}/hh": {
       "get": {
         "tags": [
@@ -11154,6 +10529,25 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
             }
           },
           {
@@ -11812,6 +11206,120 @@
                 }
               ],
               "title": "Booking Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/messenger-health": {
+      "get": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api System Messenger Health",
+        "operationId": "api_system_messenger_health_api_system_messenger_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/system/messenger-health/{channel}/recover": {
+      "post": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Recover Messenger Channel",
+        "operationId": "api_recover_messenger_channel_api_system_messenger_health__channel__recover_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidates/{candidate_id}/channel-health": {
+      "get": {
+        "tags": [
+          "api"
+        ],
+        "summary": "Api Candidate Channel Health",
+        "operationId": "api_candidate_channel_health_api_candidates__candidate_id__channel_health_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
             }
           }
         ],
@@ -13185,6 +12693,11 @@
             ],
             "title": "Force",
             "default": false
+          },
+          "confirmation": {
+            "type": "string",
+            "title": "Confirmation",
+            "default": ""
           }
         },
         "type": "object",
@@ -13389,115 +12902,35 @@
       },
       "CandidateKanbanMovePayload": {
         "properties": {
+          "target_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Column"
+          },
           "target_status": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Target Status"
           }
         },
         "type": "object",
-        "required": [
-          "target_status"
-        ],
         "title": "CandidateKanbanMovePayload"
       },
-      "CandidatePortalExchangePayload": {
+      "CandidateMaxRolloutIssuePayload": {
         "properties": {
-          "token": {
-            "type": "string",
-            "minLength": 8,
-            "title": "Token"
-          }
-        },
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "CandidatePortalExchangePayload"
-      },
-      "CandidatePortalMessagePayload": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "maxLength": 4000,
-            "minLength": 1,
-            "title": "Text"
-          }
-        },
-        "type": "object",
-        "required": [
-          "text"
-        ],
-        "title": "CandidatePortalMessagePayload"
-      },
-      "CandidatePortalProfilePayload": {
-        "properties": {
-          "fio": {
-            "type": "string",
-            "title": "Fio"
-          },
-          "phone": {
-            "type": "string",
-            "title": "Phone"
-          },
-          "city_id": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "City Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "fio",
-          "phone",
-          "city_id"
-        ],
-        "title": "CandidatePortalProfilePayload"
-      },
-      "CandidatePortalReschedulePayload": {
-        "properties": {
-          "new_slot_id": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "New Slot Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "new_slot_id"
-        ],
-        "title": "CandidatePortalReschedulePayload"
-      },
-      "CandidatePortalReservePayload": {
-        "properties": {
-          "slot_id": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Slot Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "slot_id"
-        ],
-        "title": "CandidatePortalReservePayload"
-      },
-      "CandidatePortalScreeningPayload": {
-        "properties": {
-          "answers": {
-            "type": "object",
-            "title": "Answers"
-          }
-        },
-        "type": "object",
-        "title": "CandidatePortalScreeningPayload"
-      },
-      "DetailizationCreatePayload": {
-        "properties": {
-          "candidate_id": {
-            "type": "integer",
-            "title": "Candidate Id"
-          },
-          "recruiter_id": {
+          "application_id": {
             "anyOf": [
               {
                 "type": "integer"
@@ -13506,185 +12939,26 @@
                 "type": "null"
               }
             ],
-            "title": "Recruiter Id"
+            "title": "Application Id"
           },
-          "city_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "City Id"
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": false
           },
-          "assigned_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assigned At"
+          "send": {
+            "type": "boolean",
+            "title": "Send",
+            "default": false
           },
-          "conducted_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Conducted At"
-          },
-          "expert_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expert Name"
-          },
-          "is_attached": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Attached"
-          },
-          "final_outcome": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Final Outcome"
-          },
-          "final_outcome_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Final Outcome Reason"
+          "reuse_policy": {
+            "type": "string",
+            "title": "Reuse Policy",
+            "default": "reuse_active"
           }
         },
         "type": "object",
-        "required": [
-          "candidate_id"
-        ],
-        "title": "DetailizationCreatePayload"
-      },
-      "DetailizationUpdatePayload": {
-        "properties": {
-          "expert_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expert Name"
-          },
-          "is_attached": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Attached"
-          },
-          "final_outcome": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Final Outcome"
-          },
-          "final_outcome_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Final Outcome Reason"
-          },
-          "assigned_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assigned At"
-          },
-          "conducted_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Conducted At"
-          },
-          "recruiter_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recruiter Id"
-          },
-          "city_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "City Id"
-          }
-        },
-        "type": "object",
-        "title": "DetailizationUpdatePayload"
+        "title": "CandidateMaxRolloutIssuePayload"
       },
       "HHActionExecuteRequest": {
         "properties": {
@@ -13983,6 +13257,63 @@
           "candidate_tg_id"
         ],
         "title": "ReschedulePayload"
+      },
+      "SchedulingRepairRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Action"
+          },
+          "chosen_assignment_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen Assignment Id"
+          },
+          "chosen_slot_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen Slot Id"
+          },
+          "confirmations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Confirmations"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "SchedulingRepairRequest"
       },
       "SlotAssignmentCreateRequest": {
         "properties": {

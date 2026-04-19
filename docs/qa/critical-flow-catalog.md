@@ -1,53 +1,46 @@
 # Critical Flow Catalog
 
 ## Header
-- Purpose: Каталог критичных бизнес- и операционных flow, которые должны быть покрыты docs, тестами и релизным контролем.
+- Purpose: каталог критичных flow, которые должны покрываться тестами, release gate и runtime docs.
 - Owner: QA / Architecture
 - Status: Canonical, P0
-- Last Reviewed: 2026-03-25
-- Source Paths: `docs/architecture/*`, `docs/data/*`, `docs/security/*`, `backend/`, `frontend/app/`
-- Related Diagrams: `docs/architecture/core-workflows.md`, `docs/qa/traceability-matrix.md`
-- Change Policy: Обновлять при изменении пользовательского flow, API contract, статусов, маршрутов или интеграций.
+- Last Reviewed: 2026-04-19
+- Source Paths: `docs/architecture/*`, `docs/security/*`, `backend/`, `frontend/app/`
+- Related Docs: `docs/architecture/supported_channels.md`, `docs/qa/traceability-matrix.md`
 
-## Каталог
+## Supported Critical Flows
+
 | Flow | Description | Primary surface | Source of truth |
 | --- | --- | --- | --- |
-| Candidate lifecycle | Создание, просмотр, изменение, перевод между статусами | backend + SPA | `docs/data/data-dictionary.md`, `docs/architecture/core-workflows.md` |
-| Candidate portal | Доступ кандидата к своим данным и действиям | portal runtime + backend | `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md` |
-| MAX onboarding / linking | Ротация invite, deep link, conflict-safe привязка и MAX mini-app resume | max_bot + backend | `docs/security/trust-boundaries.md`, `docs/architecture/core-workflows.md`, `docs/security/auth-and-token-model.md` |
-| Telegram messaging | Отправка и обработка сообщений | bot runtime + backend | `docs/architecture/core-workflows.md` |
-| Telegram/MAX delivery reliability | Channel-aware outbox, degraded mode, dead-letter/requeue, operator health surfaces | bot runtime + admin UI | `docs/architecture/core-workflows.md`, `docs/runbooks/broker-degradation.md` |
-| Slot booking / reschedule / intro-day | Запись, перенос, подтверждение временных слотов | backend + SPA + portal | `docs/data/data-dictionary.md`, `docs/architecture/core-workflows.md` |
-| Recruiter dashboard | Рабочий стол рекрутера, навигация, drawer, фильтры | frontend SPA | `docs/frontend/route-map.md`, `docs/frontend/screen-inventory.md` |
-| Notification delivery | Очереди, outbox, retry, idempotency | backend + Redis | `docs/architecture/core-workflows.md`, `docs/security/trust-boundaries.md` |
-| HH sync / import | Синхронизация и импорт из HeadHunter | backend integration | `docs/architecture/core-workflows.md`, `docs/data/data-dictionary.md` |
-| AI copilot / interview script | Генерация и отображение подсказок и сценариев | backend + frontend | `docs/security/trust-boundaries.md`, `docs/architecture/core-workflows.md` |
-| Auth / session / CSRF | Сессии, токены, защита от подделки запросов | backend + frontend | `docs/security/auth-and-token-model.md`, `docs/security/trust-boundaries.md` |
+| Candidate lifecycle | Создание, просмотр, статусные переходы, recruiter actions | admin UI + SPA | `docs/data/data-dictionary.md`, `docs/route-inventory.md` |
+| Slot scheduling / reschedule / intro day | Запись, перенос, подтверждение, массовые операции | admin UI + SPA | `docs/data/data-dictionary.md`, `docs/route-inventory.md` |
+| Telegram messaging | Отправка, retry, operator visibility, health | bot runtime + admin UI | `docs/architecture/runtime-topology.md`, `docs/security/trust-boundaries.md` |
+| Telegram Mini App / recruiter webapp | Recruiter mobile/webapp surfaces | admin API | `docs/architecture/runtime-topology.md`, `docs/frontend/route-map.md` |
+| MAX bounded candidate mini-app | Signed MAX launch, `/miniapp`, hidden-draft intake bootstrap, shared candidate-access journey/Test1/booking/manual-availability/chat-handoff for controlled pilot | admin API + SPA | `docs/architecture/supported_channels.md`, `docs/frontend/route-map.md`, `docs/frontend/state-flows.md` |
+| MAX bounded operator rollout surface | Invite preview/send/revoke plus operator visibility for MAX linkage and launch state | admin UI + SPA | `docs/architecture/supported_channels.md`, `docs/qa/max-pilot-rollout-checklist.md` |
+| HH integration | OAuth, imports, sync jobs, HH actions | admin UI + admin API callbacks | `docs/security/auth-and-token-model.md`, `docs/architecture/supported_channels.md` |
+| n8n HH callbacks | External automation callback contract | admin API | `docs/security/auth-and-token-model.md` |
+| Auth / session / CSRF | Browser auth, JWT, CSRF, destructive guards | admin UI | `docs/security/auth-and-token-model.md`, `docs/security/trust-boundaries.md` |
+| Health / protected metrics | Public shallow probes plus protected operator diagnostics and metrics | admin UI + admin API | `docs/architecture/runtime-topology.md` |
+| OpenAPI truth gate | Drift check between tracked schema and live app factories | repo-local verification flow | `README.md`, `docs/qa/release-gate-v2.md` |
 
-## Критичность
-- P0: ломает доступ к кандидату, рекрутеру, scheduling, auth или delivery
-- P1: затрагивает основной рабочий процесс, но есть безопасный обход
-- P2: не блокирует работу, но ухудшает UX или поддержку
+## Unsupported Or Target-State Surfaces
 
-## Рекомендуемое покрытие
-- backend unit / integration
-- frontend unit / browser smoke
-- security / observability regression
-- delivery degradation / requeue verification for Telegram/MAX
-- миграционный или contract check при необходимости
+| Surface | Current status | QA expectation |
+| --- | --- | --- |
+| Legacy candidate portal implementation | unsupported | `/candidate*` should fail closed; no release promise |
+| Historical MAX runtime | unsupported | default compose/runtime must not depend on MAX |
+| Future standalone candidate web flow | target state | do not advertise as current runtime; no active route/API contract today |
+| Future full MAX runtime / channel rollout | target state | do not advertise as current runtime; bounded `/miniapp` pilot does not equal production MAX runtime |
+| SMS / voice fallback | target state | no active runtime or release gate yet |
 
-## Mermaid
-```mermaid
-mindmap
-  root((Critical Flows))
-    Candidate lifecycle
-    Candidate portal
-    MAX onboarding / linking
-    Telegram messaging
-    Slot booking / reschedule / intro-day
-    Recruiter dashboard
-    Notification delivery
-    HH sync / import
-    AI copilot / interview script
-    Auth / session / CSRF
-```
+## Coverage Expectations
+- backend unit / integration for lifecycle, slot actions, destructive guards and auth/CSRF;
+- anonymous-negative and authenticated-positive tests for operator-only health diagnostics;
+- targeted MAX pilot smoke for `/api/max/launch`, `/api/max/webhook`, `/miniapp`, shared `/api/candidate-access/*`, rollout preview/send/revoke, webhook secret, and operator health pages;
+- authenticated browser proof for candidates list visibility, candidate detail MAX card/modal states, and candidate `/miniapp` states;
+- candidate `/miniapp` proof must cover hidden-draft intake bootstrap, manual review / legacy recovery, shared Test1 progression, booking empty states, no-slots manual-availability success, booked return state, and chat handoff;
+- provider smoke must end either in real non-prod proof or in an explicit external blocker; no simulated provider success;
+- OpenAPI drift check for live `admin_ui` and `admin_api`;
+- frontend typecheck when tracked contracts change;
+- targeted smoke/regression on health, metrics protection and operator surfaces.

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -106,6 +106,7 @@ describe('CandidatesPage', () => {
                 status: { label: 'Lead', tone: 'info' },
                 telegram_id: null,
                 recruiter_id: -1,
+                ai_relevance_score: 81,
               },
             ],
             total: 1,
@@ -123,6 +124,7 @@ describe('CandidatesPage', () => {
                   id: 101,
                   fio: 'Иванов Иван',
                   city: 'Москва',
+                  ai_relevance_score: 81,
                   status: { slug: 'waiting_slot', label: 'Lead', tone: 'info' },
                   recruiter: { id: -1, name: 'Recruiter' },
                   lifecycle_summary: {
@@ -130,6 +132,7 @@ describe('CandidatesPage', () => {
                     stage_label: 'Ожидает слот на интервью',
                     record_state: 'active',
                   },
+                  candidate_actions: [],
                   candidate_next_action: {
                     urgency: 'attention',
                     primary_action: {
@@ -209,7 +212,8 @@ describe('CandidatesPage', () => {
 
     render(<CandidatesPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+    fireEvent.click(screen.getByLabelText('Действия для Иванов Иван'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
 
     await waitFor(() => {
       expect(apiFetchMock).toHaveBeenCalledWith(
@@ -220,15 +224,25 @@ describe('CandidatesPage', () => {
     expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['candidates'] })
   })
 
-  it('renders contract-driven state cues in list view', () => {
+  it('renders candidates list as a compact registry view', () => {
     render(<CandidatesPage />)
 
-    expect(screen.getByTestId('candidates-work-queues')).toBeInTheDocument()
-    expect(screen.getByText('Очереди на странице')).toBeInTheDocument()
-    expect(screen.getByText('Ожидает слот на интервью')).toBeInTheDocument()
-    expect(screen.getByText('Предложить время')).toBeInTheDocument()
-    expect(screen.getByText('Есть рассинхрон состояния')).toBeInTheDocument()
-    expect(screen.getByText(/workflow_status расходится/)).toBeInTheDocument()
+    expect(screen.queryByTestId('candidates-work-queues')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /\+ Новый кандидат/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('Предложить время')).not.toBeInTheDocument()
+    expect(screen.queryByText('Есть рассинхрон состояния')).not.toBeInTheDocument()
+    expect(screen.queryByText(/workflow_status расходится/)).not.toBeInTheDocument()
+    expect(screen.getByText('Кандидат')).toBeInTheDocument()
+    expect(screen.getByText('Статус')).toBeInTheDocument()
+    expect(screen.getByText('Релевантность')).toBeInTheDocument()
+    expect(screen.getByText('Последняя активность')).toBeInTheDocument()
+    expect(screen.getByText('Действия')).toBeInTheDocument()
+    expect(screen.getByText('Иванов Иван')).toBeInTheDocument()
+    expect(screen.getByText('Москва')).toBeInTheDocument()
+    expect(screen.getAllByText('Ожидает слот на интервью').length).toBeGreaterThan(0)
+    expect(screen.getByText('81%')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Действия для Иванов Иван'))
+    expect(screen.getByRole('link', { name: 'Открыть профиль' })).toBeInTheDocument()
   })
 
   it('uses a bounded cache policy for candidate list and cities queries', () => {
@@ -277,143 +291,6 @@ describe('CandidatesPage', () => {
     expect(apiFetchMock).not.toHaveBeenCalledWith(expect.stringContaining('status='))
   })
 
-  it('uses canonical target_column in kanban move requests', async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 'test2_completed',
-      candidate_id: 101,
-      intent: { kind: 'kanban_move', target_column: 'test2_completed' },
-      candidate_state: { operational_summary: { kanban_column: 'test2_completed' } },
-    })
-
-    render(<CandidatesPage />)
-
-    const mutationOptions = useMutationMock.mock.calls[1]?.[0] as MutationOptionsLike | undefined
-    expect(mutationOptions?.mutationFn).toBeTypeOf('function')
-
-    await mutationOptions?.mutationFn?.({
-      candidateId: 101,
-      targetColumn: 'test2_completed',
-      previousStatus: 'test2_sent',
-    })
-
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      '/candidates/101/kanban-status',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ target_column: 'test2_completed' }),
-      }),
-    )
-  })
-
-  it('groups kanban card by backend contract even when legacy status lags behind', () => {
-    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
-      const key = Array.isArray(options?.queryKey) ? options.queryKey[0] : options?.queryKey
-      if (key === 'candidates') {
-        return {
-          data: {
-            items: [
-              {
-                id: 101,
-                fio: 'Иванов Иван',
-                city: 'Москва',
-                status: { slug: 'waiting_slot', label: 'Ждет назначения слота', tone: 'warning' },
-                telegram_id: '777001',
-                recruiter_id: -1,
-              },
-            ],
-            total: 1,
-            page: 1,
-            pages_total: 1,
-            filters: {
-              state_options: [
-                { value: '', label: 'Все кандидаты', kind: 'all' },
-                { value: 'kanban:interview_confirmed', label: '✅ Подтвердил собеседование', kind: 'kanban', target_status: 'interview_confirmed' },
-              ],
-            },
-            views: {
-              candidates: [
-                {
-                  id: 101,
-                  fio: 'Иванов Иван',
-                  city: 'Москва',
-                  status: { slug: 'waiting_slot', label: 'Ждет назначения слота', tone: 'warning' },
-                  recruiter: { id: -1, name: 'Recruiter' },
-                  lifecycle_summary: {
-                    stage: 'interview',
-                    stage_label: 'Интервью',
-                    record_state: 'active',
-                  },
-                  scheduling_summary: {
-                    status: 'confirmed',
-                    status_label: 'Участие подтверждено',
-                    active: true,
-                  },
-                },
-              ],
-              kanban: {
-                columns: [
-                  {
-                    slug: 'incoming',
-                    label: 'Входящие',
-                    icon: '📥',
-                    target_status: 'waiting_slot',
-                    droppable: false,
-                    candidates: [],
-                  },
-                  {
-                    slug: 'interview_confirmed',
-                    label: 'Подтвердил собеседование',
-                    icon: '✅',
-                    target_status: 'interview_confirmed',
-                    candidates: [],
-                  },
-                ],
-              },
-              calendar: { days: [] },
-            },
-          },
-          isLoading: false,
-          isError: false,
-          error: null,
-        }
-      }
-      if (key === 'cities') {
-        return {
-          data: [],
-          isLoading: false,
-          isError: false,
-          error: null,
-        }
-      }
-      if (key === 'ai-city-reco') {
-        return {
-          data: undefined,
-          isLoading: false,
-          isError: false,
-          isFetching: false,
-          error: null,
-          refetch: vi.fn(),
-        }
-      }
-      return {
-        data: undefined,
-        isLoading: false,
-        isError: false,
-        error: null,
-      }
-    })
-
-    render(<CandidatesPage />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Канбан' }))
-
-    const sourceColumn = document.querySelector('[data-kanban-column="interview_confirmed"]')
-    expect(sourceColumn?.textContent).toContain('Подтвердил собеседование')
-    expect(sourceColumn?.textContent).toContain('Иванов Иван')
-    expect(screen.getByText('Вести через действие')).toBeInTheDocument()
-  })
-
   it('shows selection-only bulk triage bar without mutating candidates', async () => {
     render(<CandidatesPage />)
 
@@ -432,5 +309,35 @@ describe('CandidatesPage', () => {
       expect.stringMatching(/\/actions\/|\/kanban-status|\/status/),
       expect.anything(),
     )
+  })
+
+  it('keeps advanced list filters collapsed until explicitly opened', () => {
+    render(<CandidatesPage />)
+
+    expect(screen.queryByTestId('candidates-advanced-filters')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('candidates-advanced-filters-toggle'))
+
+    expect(screen.getByTestId('candidates-advanced-filters')).toBeInTheDocument()
+    expect(screen.getByText('Каналы и предпочтения')).toBeInTheDocument()
+  })
+
+  it('shows active filter strip for channel filters and allows clearing an individual filter', () => {
+    render(<CandidatesPage />)
+
+    fireEvent.click(screen.getByTestId('candidates-advanced-filters-toggle'))
+    fireEvent.click(within(screen.getByTestId('candidates-channel-filter')).getByRole('button', { name: 'Telegram' }))
+
+    expect(screen.getByTestId('candidates-active-filter-strip')).toBeInTheDocument()
+    const clearChannelFilterButton = screen.getByRole('button', {
+      name: 'Убрать фильтр Связанные каналы: Telegram',
+    })
+    expect(clearChannelFilterButton).toBeInTheDocument()
+
+    fireEvent.click(clearChannelFilterButton)
+
+    expect(screen.queryByRole('button', {
+      name: 'Убрать фильтр Связанные каналы: Telegram',
+    })).not.toBeInTheDocument()
   })
 })

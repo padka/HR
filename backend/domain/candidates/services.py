@@ -14,6 +14,9 @@ from backend.domain import analytics
 
 from .models import (
     AutoMessage,
+    CandidateAccessToken,
+    CandidateAccessTokenKind,
+    CandidateLaunchChannel,
     CandidateInviteToken,
     ChatMessage,
     ChatMessageDirection,
@@ -48,6 +51,11 @@ def normalize_invite_channel(value: Optional[str]) -> str:
     if normalized == INVITE_CHANNEL_GENERIC:
         return INVITE_CHANNEL_GENERIC
     return INVITE_CHANNEL_GENERIC
+
+
+def _should_promote_source_to_max(source: Optional[str]) -> bool:
+    normalized = str(source or "").strip().lower()
+    return normalized in {"", "bot", "generic", "unknown", "candidate_access"}
 
 
 async def create_or_update_user(
@@ -194,6 +202,20 @@ async def get_user_by_candidate_id(candidate_id: str) -> Optional[User]:
         return user
 
 
+async def get_user_by_max_user_id(max_user_id: str) -> Optional[User]:
+    normalized = str(max_user_id or "").strip()
+    if not normalized:
+        return None
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.max_user_id == normalized)
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            session.expunge(user)
+        return user
+
+
 async def get_all_active_users() -> List[User]:
     async with async_session() as session:
         result = await session.scalars(select(User).where(User.is_active.is_(True)))
@@ -281,6 +303,7 @@ async def update_chat_message_status(
     *,
     status: ChatMessageStatus,
     telegram_message_id: Optional[int] = None,
+    provider_message_id: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
     async with async_session() as session:
@@ -290,6 +313,10 @@ async def update_chat_message_status(
         message.status = status.value
         if telegram_message_id is not None:
             message.telegram_message_id = telegram_message_id
+        if provider_message_id:
+            payload = dict(message.payload_json or {})
+            payload["provider_message_id"] = str(provider_message_id)
+            message.payload_json = payload
         if error is not None:
             message.error = error
         await session.commit()
@@ -357,6 +384,8 @@ async def log_outbound_chat_message(
     telegram_message_id: Optional[int] = None,
     payload: Optional[dict] = None,
     author_label: Optional[str] = "bot",
+    channel: str = "telegram",
+    provider_message_id: Optional[str] = None,
 ) -> Optional[ChatMessage]:
     async with async_session() as session:
         result = await session.execute(
@@ -373,14 +402,222 @@ async def log_outbound_chat_message(
 
         message = ChatMessage(
             candidate_id=user.id,
-            telegram_user_id=telegram_user_id,
+            telegram_user_id=telegram_user_id if channel == "telegram" else None,
             direction=ChatMessageDirection.OUTBOUND.value,
-            channel="telegram",
+            channel=channel,
             text=text,
-            payload_json=payload,
+            payload_json={
+                **(payload or {}),
+                **(
+                    {"provider_message_id": str(provider_message_id)}
+                    if provider_message_id
+                    else {}
+                ),
+            }
+            if payload or provider_message_id
+            else payload,
             status=ChatMessageStatus.SENT.value,
             telegram_message_id=telegram_message_id,
             author_label=author_label,
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        return message
+
+
+async def bind_max_to_candidate(
+    *,
+    start_param: str,
+    max_user_id: str,
+    username: Optional[str] = None,
+    display_name: Optional[str] = None,
+    provider_chat_id: Optional[str] = None,
+) -> Optional[User]:
+    normalized_start_param = str(start_param or "").strip()
+    normalized_max_user_id = str(max_user_id or "").strip()
+    if not normalized_start_param or not normalized_max_user_id:
+        return None
+
+    async with async_session() as session:
+        async with session.begin():
+            invite = await session.scalar(
+                select(CandidateAccessToken)
+                .where(CandidateAccessToken.start_param == normalized_start_param)
+                .with_for_update()
+            )
+            if invite is None:
+                return None
+            if invite.launch_channel != CandidateLaunchChannel.MAX.value:
+                return None
+            if invite.token_kind not in {
+                CandidateAccessTokenKind.INVITE.value,
+                CandidateAccessTokenKind.LAUNCH.value,
+                CandidateAccessTokenKind.RESUME.value,
+            }:
+                return None
+            now = datetime.now(timezone.utc)
+            if invite.revoked_at is not None:
+                return None
+            invite_expires_at = invite.expires_at
+            if invite_expires_at.tzinfo is None:
+                invite_expires_at = invite_expires_at.replace(tzinfo=timezone.utc)
+            if invite_expires_at <= now:
+                return None
+
+            candidate = await session.get(User, int(invite.candidate_id))
+            if candidate is None or not candidate.is_active:
+                return None
+            if candidate.max_user_id and candidate.max_user_id != normalized_max_user_id:
+                return None
+
+            existing = await session.scalar(
+                select(User).where(User.max_user_id == normalized_max_user_id)
+            )
+            if existing is not None and existing.id != candidate.id:
+                return None
+
+            candidate.max_user_id = normalized_max_user_id
+            candidate.messenger_platform = "max"
+            if _should_promote_source_to_max(candidate.source):
+                candidate.source = "max"
+            candidate.last_activity = now
+            if username and not candidate.username:
+                candidate.username = username
+            if display_name and (
+                not candidate.fio or str(candidate.fio).startswith("TG ")
+            ):
+                candidate.fio = display_name
+
+            invite.provider_user_id = normalized_max_user_id
+            invite.provider_chat_id = str(provider_chat_id or normalized_max_user_id)
+            invite.last_seen_at = now
+            if invite.consumed_at is None:
+                invite.consumed_at = now
+
+            try:
+                from backend.domain.candidates.journey import append_journey_event
+
+                append_journey_event(
+                    candidate,
+                    event_key="max_linked",
+                    stage="lead",
+                    actor_type="candidate",
+                    summary="Кандидат открыл MAX-бота",
+                    payload={
+                        "channel": "max",
+                        "provider_user_id": normalized_max_user_id,
+                        "start_param": normalized_start_param,
+                    },
+                    created_at=now,
+                )
+            except Exception:
+                # Journey append must not block identity binding.
+                pass
+
+        await session.refresh(candidate)
+        return candidate
+
+
+async def log_inbound_max_message(
+    max_user_id: str,
+    *,
+    text: Optional[str],
+    provider_message_id: Optional[str] = None,
+    client_request_id: Optional[str] = None,
+    payload: Optional[dict] = None,
+    username: Optional[str] = None,
+    display_name: Optional[str] = None,
+) -> Optional[ChatMessage]:
+    normalized_max_user_id = str(max_user_id or "").strip()
+    if not normalized_max_user_id:
+        return None
+    async with async_session() as session:
+        if client_request_id:
+            existing = await session.scalar(
+                select(ChatMessage).where(ChatMessage.client_request_id == client_request_id)
+            )
+            if existing is not None:
+                await session.refresh(existing)
+                return existing
+        result = await session.execute(
+            select(User).where(User.max_user_id == normalized_max_user_id)
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if username and not user.username:
+            user.username = username
+        if display_name and (
+            not user.fio or str(user.fio).startswith("TG ")
+        ):
+            user.fio = display_name
+        user.last_activity = now
+        user.messenger_platform = "max"
+
+        message_payload = dict(payload or {})
+        message_payload["provider_user_id"] = normalized_max_user_id
+        if provider_message_id:
+            message_payload["provider_message_id"] = str(provider_message_id)
+
+        message = ChatMessage(
+            candidate_id=user.id,
+            telegram_user_id=None,
+            direction=ChatMessageDirection.INBOUND.value,
+            channel="max",
+            text=text,
+            payload_json=message_payload,
+            status=ChatMessageStatus.RECEIVED.value,
+            client_request_id=client_request_id,
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        return message
+
+
+async def log_outbound_max_message(
+    max_user_id: str,
+    *,
+    text: Optional[str],
+    payload: Optional[dict] = None,
+    author_label: Optional[str] = "max_bot",
+    provider_message_id: Optional[str] = None,
+    client_request_id: Optional[str] = None,
+) -> Optional[ChatMessage]:
+    normalized_max_user_id = str(max_user_id or "").strip()
+    if not normalized_max_user_id:
+        return None
+
+    async with async_session() as session:
+        if client_request_id:
+            existing = await session.scalar(
+                select(ChatMessage).where(ChatMessage.client_request_id == client_request_id)
+            )
+            if existing is not None:
+                await session.refresh(existing)
+                return existing
+
+        user = await session.scalar(select(User).where(User.max_user_id == normalized_max_user_id))
+        if user is None:
+            return None
+
+        message_payload = dict(payload or {})
+        message_payload["provider_user_id"] = normalized_max_user_id
+        if provider_message_id:
+            message_payload["provider_message_id"] = str(provider_message_id)
+
+        message = ChatMessage(
+            candidate_id=user.id,
+            telegram_user_id=None,
+            direction=ChatMessageDirection.OUTBOUND.value,
+            channel="max",
+            text=text,
+            payload_json=message_payload,
+            status=ChatMessageStatus.SENT.value,
+            author_label=author_label,
+            client_request_id=client_request_id,
         )
         session.add(message)
         await session.commit()
@@ -794,6 +1031,21 @@ async def mark_manual_slot_requested(
         await session.commit()
 
 
+async def mark_manual_slot_requested_for_candidate(
+    candidate_id: int,
+    *,
+    timezone_label: Optional[str] = None,
+) -> None:
+    async with async_session() as session:
+        user = await session.get(User, int(candidate_id))
+        if not user:
+            return
+        user.manual_slot_requested_at = datetime.now(timezone.utc)
+        if timezone_label:
+            user.manual_slot_timezone = timezone_label
+        await session.commit()
+
+
 async def save_manual_slot_response(
     telegram_id: int,
     *,
@@ -810,14 +1062,36 @@ async def save_manual_slot_response(
         user = result.scalar_one_or_none()
         if not user:
             return None
-        user.manual_slot_from = window_start
-        user.manual_slot_to = window_end
-        user.manual_slot_comment = note
-        if timezone_label:
-            user.manual_slot_timezone = timezone_label
-        if user.manual_slot_requested_at is None:
-            user.manual_slot_requested_at = datetime.now(timezone.utc)
-        user.manual_slot_response_at = datetime.now(timezone.utc)
+        await save_manual_slot_response_for_user(
+            session,
+            user,
+            window_start=window_start,
+            window_end=window_end,
+            note=note,
+            timezone_label=timezone_label,
+        )
         await session.commit()
         await session.refresh(user)
         return user
+
+
+async def save_manual_slot_response_for_user(
+    session: AsyncSession,
+    user: User,
+    *,
+    window_start: Optional[datetime],
+    window_end: Optional[datetime],
+    note: Optional[str],
+    timezone_label: Optional[str],
+) -> User:
+    """Persist candidate availability inside the caller's transaction."""
+    user.manual_slot_from = window_start
+    user.manual_slot_to = window_end
+    user.manual_slot_comment = note
+    if timezone_label:
+        user.manual_slot_timezone = timezone_label
+    if user.manual_slot_requested_at is None:
+        user.manual_slot_requested_at = datetime.now(timezone.utc)
+    user.manual_slot_response_at = datetime.now(timezone.utc)
+    await session.flush()
+    return user

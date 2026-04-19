@@ -34,6 +34,7 @@ describe('incoming.filters', () => {
         ownerFilter: 'mine',
         waitingFilter: '48h',
         aiFilter: 'high',
+        sortMode: 'ai_score_desc',
         showAdvancedFilters: true,
       }),
     )
@@ -44,6 +45,7 @@ describe('incoming.filters', () => {
       ownerFilter: 'mine',
       waitingFilter: '48h',
       aiFilter: 'high',
+      sortMode: 'ai_score_desc',
       showAdvancedFilters: true,
     })
 
@@ -53,6 +55,7 @@ describe('incoming.filters', () => {
         ownerFilter: 'oops',
         waitingFilter: 'oops',
         aiFilter: 'oops',
+        sortMode: 'oops',
       }),
     )
     expect(broken).toEqual(
@@ -61,6 +64,7 @@ describe('incoming.filters', () => {
         ownerFilter: 'all',
         waitingFilter: 'all',
         aiFilter: 'all',
+        sortMode: 'priority',
       }),
     )
   })
@@ -74,6 +78,7 @@ describe('incoming.filters', () => {
       ownerFilter: 'assigned',
       waitingFilter: '24h',
       aiFilter: 'medium',
+      sortMode: 'recent_desc',
       showAdvancedFilters: false,
     }
 

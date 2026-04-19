@@ -444,8 +444,6 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
 
         await bootstrap_messenger_adapters(
             bot=bot if configured else None,
-            max_bot_enabled=getattr(settings, "max_bot_enabled", False),
-            max_bot_token=getattr(settings, "max_bot_token", ""),
         )
     except Exception:
         logger.exception("Failed to bootstrap messenger adapters in admin_ui runtime")

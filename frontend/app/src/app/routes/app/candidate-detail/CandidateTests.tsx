@@ -7,6 +7,7 @@ type CandidateTestsProps = {
   onOpenReportPreview: (title: string, url: string) => void
   onOpenAttemptPreview: (testTitle: string, attempt: TestAttempt) => void
   sectionRef?: Ref<HTMLDivElement>
+  embedded?: boolean
 }
 
 export function TestScoreBar({ correct, total, score }: { correct: number; total: number; score?: number | null }) {
@@ -38,17 +39,20 @@ export function CandidateTests({
   onOpenReportPreview,
   onOpenAttemptPreview,
   sectionRef,
+  embedded = false,
 }: CandidateTestsProps) {
   return (
     <div
       id="tests"
       ref={sectionRef}
-      className="cd-profile__section"
+      className={embedded ? 'cd-tests-panel' : 'cd-profile__section'}
       data-testid="candidate-tests-section"
     >
-      <div className="cd-section-header">
-        <h2 className="cd-section-title">Тесты</h2>
-      </div>
+      {!embedded ? (
+        <div className="cd-section-header">
+          <h2 className="cd-section-title">Тесты</h2>
+        </div>
+      ) : null}
       {testSections.length === 0 && <p className="subtitle">Данные по тестам отсутствуют.</p>}
       {testSections.length > 0 && (
         <div className="cd-tests-grid">

@@ -27,6 +27,11 @@ test('mobile shell navigation and layout smoke', async ({ page }) => {
   })
   expect(sceneVisible).toBe(false)
 
+  const slotsLoader = page.locator('.app-page-loader')
+  if (await slotsLoader.count()) {
+    await expect(slotsLoader).toBeHidden({ timeout: 10000 })
+  }
+
   const slotsCards = page.locator('[data-testid="slots-mobile-cards"]')
   const slotsEmpty = page.locator('[data-testid="slots-empty-state"]')
   await expect(slotsCards.or(slotsEmpty)).toBeVisible()

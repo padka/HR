@@ -1,0 +1,34 @@
+# Channel Parity Matrix
+
+Last Verified: 2026-04-19
+
+## Scope
+- Preliminary parity matrix for Telegram current truth versus MAX current truth.
+
+## Purpose
+- Give future agents and engineers one machine-operable map of what is already shared, what is bounded, and where parity gaps still block shipping.
+
+## Status Legend
+- `Live / Full`
+- `Live / Bounded`
+- `Partial`
+- `Target`
+- `Unknown / Not proven`
+
+| Journey stage | Telegram current | MAX current | Gap | Likely owner area in code | Risk level | Evidence | Notes / unknowns |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| entry/bootstrap | Live / Full | Live / Bounded | MAX remains pilot-gated and uses signed launch/session bootstrap | `backend/apps/bot/handlers/common.py`, `backend/apps/admin_api/max_launch.py` | High | `backend/apps/bot/handlers/common.py`, `backend/apps/admin_api/max_launch.py`, `backend/apps/admin_api/main.py` | MAX bootstrap is real, but not production/live rollout |
+| identity binding | Live / Full | Live / Bounded | MAX has stricter session/provider/surface checks and bounded re-entry model | `backend/domain/candidates/services.py`, `backend/apps/admin_api/candidate_access/auth.py` | High | `backend/apps/bot/handlers/common.py`, `backend/apps/admin_api/candidate_access/auth.py`, `backend/apps/admin_api/max_auth.py` | Shared identity concept exists; channel binding details differ |
+| Test 1 | Live / Full | Live / Bounded | MAX uses shared completion but bounded shells only | `backend/apps/bot/services/test1_flow.py`, `backend/domain/candidates/test1_shared.py`, `backend/apps/admin_api/candidate_access/services.py` | Medium | `backend/apps/bot/services/test1_flow.py`, `backend/domain/candidates/test1_shared.py`, `backend/apps/admin_api/candidate_access/services.py` | Shared primitive is present; shell parity is incomplete |
+| resume / vacancy / HH link capture | Unknown / Not proven | Unknown / Not proven | No re-verified explicit shared contract found | shared candidate journey / Test 1 follow-up area | Medium | `backend/apps/bot/services/test1_flow.py`, `backend/domain/candidates/test1_shared.py`, `backend/apps/admin_api/candidate_access/services.py` | Keep unknown until stronger live proof exists |
+| slot booking | Live / Full | Live / Bounded | MAX booking is bounded and constrained by candidate-access slot-only write rules | `backend/apps/bot/services/slot_flow.py`, `backend/apps/admin_api/candidate_access/services.py`, `backend/domain/slot_service.py` | High | `backend/apps/bot/services/slot_flow.py`, `backend/apps/admin_api/candidate_access/services.py` | Scheduling ownership remains sensitive |
+| no-slot fallback | Live / Full | Live / Bounded | MAX has manual availability path, but long-tail parity is not fully proven | `backend/apps/bot/services/slot_flow.py`, `backend/apps/admin_api/candidate_access/services.py`, `backend/apps/admin_api/max_webhook.py` | Medium | `backend/apps/bot/services/slot_flow.py`, `backend/apps/admin_api/candidate_access/router.py`, `backend/apps/admin_api/max_webhook.py` | Recruiter notification exists in both paths |
+| incoming handoff | Live / Full | Partial | Shared operator surfaces exist, but MAX handoff observability is less mature | `backend/apps/admin_ui/services/dashboard.py`, `backend/apps/admin_ui/services/candidates/helpers.py`, `backend/apps/admin_api/candidate_access/router.py` | Medium | `backend/apps/admin_ui/services/dashboard.py`, `backend/apps/admin_ui/services/candidates/helpers.py`, `backend/apps/admin_api/candidate_access/router.py` | Shared state contract helps, but MAX-specific handoff clarity is partial |
+| recruiter chat | Live / Full | Partial | MAX chat exists but parity-complete conversational continuity is not proven | `backend/apps/admin_ui/services/chat.py`, `backend/apps/admin_api/max_candidate_chat.py`, `backend/apps/admin_api/max_webhook.py` | High | `backend/apps/admin_ui/services/chat.py`, `backend/apps/admin_api/max_candidate_chat.py`, `backend/apps/admin_api/max_webhook.py` | MAX chat is real, not miniapp-only, but still bounded |
+| reminders / trigger notifications | Live / Full | Partial | Reminder/outbox implementation stays Telegram-leaning through `candidate_tg_id` and slot-linked delivery assumptions | `backend/apps/bot/reminders.py`, `backend/apps/bot/services/notification_flow.py`, `backend/core/messenger/registry.py` | High | `backend/apps/bot/reminders.py`, `backend/apps/bot/services/notification_flow.py`, `backend/core/messenger/registry.py` | Full MAX reminder parity not proven |
+| Test 2 | Live / Full | Unknown / Not proven | No re-verified MAX candidate-facing Test 2 path | Telegram test2 flow + future candidate-access/MAX shell work | High | `backend/apps/bot/services/test2_flow.py`, `backend/domain/candidates/state_contract.py` | MAX parity required, current implementation not proven |
+| orientation-day agreement | Partial | Unknown / Not proven | Shared statuses/actions exist, but MAX candidate-facing path not proven | admin UI actions + future channel delivery path | High | `backend/domain/candidates/actions.py`, `backend/domain/candidates/state_contract.py`, `backend/apps/admin_ui/routers/api_misc.py` | Telegram full branch coverage also not centralized |
+| meeting details | Partial | Unknown / Not proven | Shared state exists, but explicit parity delivery contract not proven | notification/template/messaging layer | High | `backend/domain/candidates/state_contract.py`, `backend/apps/bot/services/notification_flow.py` | Needs dedicated proof before implementation |
+| resume/re-entry behavior | Partial | Partial | MAX has session/version/start-param machinery, but broad continuity semantics are not fully frozen | `backend/apps/admin_api/max_launch.py`, `backend/apps/admin_api/candidate_access/auth.py`, `backend/apps/admin_api/max_candidate_chat.py` | High | `backend/apps/admin_api/max_launch.py`, `backend/apps/admin_api/candidate_access/auth.py`, `backend/apps/admin_api/max_candidate_chat.py` | Telegram simpler; MAX richer but riskier |
+| candidate clarity | Live / Full | Partial | MAX bounded shells exist, but full-journey candidate clarity is not yet parity-proven | `frontend/app/src/app/routes/miniapp/index.tsx`, message templates/chat prompts | Medium | `docs/frontend/state-flows.md`, `backend/apps/admin_api/candidate_access/router.py`, `backend/apps/admin_api/max_webhook.py` | Parity target allows different shell, not different meaning |
+| operator visibility | Live / Full | Partial | Shared state/read models exist, but MAX progress and pilot state are spread across multiple modules | `backend/domain/candidates/state_contract.py`, `backend/apps/admin_ui/services/max_rollout.py`, `backend/apps/admin_ui/services/candidates/helpers.py` | Medium | `backend/domain/candidates/state_contract.py`, `backend/apps/admin_ui/services/max_rollout.py`, `backend/apps/admin_ui/services/candidates/helpers.py` | Good base exists; discoverability is weak |

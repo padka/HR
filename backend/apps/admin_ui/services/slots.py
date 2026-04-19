@@ -658,7 +658,12 @@ async def delete_all_slots(
         "slots_bulk_deleted",
         "slot",
         None,
-        changes={"deleted": deleted, "remaining": remaining_after, "forced": force},
+        changes={
+            "deleted": deleted,
+            "affected_count": deleted,
+            "remaining": remaining_after,
+            "forced": force,
+        },
     )
     return deleted, remaining_after
 
@@ -1238,6 +1243,8 @@ class BotDispatchPlan:
     kind: str
     slot_id: int
     candidate_id: int
+    candidate_public_id: Optional[str] = None
+    max_user_id: Optional[str] = None
     candidate_tz: Optional[str] = None
     candidate_city_id: Optional[int] = None
     candidate_name: str = ""
@@ -1349,11 +1356,12 @@ def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispat
     scheduled_at = datetime.now(timezone.utc)
     slot.test2_sent_at = scheduled_at
 
-    candidate_id = int(slot.candidate_tg_id)
+    candidate_id = int(slot.candidate_tg_id or 0)
     plan = BotDispatchPlan(
         kind="test2",
         slot_id=slot.id,
         candidate_id=candidate_id,
+        candidate_public_id=str(getattr(slot, "candidate_id", "") or "").strip() or None,
         candidate_tz=getattr(slot, "candidate_tz", None),
         candidate_city_id=getattr(slot, "candidate_city_id", None),
         candidate_name=getattr(slot, "candidate_fio", "") or "",
@@ -1441,6 +1449,8 @@ async def execute_bot_dispatch(
                 bot_service=service,
                 required=plan.required,
                 slot_id=plan.slot_id,
+                candidate_public_id=plan.candidate_public_id,
+                max_user_id=plan.max_user_id,
             )
             action_result = _map_test2_status(result.status)
             success = result.ok and action_result == "sent_test2"
@@ -1581,6 +1591,8 @@ async def _trigger_test2(
     bot_service: Optional[BotService],
     required: bool,
     slot_id: Optional[int] = None,
+    candidate_public_id: Optional[str] = None,
+    max_user_id: Optional[str] = None,
 ) -> BotSendResult:
     service = bot_service
     if service is None:
@@ -1607,6 +1619,8 @@ async def _trigger_test2(
         candidate_name,
         required=required,
         slot_id=slot_id,
+        candidate_public_id=candidate_public_id,
+        max_user_id=max_user_id,
     )
 
 

@@ -19,9 +19,9 @@
 - [ ] Confirm migration DDL preflight passed (no schema privilege errors).
 - [ ] Validate `/health` and `/ready` responses after rollout.
 - [ ] Confirm app worker fan-out: `WEB_CONCURRENCY>=2` for `admin_ui` and `admin_api`.
-- [ ] Confirm bot and notification broker health endpoints are green.
-- [ ] Verify `/health/bot` returns expected runtime state (`status`, `runtime.switch_source`, `runtime.switch_reason`, `runtime.disabled_by`).
-- [ ] Verify `/health/notifications` has no `notifications.fatal_error_code` and `notifications.delivery_state=ok`.
+- [ ] Confirm operator bot and notification diagnostics are green after authenticated admin login.
+- [ ] Verify `/health/bot` is not publicly accessible and returns expected runtime state for an authenticated admin.
+- [ ] Verify `/health/notifications` is not publicly accessible and returns expected delivery state for an authenticated admin.
 
 ## Quality Gates
 
@@ -39,8 +39,8 @@
 
 ## Incident Runbook: `telegram_unauthorized`
 
-- [ ] Confirm incident: `/health/bot` shows `runtime.switch_reason=telegram_unauthorized` and `/health/notifications` shows `notifications.fatal_error_code=telegram_unauthorized`.
+- [ ] Confirm incident under authenticated admin session: `/health/bot` shows `runtime.switch_reason=telegram_unauthorized` and `/health/notifications` shows `notifications.fatal_error_code=telegram_unauthorized`.
 - [ ] Rotate `BOT_TOKEN` in secret manager and revoke old token in @BotFather.
 - [ ] Restart `bot` and `admin_ui` services after secret update.
-- [ ] Recheck health: `/health/bot` must not be in runtime error; `/health/notifications` must return HTTP `200` with `delivery_state=ok`.
+- [ ] Recheck authenticated operator diagnostics: `/health/bot` must not be in runtime error; `/health/notifications` must return HTTP `200` with `delivery_state=ok`.
 - [ ] Record incident timestamp and rotation result in release notes/on-call log.

@@ -159,16 +159,6 @@ limiter = _build_limiter()
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    path = str(getattr(getattr(request, "url", None), "path", "") or "")
-    if path.startswith("/api/candidate/access/challenge"):
-        try:
-            from backend.apps.admin_ui.services.candidate_shared_access import (
-                record_candidate_shared_access_rate_limited,
-            )
-
-            await record_candidate_shared_access_rate_limited()
-        except Exception:
-            logger.debug("shared access rate-limit metric failed", exc_info=True)
     response = _slowapi_rate_limit_exceeded_handler(request, exc)
     if hasattr(response, "__await__"):
         return await response
@@ -468,6 +458,8 @@ async def try_get_current_principal(
     try:
         resolved_token = token if token is not None else _extract_bearer_token(connection)
         return await _resolve_current_principal(connection, token=resolved_token or "")
+    except AssertionError:
+        return None
     except HTTPException as exc:
         if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
             return None

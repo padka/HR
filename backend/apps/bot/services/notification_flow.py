@@ -13,6 +13,10 @@ from backend.core.messenger.channel_state import (
 )
 from backend.core.messenger.protocol import SendResult
 from backend.core.messenger.reliability import classify_delivery_failure
+from backend.core.db import async_session
+from backend.domain.candidates.models import User
+from backend.domain.models import Slot
+from sqlalchemy import select
 
 
 def _uses_legacy_status_update_text(text: str) -> bool:
@@ -502,7 +506,8 @@ class NotificationService:
             return NotificationResult(status="skipped", reason="missing_snapshot")
 
         candidate_id = snapshot.candidate_id
-        if candidate_id is None:
+        candidate_external_id = getattr(snapshot, "candidate_external_id", None)
+        if candidate_id is None and not candidate_external_id:
             return NotificationResult(status="skipped", reason="missing_candidate")
 
         payload = {
@@ -537,6 +542,7 @@ class NotificationService:
                 notification_type="candidate_rejection",
                 booking_id=booking_id,
                 candidate_id=candidate_id,
+                candidate_external_id=candidate_external_id,
                 payload=payload,
                 snapshot=snapshot,
                 status_value=status_value,
@@ -550,17 +556,23 @@ class NotificationService:
         *,
         notification_type: str,
         booking_id: Optional[int],
-        candidate_id: int,
+        candidate_id: Optional[int],
         payload: Dict[str, Any],
         snapshot: SlotSnapshot,
         status_value: BookingNotificationStatus,
         queued_reason: str,
+        candidate_external_id: Optional[str] = None,
     ) -> NotificationResult:
+        if candidate_external_id:
+            payload = dict(payload)
+            payload.setdefault("candidate_external_id", candidate_external_id)
+        messenger_channel = "max" if candidate_external_id else "telegram"
         outbox = await add_outbox_notification(
             notification_type=notification_type,
             booking_id=booking_id,
             candidate_tg_id=candidate_id,
             payload=payload,
+            messenger_channel=messenger_channel,
         )
         enqueued = await self._enqueue_outbox(outbox.id, attempt=outbox.attempts)
         if enqueued:
@@ -630,7 +642,7 @@ class NotificationService:
     ) -> bool:
         await self._throttle()
         if status_value is BookingNotificationStatus.RESCHEDULE_REQUESTED:
-            return await notify_reschedule(snapshot)
+            return await _send_reschedule_prompt(snapshot)
         if status_value is BookingNotificationStatus.APPROVED:
             slot = await get_slot(snapshot.slot_id)
             if not slot or not slot.candidate_tg_id:
@@ -655,7 +667,7 @@ class NotificationService:
                 await reminder_service.schedule_for_slot(slot.id)
             return True
         if status_value is BookingNotificationStatus.CANCELLED:
-            return await notify_rejection(snapshot)
+            return await _send_final_rejection_notice(snapshot)
         return False
 
     async def _finalize_direct_success(
@@ -1146,6 +1158,35 @@ class NotificationService:
         channel = getattr(item, "messenger_channel", "telegram") or "telegram"
         return channel != "telegram"
 
+    async def _resolve_adapter_recipient(self, item: OutboxItem) -> int | str | None:
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+        if channel == "max":
+            payload = dict(item.payload or {})
+            candidate_external_id = str(payload.get("candidate_external_id") or "").strip()
+            if candidate_external_id:
+                return candidate_external_id
+
+            candidate_id = str(payload.get("candidate_id") or "").strip()
+            if not candidate_id and item.booking_id:
+                async with async_session() as session:
+                    slot = await session.get(Slot, int(item.booking_id))
+                    if slot is not None and getattr(slot, "candidate_id", None):
+                        candidate_id = str(slot.candidate_id).strip()
+            if candidate_id:
+                async with async_session() as session:
+                    max_user_id = await session.scalar(
+                        select(User.max_user_id).where(User.candidate_id == candidate_id)
+                    )
+                    if max_user_id:
+                        return str(max_user_id)
+            if item.candidate_tg_id is not None:
+                return item.candidate_tg_id
+            return None
+
+        if item.candidate_tg_id is not None:
+            return item.candidate_tg_id
+        return None
+
     async def _process_via_adapter(self, item: OutboxItem) -> None:
         """Generic handler for non-telegram channels.
 
@@ -1153,8 +1194,8 @@ class NotificationService:
         through the messenger adapter layer. Inline buttons that use Telegram
         callback_data are converted to the adapter's button format.
         """
-        candidate_id = item.candidate_tg_id
-        if not candidate_id:
+        recipient_id = await self._resolve_adapter_recipient(item)
+        if not recipient_id:
             await self._mark_failed(
                 item, item.attempts, item.type, item.type,
                 "candidate_missing", None, candidate_tg_id=None,
@@ -1172,14 +1213,14 @@ class NotificationService:
                 await self._mark_failed(
                     item, item.attempts, item.type, item.type,
                     "template_missing_and_no_fallback_text", None,
-                    candidate_tg_id=candidate_id,
+                    candidate_tg_id=item.candidate_tg_id,
                 )
                 return
         else:
             text = rendered.text
 
         attempt = item.attempts + 1
-        result = await self._send_via_messenger_adapter(item, candidate_id, text)
+        result = await self._send_via_messenger_adapter(item, recipient_id, text)
         if result.success:
             await self._mark_sent(
                 item,
@@ -1187,14 +1228,14 @@ class NotificationService:
                 item.type,
                 item.type,
                 rendered,
-                candidate_id,
+                item.candidate_tg_id,
                 provider_message_id=result.message_id,
             )
         else:
             await self._schedule_retry(
                 item, attempt=attempt, log_type=item.type,
                 notification_type=item.type, error=result.error or "adapter_send_failed",
-                rendered=rendered, candidate_tg_id=candidate_id,
+                rendered=rendered, candidate_tg_id=item.candidate_tg_id,
             )
 
     async def _process_item(self, item: OutboxItem, *, broker_message: Optional[BrokerMessage] = None) -> None:
@@ -2246,7 +2287,9 @@ class NotificationService:
 
     async def _process_interview_reminder(self, item: OutboxItem) -> None:
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
-        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+        if not slot or (
+            item.candidate_tg_id is not None and slot.candidate_tg_id != item.candidate_tg_id
+        ):
             await self._mark_failed(
                 item,
                 item.attempts,
@@ -2260,6 +2303,7 @@ class NotificationService:
 
         candidate_id = slot.candidate_tg_id
         payload = item.payload or {}
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
         reminder_raw = payload.get("reminder_kind")
         try:
             reminder_kind = ReminderKind(reminder_raw)
@@ -2398,6 +2442,49 @@ class NotificationService:
             return
 
         await self._throttle()
+        recipient = candidate_id
+        if channel != "telegram":
+            recipient = await self._resolve_adapter_recipient(item)
+            if recipient is None:
+                await self._mark_failed(
+                    item,
+                    attempt,
+                    log_type,
+                    notification_type,
+                    "recipient_missing",
+                    rendered,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            send_result = await self._send_via_messenger_adapter(
+                item,
+                recipient,
+                rendered.text,
+                buttons=reply_markup.inline_keyboard if reply_markup else None,
+                parse_mode="HTML",
+            )
+            if not send_result.success:
+                await self._schedule_retry(
+                    item,
+                    attempt=attempt,
+                    log_type=log_type,
+                    notification_type=notification_type,
+                    error=str(send_result.error or "adapter_send_failed"),
+                    rendered=rendered,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            await self._mark_sent(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                rendered,
+                candidate_id,
+            )
+            await record_slot_reminder_sent(reminder_kind)
+            return
+
         bot = get_bot()
         try:
             await _send_with_retry(
@@ -2850,7 +2937,9 @@ class NotificationService:
         personalized information like address, contact person, etc.
         """
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
-        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+        if not slot or (
+            item.candidate_tg_id is not None and slot.candidate_tg_id != item.candidate_tg_id
+        ):
             await self._mark_failed(
                 item,
                 item.attempts,
@@ -2863,6 +2952,7 @@ class NotificationService:
             return
 
         candidate_id = slot.candidate_tg_id
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
         log_type = "intro_day_invitation"
         notification_type = "intro_day_invitation"
 
@@ -2881,6 +2971,7 @@ class NotificationService:
         labels = slot_local_labels(slot.start_utc, tz)
 
         # Get city name for template context
+        city = None
         city_name = ""
         if slot.candidate_city_id:
             from backend.core.db import async_session
@@ -2989,6 +3080,68 @@ class NotificationService:
             return
 
         await self._throttle()
+        recipient = candidate_id
+        if channel != "telegram":
+            recipient = await self._resolve_adapter_recipient(item)
+            if recipient is None:
+                await self._mark_failed(
+                    item,
+                    attempt,
+                    log_type,
+                    notification_type,
+                    "recipient_missing",
+                    rendered,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            send_result = await self._send_via_messenger_adapter(
+                item,
+                recipient,
+                rendered.text,
+                buttons=kb_attendance_confirm(slot.id).inline_keyboard,
+                parse_mode="HTML",
+            )
+            if not send_result.success:
+                await self._schedule_retry(
+                    item,
+                    attempt=attempt,
+                    log_type=log_type,
+                    notification_type=notification_type,
+                    error=str(send_result.error or "adapter_send_failed"),
+                    rendered=rendered,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            try:
+                from backend.domain.candidates.status_service import (
+                    set_status_intro_day_scheduled,
+                    update_candidate_status_by_candidate_id,
+                )
+
+                if candidate_id is not None:
+                    await set_status_intro_day_scheduled(candidate_id, force=True)
+                elif getattr(slot, "candidate_id", None):
+                    await update_candidate_status_by_candidate_id(
+                        str(slot.candidate_id),
+                        CandidateStatus.INTRO_DAY_SCHEDULED,
+                        force=True,
+                        session=None,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to update candidate status to INTRO_DAY_SCHEDULED for candidate %s",
+                    candidate_id or getattr(slot, "candidate_id", None),
+                )
+            await self._mark_sent(
+                item,
+                attempt,
+                log_type,
+                notification_type,
+                rendered,
+                candidate_id,
+            )
+            return
+
         bot = get_bot()
 
         try:
@@ -3051,10 +3204,21 @@ class NotificationService:
 
         # Update candidate status to INTRO_DAY_SCHEDULED after successful send
         try:
-            from backend.domain.candidates.status_service import set_status_intro_day_scheduled
-            await set_status_intro_day_scheduled(candidate_id, force=True)
+            from backend.domain.candidates.status_service import (
+                set_status_intro_day_scheduled,
+                update_candidate_status_by_candidate_id,
+            )
+            if candidate_id is not None:
+                await set_status_intro_day_scheduled(candidate_id, force=True)
+            elif getattr(slot, "candidate_id", None):
+                await update_candidate_status_by_candidate_id(
+                    str(slot.candidate_id),
+                    CandidateStatus.INTRO_DAY_SCHEDULED,
+                    force=True,
+                    session=None,
+                )
         except Exception:
-            logger.exception("Failed to update candidate status to INTRO_DAY_SCHEDULED for candidate %s", candidate_id)
+            logger.exception("Failed to update candidate status to INTRO_DAY_SCHEDULED for candidate %s", candidate_id or getattr(slot, "candidate_id", None))
 
         await self._mark_sent(
             item,

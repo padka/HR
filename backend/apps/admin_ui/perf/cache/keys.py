@@ -8,6 +8,7 @@ Rules:
 
 from __future__ import annotations
 
+from hashlib import sha1
 from dataclasses import dataclass
 from datetime import date as date_type
 from typing import Iterable, Optional
@@ -33,8 +34,37 @@ def dashboard_counts(*, principal: Principal | None) -> Key:
     return Key(f"dashboard:counts:v1:{_principal_scope(principal)}")
 
 
-def dashboard_incoming(*, principal: Principal | None, limit: int) -> Key:
-    return Key(f"dashboard:incoming:v1:{_principal_scope(principal)}:{int(limit)}")
+def dashboard_incoming(
+    *,
+    principal: Principal | None,
+    limit: int | None = None,
+    page: int = 1,
+    page_size: int | None = None,
+    city_id: int | None = None,
+    status: str = "all",
+    owner: str = "all",
+    waiting: str = "all",
+    ai_level: str = "all",
+    sort: str = "priority",
+    search: str | None = None,
+) -> Key:
+    normalized_page_size = int(page_size or limit or 100)
+    normalized_search = (search or "").strip().lower()
+    search_key = "q0"
+    if normalized_search:
+        search_key = f"q{sha1(normalized_search.encode('utf-8')).hexdigest()[:12]}"
+    return Key(
+        "dashboard:incoming:v2:"
+        f"{_principal_scope(principal)}:"
+        f"p{int(page)}:ps{normalized_page_size}:"
+        f"c{city_id or 'all'}:"
+        f"s{(status or 'all').strip().lower()}:"
+        f"o{(owner or 'all').strip().lower()}:"
+        f"w{(waiting or 'all').strip().lower()}:"
+        f"ai{(ai_level or 'all').strip().lower()}:"
+        f"sort{(sort or 'priority').strip().lower()}:"
+        f"{search_key}"
+    )
 
 
 def profile_payload(*, principal: Principal) -> Key:

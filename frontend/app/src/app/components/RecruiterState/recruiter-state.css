@@ -31,7 +31,8 @@
 .recruiter-action-block__body,
 .recruiter-state-context__row,
 .recruiter-kanban-header__title-row,
-.recruiter-kanban-header__meta {
+.recruiter-kanban-header__meta,
+.recruiter-semantic-strip__list {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -41,7 +42,8 @@
 .recruiter-action-block__text,
 .recruiter-risk-banner__content,
 .recruiter-kanban-header__main,
-.recruiter-state-context {
+.recruiter-state-context,
+.recruiter-semantic-strip {
   min-width: 0;
   display: grid;
   gap: 4px;
@@ -49,7 +51,9 @@
 
 .recruiter-action-block__eyebrow,
 .recruiter-lifecycle-strip__label,
-.recruiter-kanban-header__helper {
+.recruiter-kanban-header__helper,
+.recruiter-semantic-strip__title,
+.recruiter-semantic-strip__signal-label {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
@@ -85,7 +89,8 @@
 .recruiter-state-context__bucket,
 .recruiter-lifecycle-strip__outcome,
 .recruiter-kanban-header__mode,
-.recruiter-kanban-header__count {
+.recruiter-kanban-header__count,
+.recruiter-semantic-strip__signal {
   display: inline-flex;
   align-items: center;
   min-height: 22px;
@@ -93,6 +98,53 @@
   border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
+}
+
+.recruiter-semantic-strip__list {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.recruiter-semantic-strip__signal {
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+}
+
+.recruiter-semantic-strip__signal-label {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+.recruiter-semantic-strip__signal-value {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+}
+
+.recruiter-semantic-strip__signal--info {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+}
+
+.recruiter-semantic-strip__signal--warning {
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--border-subtle));
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-surface));
+}
+
+.recruiter-semantic-strip__signal--danger {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--border-subtle));
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-surface));
+}
+
+.recruiter-semantic-strip__signal--success {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--border-subtle));
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-surface));
+}
+
+.recruiter-semantic-strip--compact .recruiter-semantic-strip__signal {
+  min-height: 24px;
+  padding: 0 8px;
 }
 
 .recruiter-risk-banner {

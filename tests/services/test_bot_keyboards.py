@@ -338,15 +338,12 @@ def test_kb_slot_assignment_reschedule_options_has_manual_fallback():
 def test_kb_slot_assignment_active_has_details_and_controls():
     kb = kb_slot_assignment_active(
         55,
-        portal_url="https://crm.test/candidate/start?start=abc",
         reschedule_token="reschedule-token",
         decline_token="decline-token",
     )
     buttons = _all_buttons(kb)
     texts = [btn.text for btn in buttons]
     callbacks = [getattr(btn, "callback_data", "") for btn in buttons]
-    urls = [getattr(btn, "url", "") for btn in buttons if getattr(btn, "url", None)]
-    webapps = [getattr(btn, "web_app", None) for btn in buttons if getattr(btn, "web_app", None)]
 
     assert "🗓 Детали встречи" in texts
     assert "🔁 Перенести" in texts
@@ -354,8 +351,6 @@ def test_kb_slot_assignment_active_has_details_and_controls():
     assert any(value.startswith("slotasg:details:55") for value in callbacks)
     assert any('"a":"reschedule"' in value for value in callbacks)
     assert any('"a":"decline"' in value for value in callbacks)
-    assert any("candidate/start" in value for value in urls)
-    assert any("candidate/start" in btn.url for btn in webapps)
 
 
 # ---------------------------------------------------------------------------

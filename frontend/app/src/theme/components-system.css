@@ -81,3 +81,123 @@
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Shared app states */
+.app-state {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+}
+
+.app-state--fullscreen {
+  min-height: 100vh;
+  padding: 24px;
+  align-items: center;
+}
+
+.app-state--compact {
+  justify-items: stretch;
+}
+
+.app-state__card {
+  width: min(100%, 680px);
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-state--compact .app-state__card,
+.app-state--inline-success .app-state__card,
+.app-page-loader.app-state--compact .app-state__card {
+  width: 100%;
+  padding: var(--space-lg);
+}
+
+.app-state__card--info {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border-default));
+}
+
+.app-state__card--warning {
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--border-default));
+}
+
+.app-state__card--danger {
+  border-color: color-mix(in srgb, var(--danger) 32%, var(--border-default));
+}
+
+.app-state__card--success {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border-default));
+}
+
+.app-state__eyebrow {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  line-height: var(--leading-snug);
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.app-state__content {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.app-state__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.app-state__description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+
+.app-state__body {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.app-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.app-state__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 32px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.app-state__progress-label {
+  color: var(--text-secondary);
+}
+
+.app-state__spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-top-color: var(--accent);
+  animation: app-state-spin 0.85s linear infinite;
+}
+
+@keyframes app-state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

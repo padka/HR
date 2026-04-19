@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { memo, useCallback, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { apiFetch } from '@/api/client'
+import { EmptyState, PageLoader } from '@/app/components/AppStates'
 import {
   CandidateIdentityBlock,
   RecruiterActionBlock,
@@ -12,11 +13,14 @@ import {
   RecruiterStateContext,
 } from '@/app/components/RecruiterState'
 import type {
+  CandidateAction,
+  CandidateActionResponse,
   CandidateBlockingState,
   CandidateListCard,
   CandidateListPayload,
   CandidateStateFilterOption,
 } from '@/api/services/candidates'
+import { applyCandidateAction } from '@/api/services/candidates'
 import { ApiErrorBanner } from '@/app/components/ApiErrorBanner'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useIsMobile } from '@/app/hooks/useIsMobile'
@@ -85,6 +89,10 @@ type CandidateMoveError = Error & {
   data?: CandidateKanbanMoveResponse
 }
 
+type CandidateChannelFilter = 'all' | 'telegram' | 'max'
+type CandidatePreferredChannelFilter = 'all' | 'telegram' | 'max'
+type ActiveFilterKey = 'search' | 'state' | 'channel' | 'preferred-channel' | 'pipeline'
+
 const DEFAULT_STATE_FILTER_OPTIONS: CandidateStateFilterOption[] = [
   { value: '', label: 'Все кандидаты', kind: 'all' },
   ...RECRUITER_KANBAN_COLUMNS.map((column) => ({
@@ -107,17 +115,58 @@ const DEFAULT_KANBAN_COLUMNS = RECRUITER_KANBAN_COLUMNS.map((column) => ({
   candidates: [] as CandidateListCard[],
 }))
 
-function candidateScoreTone(score?: number | null) {
-  if (typeof score !== 'number') return 'neutral'
-  if (score >= 70) return 'success'
-  if (score >= 40) return 'warning'
-  return 'danger'
+function candidateScoreTone(score?: number | null, level?: CandidateListCard['ai_relevance_level']) {
+  if (typeof score === 'number') {
+    if (score >= 70) return 'success'
+    if (score >= 40) return 'warning'
+    return 'danger'
+  }
+  if (level === 'high') return 'success'
+  if (level === 'medium') return 'warning'
+  if (level === 'low') return 'danger'
+  return 'neutral'
+}
+
+function resolveCandidateRelevanceScore(candidate: Pick<CandidateListCard, 'ai_relevance_score'>) {
+  return typeof candidate.ai_relevance_score === 'number' ? candidate.ai_relevance_score : null
+}
+
+function resolveCandidateRelevanceLabel(candidate: Pick<CandidateListCard, 'ai_relevance_score' | 'ai_relevance_level'>) {
+  const score = resolveCandidateRelevanceScore(candidate)
+  if (typeof score === 'number') return `${Math.round(score)}%`
+  if (candidate.ai_relevance_level === 'high') return 'Высокая'
+  if (candidate.ai_relevance_level === 'medium') return 'Средняя'
+  if (candidate.ai_relevance_level === 'low') return 'Низкая'
+  return 'Оценивается'
+}
+
+function resolveQuickCandidateAction(candidate: CandidateListCard) {
+  const recordState = candidate.lifecycle_summary?.record_state
+  const archiveStage = candidate.archive?.stage
+  return (candidate.candidate_actions || []).find((action) => {
+    if (action.key !== 'restart_test1') return false
+    return recordState === 'closed' || Boolean(archiveStage)
+  }) || null
+}
+
+function resolveQuickCandidateActionLabel(candidate: CandidateListCard, action: CandidateAction) {
+  if (action.key === 'restart_test1') {
+    return candidate.lifecycle_summary?.record_state === 'closed' || candidate.archive?.stage
+      ? 'Вернуть в повторный отбор'
+      : 'Перезапустить отбор'
+  }
+  return action.label || 'Выполнить действие'
+}
+
+function candidateActionPendingLabel(action: CandidateAction) {
+  if (action.key === 'restart_test1') return 'Возврат…'
+  return 'Выполнение…'
 }
 
 function formatCandidateDate(value?: string | null) {
-  if (!value) return '—'
+  if (!value) return 'Нет активности'
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
+  if (Number.isNaN(date.getTime())) return 'Нет активности'
   return date.toLocaleDateString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
@@ -140,16 +189,172 @@ function resolveCandidateDate(candidate: {
   )
 }
 
-function buildSecondaryStatusLabel(state: {
-  statusLabel?: string | null
-  stateContextLine?: string | null
-  schedulingContextLine?: string | null
-}) {
-  const value = state.statusLabel?.trim()
-  if (!value) return null
-  if (value === state.stateContextLine?.trim()) return null
-  if (value === state.schedulingContextLine?.trim()) return null
-  return value
+function buildCandidateListStatus(candidate: CandidateListCard, state: ReturnType<typeof buildCandidateSurfaceState>) {
+  const primary = state.lifecycle.stage_label?.trim()
+    || candidate.archive?.stage_label?.trim()
+    || state.statusLabel?.trim()
+    || 'Без статуса'
+
+  const secondaryCandidate =
+    state.lifecycle.record_state === 'closed'
+      ? state.lifecycle.final_outcome_label?.trim() || candidate.archive?.label?.trim() || null
+      : candidate.archive?.label?.trim() || null
+
+  const reason = candidate.final_outcome_reason?.trim()
+    || candidate.archive?.reason?.trim()
+    || null
+
+  return {
+    primary,
+    secondary: secondaryCandidate && secondaryCandidate !== primary ? secondaryCandidate : null,
+    reason,
+    tone: state.statusTone,
+  }
+}
+
+function hasTelegramChannel(candidate: Pick<CandidateListCard, 'telegram_id' | 'telegram_username' | 'telegram_linked_at' | 'linked_channels'>) {
+  return Boolean(candidate.linked_channels?.telegram || candidate.telegram_id || candidate.telegram_username || candidate.telegram_linked_at)
+}
+
+function hasMaxChannel(candidate: Pick<CandidateListCard, 'max' | 'linked_channels'>) {
+  return Boolean(candidate.linked_channels?.max || candidate.max?.linked)
+}
+
+function matchesChannelFilter(candidate: CandidateListCard, channelFilter: CandidateChannelFilter) {
+  if (channelFilter === 'telegram') return hasTelegramChannel(candidate)
+  if (channelFilter === 'max') return hasMaxChannel(candidate)
+  return true
+}
+
+function resolvePreferredChannel(candidate: Pick<CandidateListCard, 'preferred_channel' | 'linked_channels' | 'max' | 'telegram_id' | 'telegram_username' | 'telegram_linked_at'>) {
+  const normalized = String(candidate.preferred_channel || '').trim().toLowerCase()
+  if (normalized === 'telegram' || normalized === 'max') return normalized
+  if (hasMaxChannel(candidate)) return 'max'
+  if (hasTelegramChannel(candidate)) return 'telegram'
+  return null
+}
+
+function matchesPreferredChannelFilter(candidate: CandidateListCard, preferredChannelFilter: CandidatePreferredChannelFilter) {
+  if (preferredChannelFilter === 'all') return true
+  return resolvePreferredChannel(candidate) === preferredChannelFilter
+}
+
+function resolveCompactMaxState(candidate: CandidateListCard): { label: string; tone: 'info' | 'success' | 'danger' } | null {
+  const snapshot = candidate.max_rollout
+  if (!snapshot) return null
+  if (snapshot.invite_state === 'revoked') return { label: 'Отозвано', tone: 'danger' }
+  if (snapshot.launch_state === 'launched') return { label: 'Запущено', tone: 'success' }
+  if (snapshot.send_state === 'sent') return { label: 'Отправлено', tone: 'success' }
+  if (snapshot.invite_state === 'active') return { label: 'Выдано', tone: 'info' }
+  return null
+}
+
+function renderCandidateChannelBadges(candidate: CandidateListCard) {
+  const telegramLinked = hasTelegramChannel(candidate)
+  const maxLinked = hasMaxChannel(candidate)
+  const maxState = resolveCompactMaxState(candidate)
+  const telegramTitle = telegramLinked ? 'Telegram подключён' : 'Telegram не подключён'
+  const maxTitle = maxLinked ? 'MAX подключён' : 'MAX не подключён'
+  const telegramHref =
+    candidate.telegram_username
+      ? `https://t.me/${candidate.telegram_username.replace(/^@/, '')}`
+      : candidate.telegram_id
+        ? `tg://user?id=${candidate.telegram_id}`
+        : null
+
+  return (
+    <div className="candidate-row__channels" data-testid="candidate-channel-badges">
+      {telegramLinked ? (
+        telegramHref ? (
+          <a href={telegramHref} target="_blank" rel="noopener" className="candidate-row__channel candidate-row__channel--link" title={telegramTitle}>
+            TG
+          </a>
+        ) : (
+          <span className="candidate-row__channel candidate-row__channel--link" title={telegramTitle}>TG</span>
+        )
+      ) : (
+        <span className="candidate-row__channel candidate-row__channel--disabled" title={telegramTitle}>TG</span>
+      )}
+      {maxLinked ? (
+        <span className="candidate-row__channel candidate-row__channel--max" title={maxTitle}>MAX</span>
+      ) : (
+        <span className="candidate-row__channel candidate-row__channel--disabled" title={maxTitle}>MAX</span>
+      )}
+      {maxState ? (
+        <span
+          className={`candidate-row__channel candidate-row__channel--state candidate-row__channel--state-${maxState.tone}`}
+          title={`Состояние MAX: ${maxState.label}`}
+        >
+          {maxState.label}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+type CandidateQuickActionsMenuProps = {
+  candidate: CandidateListCard
+  canDelete: boolean
+  isDeleting: boolean
+  isActionPending: boolean
+  onDeleteCandidate: (candidate: { id: number; fio?: string | null }) => void
+  onQuickAction: (candidate: CandidateListCard, action: CandidateAction) => void
+  compact?: boolean
+}
+
+function CandidateQuickActionsMenu({
+  candidate,
+  canDelete,
+  isDeleting,
+  isActionPending,
+  onDeleteCandidate,
+  onQuickAction,
+  compact = false,
+}: CandidateQuickActionsMenuProps) {
+  const restoreAction = resolveQuickCandidateAction(candidate)
+
+  return (
+    <details className={`candidate-action-menu ${compact ? 'candidate-action-menu--compact' : ''}`}>
+      <summary
+        className="candidate-action-menu__trigger ui-btn ui-btn--ghost ui-btn--sm"
+        aria-label={`Действия для ${candidate.fio || `кандидата ${candidate.id}`}`}
+      >
+        <span aria-hidden="true">⋯</span>
+      </summary>
+      <div className="candidate-action-menu__content" role="menu">
+        <Link
+          to="/app/candidates/$candidateId"
+          params={{ candidateId: String(candidate.id) }}
+          className="ui-btn ui-btn--secondary ui-btn--sm candidate-action-menu__item"
+          role="menuitem"
+        >
+          Открыть профиль
+        </Link>
+        {restoreAction ? (
+          <button
+            type="button"
+            className="ui-btn ui-btn--ghost ui-btn--sm candidate-action-menu__item"
+            onClick={() => onQuickAction(candidate, restoreAction)}
+            disabled={isActionPending}
+            role="menuitem"
+          >
+            {isActionPending ? candidateActionPendingLabel(restoreAction) : resolveQuickCandidateActionLabel(candidate, restoreAction)}
+          </button>
+        ) : null}
+        {canDelete ? (
+          <button
+            type="button"
+            className="ui-btn ui-btn--danger ui-btn--sm candidate-action-menu__item"
+            onClick={() => onDeleteCandidate(candidate)}
+            disabled={isDeleting}
+            role="menuitem"
+          >
+            {isDeleting ? 'Удаление…' : 'Удалить'}
+          </button>
+        ) : null}
+      </div>
+    </details>
+  )
 }
 
 type CandidateKanbanCardProps = {
@@ -176,7 +381,8 @@ const CandidateKanbanCard = memo(function CandidateKanbanCard({
   onDragEnd,
 }: CandidateKanbanCardProps) {
   const state = buildCandidateSurfaceState(card)
-  const scoreTone = candidateScoreTone(card.average_score)
+  const relevanceScore = resolveCandidateRelevanceScore(card)
+  const scoreTone = candidateScoreTone(relevanceScore, card.ai_relevance_level)
   const cardDate = formatCandidateDate(resolveCandidateDate(card))
 
   return (
@@ -193,9 +399,9 @@ const CandidateKanbanCard = memo(function CandidateKanbanCard({
           title={card.fio || '—'}
           subtitle={card.city || '—'}
           compact
-          aside={typeof card.average_score === 'number' ? (
-            <span className={`candidate-score candidate-score--${scoreTone}`}>{Math.round(card.average_score)}%</span>
-          ) : null}
+          aside={(
+            <span className={`candidate-score candidate-score--${scoreTone}`}>{resolveCandidateRelevanceLabel(card)}</span>
+          )}
         />
       </div>
       <RecruiterActionBlock
@@ -265,13 +471,18 @@ export function CandidatesPage() {
 
   const [search, setSearch] = useState(initialFilters.search)
   const [stateFilter, setStateFilter] = useState(initialFilters.stateFilter)
+  const [channelFilter, setChannelFilter] = useState<CandidateChannelFilter>('all')
+  const [preferredChannelFilter, setPreferredChannelFilter] = useState<CandidatePreferredChannelFilter>('all')
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
   const [pipeline, setPipeline] = useState(initialFilters.pipeline)
   const [view, setView] = useState<'list' | 'kanban' | 'calendar'>('list')
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [aiCityId, setAiCityId] = useState('')
   const [deletingCandidateId, setDeletingCandidateId] = useState<number | null>(null)
+  const [actionCandidateId, setActionCandidateId] = useState<number | null>(null)
   const [deleteCandidateError, setDeleteCandidateError] = useState<Error | null>(null)
+  const [candidateActionError, setCandidateActionError] = useState<Error | null>(null)
   const [kanbanMoveError, setKanbanMoveError] = useState<Error | null>(null)
   const [kanbanMoveBlockingState, setKanbanMoveBlockingState] = useState<CandidateBlockingState | null>(null)
   const [kanbanMoveBlockingMessage, setKanbanMoveBlockingMessage] = useState<string | null>(null)
@@ -347,6 +558,25 @@ export function CandidatesPage() {
     },
   })
 
+  const candidateActionMutation = useMutation({
+    mutationFn: async ({ candidateId, actionKey }: { candidateId: number; actionKey: string }) =>
+      applyCandidateAction(candidateId, actionKey),
+    onMutate: ({ candidateId }: { candidateId: number; actionKey: string }) => {
+      setCandidateActionError(null)
+      setActionCandidateId(candidateId)
+    },
+    onSuccess: async (_response: CandidateActionResponse) => {
+      setCandidateActionError(null)
+      await queryClient.invalidateQueries({ queryKey: ['candidates'] })
+    },
+    onError: (error: Error) => {
+      setCandidateActionError(error)
+    },
+    onSettled: () => {
+      setActionCandidateId(null)
+    },
+  })
+
   const moveKanbanCandidateMutation = useMutation({
     mutationFn: async ({ candidateId, targetColumn }: KanbanMoveVariables) =>
       apiFetch<CandidateKanbanMoveResponse>(`/candidates/${candidateId}/kanban-status`, {
@@ -390,6 +620,7 @@ export function CandidatesPage() {
     },
   })
   const deleteCandidateMutate = deleteCandidateMutation.mutate
+  const candidateActionMutate = candidateActionMutation.mutate
   const moveKanbanCandidateMutate = moveKanbanCandidateMutation.mutate
 
   const total = data?.total ?? 0
@@ -418,14 +649,24 @@ export function CandidatesPage() {
         fio: item.fio,
         city: item.city,
         telegram_id: item.telegram_id,
+        telegram_username: item.telegram_username,
+        telegram_linked_at: item.telegram_linked_at,
+        linked_channels: item.linked_channels,
+        max: item.max,
+        preferred_channel: item.preferred_channel,
+        max_rollout: item.max_rollout,
         status: item.status,
         recruiter_id: item.recruiter_id,
         recruiter_name: item.recruiter_name,
         recruiter: item.recruiter,
         average_score: item.average_score,
+        ai_relevance_score: item.ai_relevance_score,
+        ai_relevance_level: item.ai_relevance_level,
+        ai_relevance_updated_at: item.ai_relevance_updated_at,
         primary_event_at: item.primary_event_at,
         latest_slot: item.latest_slot,
         upcoming_slot: item.upcoming_slot,
+        candidate_actions: item.candidate_actions,
       }))
     },
     [data?.items, data?.views?.candidates],
@@ -433,6 +674,13 @@ export function CandidatesPage() {
   const kanbanCards = useMemo(
     () => listCards,
     [listCards],
+  )
+  const visibleListCards = useMemo(
+    () => listCards.filter(
+      (card) => matchesChannelFilter(card, channelFilter)
+        && matchesPreferredChannelFilter(card, preferredChannelFilter),
+    ),
+    [channelFilter, listCards, preferredChannelFilter],
   )
   const backendKanbanColumns = useMemo(
     () => (data?.views?.kanban?.columns?.length ? data.views.kanban.columns : DEFAULT_KANBAN_COLUMNS),
@@ -471,9 +719,15 @@ export function CandidatesPage() {
     { slug: 'interview', label: 'Интервью' },
     { slug: 'intro_day', label: 'Ознакомительный день' },
   ]
-  const hasActiveFilters = Boolean(search.trim() || stateFilter || (view !== 'kanban' && pipeline !== 'interview'))
+  const hasActiveFilters = Boolean(
+    search.trim()
+    || stateFilter
+    || channelFilter !== 'all'
+    || preferredChannelFilter !== 'all'
+    || (view !== 'kanban' && pipeline !== 'interview')
+  )
   const firstRenderAnimation = !hasAnimatedLists && !prefersReducedMotion
-  const listAnimationKey = [search, stateFilter, pipeline, view, page, perPage].join('|')
+  const listAnimationKey = [search, stateFilter, channelFilter, preferredChannelFilter, pipeline, view, page, perPage].join('|')
   const kanbanAnimationKey = [
     search,
     stateFilter,
@@ -481,33 +735,75 @@ export function CandidatesPage() {
     kanbanColumns.map((column) => `${column.slug}:${column.candidates.length}`).join(','),
   ].join('|')
   const activeFilterBadges = [
-    search.trim() ? `Поиск: ${search.trim()}` : null,
-    stateFilter ? `Этап: ${stateOptions.find((option) => option.value === stateFilter)?.label || stateFilter}` : null,
-    view !== 'kanban' && pipeline !== 'interview'
-      ? `Воронка: ${pipelineOptions.find((option) => option.slug === pipeline)?.label || pipeline}`
+    search.trim() ? { key: 'search' as const, label: `Поиск: ${search.trim()}` } : null,
+    stateFilter
+      ? { key: 'state' as const, label: `Этап: ${stateOptions.find((option) => option.value === stateFilter)?.label || stateFilter}` }
       : null,
-  ].filter(Boolean) as string[]
+    channelFilter !== 'all'
+      ? { key: 'channel' as const, label: `Связанные каналы: ${channelFilter === 'telegram' ? 'Telegram' : 'MAX'}` }
+      : null,
+    preferredChannelFilter !== 'all'
+      ? {
+          key: 'preferred-channel' as const,
+          label: `Предпочтительный канал: ${preferredChannelFilter === 'telegram' ? 'Telegram' : 'MAX'}`,
+        }
+      : null,
+    view !== 'kanban' && pipeline !== 'interview'
+      ? { key: 'pipeline' as const, label: `Воронка: ${pipelineOptions.find((option) => option.slug === pipeline)?.label || pipeline}` }
+      : null,
+  ].filter(Boolean) as Array<{ key: ActiveFilterKey; label: string }>
+  const advancedFilterCount = Number(channelFilter !== 'all') + Number(preferredChannelFilter !== 'all')
 
   const resetFilters = () => {
     setSearch('')
     setStateFilter('')
+    setChannelFilter('all')
+    setPreferredChannelFilter('all')
     setPipeline('interview')
     setPage(1)
+    setShowAdvancedFilters(false)
   }
+
+  const clearFilter = useCallback((key: ActiveFilterKey) => {
+    switch (key) {
+      case 'search':
+        setSearch('')
+        break
+      case 'state':
+        setStateFilter('')
+        break
+      case 'channel':
+        setChannelFilter('all')
+        break
+      case 'preferred-channel':
+        setPreferredChannelFilter('all')
+        break
+      case 'pipeline':
+        setPipeline('interview')
+        break
+    }
+    setPage(1)
+  }, [])
 
   useEffect(() => {
     setHasAnimatedLists(true)
   }, [])
 
   useEffect(() => {
+    if (channelFilter !== 'all' || preferredChannelFilter !== 'all') {
+      setShowAdvancedFilters(true)
+    }
+  }, [channelFilter, preferredChannelFilter])
+
+  useEffect(() => {
     setSelectedCandidateIds((prev) => {
-      const next = prev.filter((id) => listCards.some((candidate) => candidate.id === id))
+      const next = prev.filter((id) => visibleListCards.some((candidate) => candidate.id === id))
       if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
         return prev
       }
       return next
     })
-  }, [listCards])
+  }, [visibleListCards])
 
   useEffect(() => {
     if (!isMobile) return
@@ -522,37 +818,17 @@ export function CandidatesPage() {
     deleteCandidateMutate(candidate.id)
   }, [deleteCandidateMutate])
 
+  const triggerQuickCandidateAction = useCallback((candidate: CandidateListCard, action: CandidateAction) => {
+    const confirmation = action.confirmation?.trim()
+    if (confirmation && !window.confirm(confirmation)) return
+    setActionCandidateId(candidate.id)
+    candidateActionMutate({ candidateId: candidate.id, actionKey: action.key })
+  }, [candidateActionMutate])
+
   const selectedCandidates = useMemo(
     () => listCards.filter((candidate) => selectedCandidateIds.includes(candidate.id)),
     [listCards, selectedCandidateIds],
   )
-  const workQueueSummary = useMemo(() => {
-    const order = ['incoming', 'today', 'awaiting_recruiter', 'awaiting_candidate', 'blocked', 'closed']
-    const queueMap = new Map<string, { label: string; count: number }>()
-
-    for (const candidate of listCards) {
-      const state = buildCandidateSurfaceState(candidate)
-      const current = queueMap.get(state.worklistBucket)
-      if (current) {
-        current.count += 1
-        continue
-      }
-      queueMap.set(state.worklistBucket, {
-        label: state.worklistBucketLabel,
-        count: 1,
-      })
-    }
-
-    return Array.from(queueMap.entries())
-      .sort((left, right) => {
-        const leftOrder = order.indexOf(left[0])
-        const rightOrder = order.indexOf(right[0])
-        if (leftOrder !== rightOrder) return (leftOrder === -1 ? Number.MAX_SAFE_INTEGER : leftOrder) - (rightOrder === -1 ? Number.MAX_SAFE_INTEGER : rightOrder)
-        return right[1].count - left[1].count
-      })
-      .map(([, value]) => value)
-  }, [listCards])
-
   const toggleCandidateSelected = useCallback((candidateId: number) => {
     setSelectedCandidateIds((prev) => (
       prev.includes(candidateId)
@@ -654,18 +930,14 @@ export function CandidatesPage() {
   return (
     <RoleGuard allow={['recruiter', 'admin']}>
       <div className="page app-page app-page--ops candidates-page">
-        <header className="glass glass--elevated page-header page-header--row app-page__hero">
-          <div className="page-header__content">
-            <h1 className="title">Кандидаты</h1>
-            <p className="subtitle">Операционная база кандидатов с быстрым переходом между списком, канбаном и календарём.</p>
-          </div>
-          <Link to="/app/candidates/new" className="ui-btn ui-btn--primary" data-testid="candidates-create-btn">+ Новый кандидат</Link>
-        </header>
-
         <section className="glass page-section app-page__section">
+          <header className="page-section__header candidates-page__header">
+            <h1 className="candidates-page__title">Кандидаты</h1>
+          </header>
           <div className="filter-bar ui-filter candidates-filter-bar" data-testid="candidates-filter-bar">
             <input
-              placeholder="Поиск по ФИО, городу, TG..."
+              aria-label="Поиск кандидата"
+              placeholder="Поиск по ФИО, городу, каналу..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1) }}
               className="filter-bar__search candidates-filter-bar__search"
@@ -683,161 +955,183 @@ export function CandidatesPage() {
               aria-label="Воронка"
               value={pipeline}
               onChange={(e) => { setPipeline(e.target.value); setPage(1) }}
-              disabled={view === 'kanban'}
             >
               {pipelineOptions.map((opt) => (
                 <option key={opt.slug} value={opt.slug}>{opt.label}</option>
               ))}
             </select>
-            <div className="view-toggle" data-testid="candidates-view-switcher">
-              <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'list' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('list'); setPage(1) }} type="button">
-                Список
+            {view === 'list' && (
+              <button
+                type="button"
+                className={`ui-btn ui-btn--secondary ui-btn--sm candidates-filter-bar__secondary-toggle ${showAdvancedFilters ? 'is-active' : ''}`}
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                aria-expanded={showAdvancedFilters}
+                aria-controls="candidates-advanced-filters"
+                data-testid="candidates-advanced-filters-toggle"
+              >
+                {showAdvancedFilters ? 'Скрыть детали' : 'Доп. фильтры'}
+                {advancedFilterCount > 0 ? (
+                  <span className="candidates-filter-bar__secondary-count" aria-hidden="true">
+                    {advancedFilterCount}
+                  </span>
+                ) : null}
               </button>
-              <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'kanban' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('kanban'); setPipeline('main'); setPage(1) }} type="button">
-                Канбан
-              </button>
-              {!isMobile && (
-                <button className={`ui-btn ui-btn--sm candidates-view-pill ${view === 'calendar' ? 'ui-btn--primary is-active' : 'ui-btn--ghost'}`} onClick={() => { setView('calendar'); setPage(1) }} type="button">
-                  Календарь
-                </button>
-              )}
-            </div>
+            )}
           </div>
+
+          {view === 'list' && showAdvancedFilters && (
+            <div
+              id="candidates-advanced-filters"
+              className="glass glass--subtle candidates-advanced-panel"
+              data-testid="candidates-advanced-filters"
+            >
+              <div className="candidates-advanced-panel__section">
+                <div className="candidates-advanced-panel__heading">Каналы и предпочтения</div>
+                <div className="candidates-channel-filter" data-testid="candidates-channel-filter" aria-label="Фильтр по связанным каналам">
+                  <span className="candidates-channel-filter__label">Связанные каналы</span>
+                  {[
+                    { value: 'all' as const, label: 'Все' },
+                    { value: 'telegram' as const, label: 'Telegram' },
+                    { value: 'max' as const, label: 'MAX' },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`candidates-filter-pill ${channelFilter === option.value ? 'candidates-filter-pill--active' : ''}`}
+                      aria-pressed={channelFilter === option.value}
+                      onClick={() => {
+                        setChannelFilter(option.value)
+                        setPage(1)
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="candidates-channel-filter" data-testid="candidates-preferred-channel-filter" aria-label="Фильтр по предпочтительному каналу">
+                  <span className="candidates-channel-filter__label">Предпочтительный канал</span>
+                  {[
+                    { value: 'all' as const, label: 'Все' },
+                    { value: 'telegram' as const, label: 'Telegram' },
+                    { value: 'max' as const, label: 'MAX' },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`candidates-filter-pill ${preferredChannelFilter === option.value ? 'candidates-filter-pill--active' : ''}`}
+                      aria-pressed={preferredChannelFilter === option.value}
+                      onClick={() => {
+                        setPreferredChannelFilter(option.value)
+                        setPage(1)
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="candidates-advanced-panel__section candidates-advanced-panel__section--assistant">
+                <div className="ai-reco">
+                  <div className="ai-reco__header">
+                    <div>
+                      <div className="ai-reco__title">AI рекомендации</div>
+                      <div className="subtitle">Подбор кандидатов под критерии города без перегруза основной рабочей сцены.</div>
+                    </div>
+                    <div className="ai-reco__actions">
+                      <select
+                        aria-label="Город для AI рекомендаций"
+                        value={aiCityId}
+                        onChange={(e) => setAiCityId(e.target.value)}
+                      >
+                        <option value="">Выберите город…</option>
+                        {(citiesQuery.data || []).map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ui-btn ui-btn--ghost ui-btn--sm"
+                        disabled={!aiCityId || aiRecoQuery.isFetching}
+                        onClick={() => aiRecoQuery.refetch()}
+                      >
+                        {aiRecoQuery.isFetching ? 'Генерация…' : 'Сгенерировать'}
+                      </button>
+                      {aiRecoQuery.data && (
+                        <span className={`cd-chip cd-chip--small ${aiRecoQuery.data.cached ? '' : 'cd-chip--accent'}`}>
+                          {aiRecoQuery.data.cached ? 'Кэш' : 'Новый'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {aiRecoQuery.isError && (
+                    <div className="ai-reco__error">
+                      AI: {(aiRecoQuery.error as Error).message}
+                    </div>
+                  )}
+
+                  {aiRecoQuery.data && (
+                    <div className="ai-reco__body">
+                      {aiRecoQuery.data.notes && <div className="ai-reco__notes">{aiRecoQuery.data.notes}</div>}
+                      {aiRecoQuery.data.recommended.length === 0 ? (
+                        <div className="subtitle">Нет рекомендаций.</div>
+                      ) : (
+                        <div className="ai-reco__list">
+                          {aiRecoQuery.data.recommended.map((r) => (
+                            <div key={r.candidate_id} className="ai-reco__item glass glass--interactive">
+                              <div className="ai-reco__main">
+                                <div className="ai-reco__top">
+                                  <Link
+                                    to="/app/candidates/$candidateId"
+                                    params={{ candidateId: String(r.candidate_id) }}
+                                    className="font-semibold"
+                                  >
+                                    Кандидат #{r.candidate_id}
+                                  </Link>
+                                  <span className={`ai-reco__badge ai-reco__badge--${r.fit_level || 'unknown'}`}>
+                                    {r.fit_score != null ? `${r.fit_score}/100` : '—'}
+                                  </span>
+                                </div>
+                                <div className="ai-reco__reason">{r.reason}</div>
+                                {r.suggested_next_step && <div className="ai-reco__next">{r.suggested_next_step}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {activeFilterBadges.length > 0 && (
-            <div className="candidates-filter-pills" aria-label="Активные фильтры">
-              {activeFilterBadges.map((label) => (
-                <span key={label} className="candidates-filter-pill candidates-filter-pill--active">
-                  {label}
-                </span>
+            <div className="candidates-active-filter-strip" aria-label="Активные фильтры" data-testid="candidates-active-filter-strip">
+              {activeFilterBadges.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  className="candidates-filter-pill candidates-filter-pill--active candidates-filter-pill--dismissible"
+                  onClick={() => clearFilter(filter.key)}
+                  aria-label={`Убрать фильтр ${filter.label}`}
+                >
+                  <span>{filter.label}</span>
+                  <span aria-hidden="true">×</span>
+                </button>
               ))}
-              <button type="button" className="candidates-filter-pill" onClick={resetFilters}>
-                Сбросить
+              <button type="button" className="candidates-filter-pill candidates-filter-pill--reset" onClick={resetFilters}>
+                Сбросить все
               </button>
             </div>
           )}
 
-          <div className="glass ai-reco">
-            <div className="ai-reco__header">
-              <div>
-                <div className="ai-reco__title">AI рекомендации</div>
-                <div className="subtitle">Подбор кандидатов под критерии города.</div>
-              </div>
-              <div className="ai-reco__actions">
-                <select
-                  aria-label="Город для AI рекомендаций"
-                  value={aiCityId}
-                  onChange={(e) => setAiCityId(e.target.value)}
-                >
-                  <option value="">Выберите город…</option>
-                  {(citiesQuery.data || []).map((c) => (
-                    <option key={c.id} value={String(c.id)}>{c.name}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="ui-btn ui-btn--ghost ui-btn--sm"
-                  disabled={!aiCityId || aiRecoQuery.isFetching}
-                  onClick={() => aiRecoQuery.refetch()}
-                >
-                  {aiRecoQuery.isFetching ? 'Генерация…' : 'Сгенерировать'}
-                </button>
-                {aiRecoQuery.data && (
-                  <span className={`cd-chip cd-chip--small ${aiRecoQuery.data.cached ? '' : 'cd-chip--accent'}`}>
-                    {aiRecoQuery.data.cached ? 'Кэш' : 'Новый'}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {aiRecoQuery.isError && (
-              <div className="ai-reco__error">
-                AI: {(aiRecoQuery.error as Error).message}
-              </div>
-            )}
-
-            {aiRecoQuery.data && (
-              <div className="ai-reco__body">
-                {aiRecoQuery.data.notes && <div className="ai-reco__notes">{aiRecoQuery.data.notes}</div>}
-                {aiRecoQuery.data.recommended.length === 0 ? (
-                  <div className="subtitle">Нет рекомендаций.</div>
-                ) : (
-                  <div className="ai-reco__list">
-                    {aiRecoQuery.data.recommended.map((r) => (
-                      <div key={r.candidate_id} className="ai-reco__item glass glass--interactive">
-                        <div className="ai-reco__main">
-                          <div className="ai-reco__top">
-                            <Link
-                              to="/app/candidates/$candidateId"
-                              params={{ candidateId: String(r.candidate_id) }}
-                              className="font-semibold"
-                            >
-                              Кандидат #{r.candidate_id}
-                            </Link>
-                            <span className={`ai-reco__badge ai-reco__badge--${r.fit_level || 'unknown'}`}>
-                              {r.fit_score != null ? `${r.fit_score}/100` : '—'}
-                            </span>
-                          </div>
-                          <div className="ai-reco__reason">{r.reason}</div>
-                          {r.suggested_next_step && <div className="ai-reco__next">{r.suggested_next_step}</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="pagination app-page__toolbar">
-            <span className="pagination__info">Всего: {total}</span>
-            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
-            <span className="pagination__info">{page} / {pagesTotal}</span>
-            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page >= pagesTotal} onClick={() => setPage(page + 1)}>Вперёд →</button>
-            <select
-              aria-label="Кандидатов на странице"
-              value={perPage}
-              onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}
-            >
-              {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v} на стр.</option>)}
-            </select>
-          </div>
-
-          {isLoading && <p className="text-muted">Загрузка…</p>}
-          {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
-          {deleteCandidateError && <ApiErrorBanner error={deleteCandidateError} title="Не удалось удалить кандидата" />}
-          {kanbanMoveBlockingState && (
-            <RecruiterRiskBanner
-              level={
-                kanbanMoveBlockingState.severity === 'warning'
-                  ? (kanbanMoveBlockingState.manual_resolution_required ? 'repair' : 'warning')
-                  : 'blocker'
-              }
-              title="Перемещение остановлено"
-              message={kanbanMoveBlockingMessage || 'Колонка недоступна для этого кандидата.'}
-              count={kanbanMoveBlockingState.issue_codes?.length || undefined}
-              className="candidates-kanban-feedback"
-            />
-          )}
-          {kanbanMoveError && <ApiErrorBanner error={kanbanMoveError} title="Не удалось переместить кандидата в канбане" />}
-          {view === 'list' && workQueueSummary.length > 0 && (
-            <div data-testid="candidates-work-queues" style={{ marginTop: 'var(--space-3)' }}>
-              <div className="subtitle">Очереди на странице</div>
-              <div className="candidates-filter-pills">
-                {workQueueSummary.map((queue) => (
-                  <div key={queue.label} className="candidates-filter-pill">
-                    <strong>{queue.count}</strong>
-                    <span>{queue.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           {view === 'list' && selectedCandidateIds.length > 0 && (
             <div className="glass candidates-selection-bar" data-testid="candidates-selection-bar">
               <div className="candidates-selection-bar__summary">
                 <strong>{selectedCandidateIds.length}</strong>
-                <span>выбрано для безопасного триажа</span>
+                <span>выбрано</span>
               </div>
               <div className="candidates-selection-bar__actions">
                 <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={openSelectedCandidates}>
@@ -852,24 +1146,45 @@ export function CandidatesPage() {
               </div>
             </div>
           )}
-          {data && listCards.length === 0 && (
-            <div className="empty-state" data-testid="candidates-empty-state">
-              <p className="empty-state__text">
-                {hasActiveFilters
-                  ? 'Кандидаты не найдены по текущим фильтрам.'
-                  : 'Список кандидатов пуст. Добавьте первого кандидата, чтобы начать работу.'}
-              </p>
-              <div className="toolbar">
-                {hasActiveFilters && (
-                  <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={resetFilters}>
-                    Сбросить фильтры
-                  </button>
-                )}
-                <Link to="/app/candidates/new" className="ui-btn ui-btn--primary ui-btn--sm">
-                  + Новый кандидат
-                </Link>
-              </div>
-            </div>
+
+          {isLoading && <PageLoader label="Загружаем кандидатов" description="Собираем список кандидатов и их историю." compact className="candidates-inline-state" />}
+          {isError && <ApiErrorBanner error={error} title="Не удалось загрузить кандидатов" />}
+          {deleteCandidateError && <ApiErrorBanner error={deleteCandidateError} title="Не удалось удалить кандидата" />}
+          {candidateActionError && <ApiErrorBanner error={candidateActionError} title="Не удалось выполнить быстрое действие" />}
+          {kanbanMoveBlockingState && (
+            <RecruiterRiskBanner
+              level={
+                kanbanMoveBlockingState.severity === 'warning'
+                  ? (kanbanMoveBlockingState.manual_resolution_required ? 'repair' : 'warning')
+                  : 'blocker'
+              }
+              title="Перемещение остановлено"
+              message={kanbanMoveBlockingMessage || 'Колонка недоступна для этого кандидата.'}
+              count={kanbanMoveBlockingState.issue_codes?.length || undefined}
+              className="candidates-kanban-feedback"
+            />
+          )}
+          {kanbanMoveError && <ApiErrorBanner error={kanbanMoveError} title="Не удалось переместить кандидата в канбане" />}
+          {data && visibleListCards.length === 0 && (
+            <EmptyState
+              title={hasActiveFilters ? 'По текущим фильтрам ничего не найдено' : 'Список кандидатов пока пуст'}
+              description={
+                hasActiveFilters
+                  ? 'Снимите часть ограничений или сбросьте фильтры, чтобы вернуть рабочий срез.'
+                  : 'Все кандидаты и их история появятся здесь по мере работы системы.'
+              }
+              actions={(
+                <>
+                  {hasActiveFilters && (
+                    <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={resetFilters}>
+                      Сбросить фильтры
+                    </button>
+                  )}
+                </>
+              )}
+              className="candidates-inline-state"
+              compact
+            />
           )}
           {view === 'calendar' && (
             <div className="page-section__content">
@@ -982,24 +1297,28 @@ export function CandidatesPage() {
             </div>
           )}
 
-          {view === 'list' && data && listCards.length > 0 && (
+          {view === 'list' && data && visibleListCards.length > 0 && (
             <>
               {isMobile && (
                 <div className="mobile-card-list" data-testid="candidates-mobile-list">
-                  {listCards.map((c) => {
+                  {visibleListCards.map((c) => {
                       const state = buildCandidateSurfaceState(c)
-                      const secondaryStatusLabel = buildSecondaryStatusLabel(state)
+                      const statusSummary = buildCandidateListStatus(c, state)
                       const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
-                    const canDelete =
-                      isAdmin ||
-                      (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
-                    const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
-                    const isSelected = selectedCandidateIds.includes(c.id)
-                    return (
-                      <article
-                        key={`mobile-candidate-${c.id}`}
-                        className={`candidate-mobile-card glass glass--subtle ${isSelected ? 'candidate-mobile-card--selected' : ''}`}
-                      >
+                      const canDelete =
+                        isAdmin ||
+                        (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
+                      const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
+                      const isActionPending = actionCandidateId === c.id && candidateActionMutation.isPending
+                      const isSelected = selectedCandidateIds.includes(c.id)
+                      const candidateDate = formatCandidateDate(resolveCandidateDate(c))
+                      const relevanceScore = resolveCandidateRelevanceScore(c)
+                      const scoreTone = candidateScoreTone(relevanceScore, c.ai_relevance_level)
+                      return (
+                        <article
+                          key={`mobile-candidate-${c.id}`}
+                          className={`candidate-mobile-card glass glass--subtle ${isSelected ? 'candidate-mobile-card--selected' : ''}`}
+                        >
                         <div className="candidate-mobile-card__top">
                           <label className="candidate-select">
                             <input
@@ -1016,68 +1335,41 @@ export function CandidatesPage() {
                               </Link>
                             )}
                             subtitle={c.city || '—'}
+                            meta={renderCandidateChannelBadges(c)}
                             compact
                             aside={(
-                              <span className={`candidate-score candidate-score--${candidateScoreTone(c.average_score)}`}>
-                                {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
-                              </span>
+                              <div className="candidate-mobile-card__aside">
+                                <span className={`candidate-score candidate-score--${scoreTone}`}>
+                                  {resolveCandidateRelevanceLabel(c)}
+                                </span>
+                                <CandidateQuickActionsMenu
+                                  candidate={c}
+                                  canDelete={canDelete}
+                                  isDeleting={isDeleting}
+                                  isActionPending={isActionPending}
+                                  onDeleteCandidate={deleteCandidate}
+                                  onQuickAction={triggerQuickCandidateAction}
+                                  compact
+                                />
+                              </div>
                             )}
                             className="candidate-mobile-card__identity"
                           />
                         </div>
-                        <div className="text-muted text-sm">
-                          {isAdmin ? `Ответственный: ${recruiterName}` : 'Рабочая карточка для быстрого разбора'}
+                        <div className="candidate-status-stack">
+                          <span className={`candidate-status-pill candidate-status-pill--${statusSummary.tone}`}>
+                            {statusSummary.primary}
+                          </span>
+                          {statusSummary.secondary ? (
+                            <span className="candidate-status-note">{statusSummary.secondary}</span>
+                          ) : null}
+                          {statusSummary.reason ? (
+                            <span className="candidate-status-reason">{statusSummary.reason}</span>
+                          ) : null}
                         </div>
-                        <RecruiterActionBlock
-                          label={state.nextActionLabel || 'Откройте профиль'}
-                          explanation={state.nextActionExplanation || 'Следующий шаг появится после открытия профиля кандидата.'}
-                          tone={state.nextActionTone}
-                          enabled={state.nextActionEnabled}
-                          compact
-                        />
-                        <RecruiterStateContext
-                          bucketLabel={state.worklistBucketLabel}
-                          contextLine={state.stateContextLine}
-                          schedulingLine={state.schedulingContextLine}
-                          compact
-                        />
-                        {state.riskLevel && state.riskTitle && state.riskMessage ? (
-                          <RecruiterRiskBanner
-                            level={state.riskLevel}
-                            title={state.riskTitle}
-                            message={state.riskMessage}
-                            recoveryHint={state.riskRecoveryHint}
-                            count={state.riskCount > 0 ? state.riskCount : undefined}
-                            compact
-                          />
-                        ) : null}
                         <div className="candidate-mobile-card__meta">
-                          {secondaryStatusLabel ? <span className="candidate-row__secondary">{secondaryStatusLabel}</span> : null}
-                          <span className="candidate-row__date">{formatCandidateDate(resolveCandidateDate(c))}</span>
-                        </div>
-                        <div className="toolbar toolbar--compact">
-                          <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
-                            Открыть
-                          </Link>
-                          {c.telegram_id ? (
-                            <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="ui-btn ui-btn--ghost ui-btn--sm">
-                              Telegram
-                            </a>
-                          ) : (
-                            <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled>
-                              Telegram
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              type="button"
-                              className="ui-btn ui-btn--danger ui-btn--sm"
-                              onClick={() => deleteCandidate(c)}
-                              disabled={isDeleting}
-                            >
-                              {isDeleting ? 'Удаление…' : 'Удалить'}
-                            </button>
-                          )}
+                          <span className="candidate-row__date">{candidateDate}</span>
+                          {isAdmin ? <span className="candidate-row__secondary">{recruiterName}</span> : null}
                         </div>
                       </article>
                     )
@@ -1090,9 +1382,10 @@ export function CandidatesPage() {
                     <tr>
                       <th aria-label="Выбор кандидата" />
                       <th>Кандидат</th>
-                      <th>Следующий шаг</th>
-                      <th>Контекст</th>
-                      <th>Риски и действия</th>
+                      <th>Статус</th>
+                      <th>Релевантность</th>
+                      <th>Последняя активность</th>
+                      <th>Действия</th>
                     </tr>
                   </thead>
                   <motion.tbody
@@ -1102,15 +1395,17 @@ export function CandidatesPage() {
                     variants={firstRenderAnimation ? stagger(0.03) : undefined}
                     transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
                   >
-                    {listCards.map((c) => {
+                    {visibleListCards.map((c) => {
                       const state = buildCandidateSurfaceState(c)
-                      const secondaryStatusLabel = buildSecondaryStatusLabel(state)
+                      const statusSummary = buildCandidateListStatus(c, state)
                       const recruiterName = c.recruiter?.name || c.recruiter_name || '—'
                       const canDelete =
                         isAdmin ||
                         (principalType === 'recruiter' && c.recruiter_id === profile.data?.principal.id)
                       const isDeleting = deletingCandidateId === c.id && deleteCandidateMutation.isPending
-                      const scoreTone = candidateScoreTone(c.average_score)
+                      const isActionPending = actionCandidateId === c.id && candidateActionMutation.isPending
+                      const relevanceScore = resolveCandidateRelevanceScore(c)
+                      const scoreTone = candidateScoreTone(relevanceScore, c.ai_relevance_level)
                       const candidateDate = formatCandidateDate(resolveCandidateDate(c))
                       const isSelected = selectedCandidateIds.includes(c.id)
                       return (
@@ -1137,70 +1432,40 @@ export function CandidatesPage() {
                                 </Link>
                               )}
                               subtitle={c.city || '—'}
-                              meta={c.telegram_id ? (
-                                <a href={`https://t.me/${c.telegram_id}`} target="_blank" rel="noopener" className="candidate-row__link">
-                                  @{String(c.telegram_id).replace(/^@/, '')}
-                                </a>
-                              ) : null}
+                              meta={renderCandidateChannelBadges(c)}
                               className="candidate-row__identity"
                             />
                           </td>
-                          <td className="candidate-row__cell candidate-row__cell--action">
-                            <RecruiterActionBlock
-                              label={state.nextActionLabel || 'Откройте профиль'}
-                              explanation={state.nextActionExplanation || 'Следующий шаг появится после открытия профиля кандидата.'}
-                              tone={state.nextActionTone}
-                              enabled={state.nextActionEnabled}
-                              compact
-                            />
-                          </td>
-                          <td className="candidate-row__cell candidate-row__cell--context">
-                            <RecruiterStateContext
-                              bucketLabel={state.worklistBucketLabel}
-                              contextLine={state.stateContextLine}
-                              schedulingLine={state.schedulingContextLine}
-                              compact
-                            />
-                            <div className="candidate-row__secondary candidate-row__meta-line">
-                              {secondaryStatusLabel ? <span>{secondaryStatusLabel}</span> : null}
-                              <span>{candidateDate}</span>
-                              {isAdmin ? <span>{recruiterName}</span> : null}
-                            </div>
-                          </td>
-                          <td className="candidate-row__cell candidate-row__cell--signals">
-                            {state.riskLevel && state.riskTitle && state.riskMessage ? (
-                              <RecruiterRiskBanner
-                                level={state.riskLevel}
-                                title={state.riskTitle}
-                                message={state.riskMessage}
-                                recoveryHint={state.riskRecoveryHint}
-                                count={state.riskCount > 0 ? state.riskCount : undefined}
-                                compact
-                              />
-                            ) : (
-                              <div className="candidate-row__secondary candidate-row__healthy">Без блокеров</div>
-                            )}
-                            <div className="candidate-row__signals-footer">
-                              <span className={`candidate-score candidate-score--${scoreTone}`}>
-                                {typeof c.average_score === 'number' ? `${Math.round(c.average_score)}%` : '—'}
+                          <td className="candidate-row__cell candidate-row__cell--status">
+                            <div className="candidate-status-stack">
+                              <span className={`candidate-status-pill candidate-status-pill--${statusSummary.tone}`}>
+                                {statusSummary.primary}
                               </span>
-                              <div className="candidate-row__actions">
-                              <Link to="/app/candidates/$candidateId" params={{ candidateId: String(c.id) }} className="ui-btn ui-btn--ghost ui-btn--sm">
-                                Открыть
-                              </Link>
-                              {canDelete ? (
-                                <button
-                                  type="button"
-                                  className="ui-btn ui-btn--danger ui-btn--sm"
-                                  onClick={() => deleteCandidate(c)}
-                                  disabled={isDeleting}
-                                >
-                                  {isDeleting ? 'Удаление…' : 'Удалить'}
-                                </button>
-                              ) : (
-                                <span className="candidate-row__secondary">—</span>
-                              )}
+                              {statusSummary.secondary ? <span className="candidate-status-note">{statusSummary.secondary}</span> : null}
+                              {statusSummary.reason ? <span className="candidate-status-reason">{statusSummary.reason}</span> : null}
                             </div>
+                          </td>
+                          <td className="candidate-row__cell candidate-row__cell--score">
+                            <span className={`candidate-score candidate-score--${scoreTone}`}>
+                              {resolveCandidateRelevanceLabel(c)}
+                            </span>
+                          </td>
+                          <td className="candidate-row__cell candidate-row__cell--meta">
+                            <div className="candidate-row__meta">
+                              <span className="candidate-row__date">{candidateDate}</span>
+                              {isAdmin ? <span className="candidate-row__secondary">{recruiterName}</span> : null}
+                            </div>
+                          </td>
+                          <td className="candidate-row__cell candidate-row__cell--actions">
+                            <div className="candidate-row__actions">
+                              <CandidateQuickActionsMenu
+                                candidate={c}
+                                canDelete={canDelete}
+                                isDeleting={isDeleting}
+                                isActionPending={isActionPending}
+                                onDeleteCandidate={deleteCandidate}
+                                onQuickAction={triggerQuickCandidateAction}
+                              />
                             </div>
                           </td>
                         </motion.tr>
@@ -1210,6 +1475,22 @@ export function CandidatesPage() {
                 </table>
               </div>
             </>
+          )}
+
+          {data && !isLoading && !isError && total > 0 && (
+            <div className="pagination app-page__toolbar candidates-pagination">
+              <span className="pagination__info">Всего: {total}</span>
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Назад</button>
+              <span className="pagination__info">{page} / {pagesTotal}</span>
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" disabled={page >= pagesTotal} onClick={() => setPage(page + 1)}>Вперёд →</button>
+              <select
+                aria-label="Кандидатов на странице"
+                value={perPage}
+                onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}
+              >
+                {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v} на стр.</option>)}
+              </select>
+            </div>
           )}
         </section>
       </div>

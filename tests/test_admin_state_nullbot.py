@@ -1,13 +1,12 @@
-import asyncio
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from backend.apps.admin_ui import state as state_module
 from backend.apps.admin_ui.routers import system as system_router
+from backend.apps.admin_ui.security import admin_principal, require_admin
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @dataclass
@@ -189,6 +188,13 @@ class DummyTask:
         return False
 
 
+def _build_operator_system_app() -> FastAPI:
+    app = FastAPI()
+    app.include_router(system_router.router)
+    app.dependency_overrides[require_admin] = lambda: admin_principal()
+    return app
+
+
 def test_notifications_health_endpoint_ok(monkeypatch):
     class EnabledSettings:
         bot_enabled = True
@@ -196,8 +202,7 @@ def test_notifications_health_endpoint_ok(monkeypatch):
 
     monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
 
-    app = FastAPI()
-    app.include_router(system_router.router)
+    app = _build_operator_system_app()
     app.state.notification_service = StubNotificationService()
     app.state.reminder_service = StubReminderService()
     app.state.bot_service = StubBotService()
@@ -218,8 +223,7 @@ def test_notifications_health_endpoint_missing_service(monkeypatch):
 
     monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
 
-    app = FastAPI()
-    app.include_router(system_router.router)
+    app = _build_operator_system_app()
     client = TestClient(app)
     resp = client.get("/health/notifications")
     assert resp.status_code == 503
@@ -236,8 +240,7 @@ def test_notifications_health_endpoint_runtime_disabled(monkeypatch):
 
     monkeypatch.setattr(system_router, "get_settings", lambda: EnabledSettings())
 
-    app = FastAPI()
-    app.include_router(system_router.router)
+    app = _build_operator_system_app()
     app.state.notification_service = StubNotificationService()
     app.state.reminder_service = StubReminderService()
     app.state.bot_service = StubBotService()
@@ -252,7 +255,10 @@ def test_notifications_health_endpoint_runtime_disabled(monkeypatch):
     assert data["runtime"]["notification_runtime_enabled"] is False
 
 
-def test_notifications_metrics_endpoint_prometheus():
+def test_notifications_metrics_endpoint_prometheus(monkeypatch):
+    monkeypatch.setattr(system_router, "_metrics_enabled", lambda: True)
+    monkeypatch.setattr(system_router, "_is_metrics_client_allowlisted", lambda request: True)
+
     app = FastAPI()
     app.include_router(system_router.router)
     app.state.notification_service = StubNotificationService()

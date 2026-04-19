@@ -39,8 +39,7 @@ test.describe('City → Slot → Candidate regression flow', () => {
 
     await expect(page.getByRole('heading', { name: 'Кандидаты', exact: false })).toBeVisible({ timeout: 10000 })
 
-    // View switcher always visible
-    await expect(page.getByTestId('candidates-view-switcher')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId('candidates-filter-bar')).toBeVisible({ timeout: 10000 })
 
     // Either table or empty state
     const table = page.getByTestId('candidates-table')
@@ -64,7 +63,7 @@ test.describe('City → Slot → Candidate regression flow', () => {
     await page.goto('/app/candidates')
     await page.waitForLoadState('domcontentloaded')
     await expect(page.getByRole('heading', { name: 'Кандидаты', exact: false })).toBeVisible({ timeout: 10000 })
-    await expect(page.getByTestId('candidates-view-switcher')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId('candidates-filter-bar')).toBeVisible({ timeout: 10000 })
   })
 
   test('slot creation CTA is accessible from empty state', async ({ page }) => {

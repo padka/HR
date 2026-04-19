@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
 import logging
 import math
 import time
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import (
     and_,
@@ -17,52 +17,49 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.apps.admin_ui.timezones import DEFAULT_TZ
-from backend.apps.admin_ui.utils import fmt_local, safe_zone
-from backend.core.ai.candidate_scorecard import fit_level_from_score
-from backend.core.db import async_session
-from backend.domain.models import (
-    City,
-    Recruiter,
-    Slot,
-    SlotStatus,
-    SlotAssignment,
-    SlotAssignmentStatus,
-    RescheduleRequest,
-    RescheduleRequestStatus,
-    recruiter_city_association,
-)
-from backend.domain.candidates.models import User, ChatMessage, ChatMessageDirection
-from backend.domain.candidates.state_contract import build_candidate_state_contract
-from backend.domain.ai.models import AIOutput
-from backend.domain.analytics import FunnelEvent
-from backend.domain.analytics_models import analytics_events as ANALYTICS_EVENTS
-from backend.domain.candidates.status import (
-    get_status_label,
-    get_status_color,
-    get_status_category,
-    get_funnel_stages,
-    StatusCategory,
-    CandidateStatus,
-)
-from backend.domain.candidate_status_service import CandidateStatusService
-from backend.apps.bot.metrics import get_test1_metrics_snapshot
-from backend.domain.repositories import resolve_city_id_and_tz_by_plain_name
-from backend.core.scoping import scope_candidates, scope_slots, scope_cities
-from backend.apps.admin_ui.security import Principal
-from backend.core.cache import CacheTTL, get_cache
 from backend.apps.admin_ui.perf.cache import keys as cache_keys
 from backend.apps.admin_ui.perf.cache.policy import HOT_READ_POLICY
-from backend.apps.admin_ui.perf.cache.readthrough import get_or_compute
+from backend.apps.admin_ui.perf.cache.readthrough import get_or_compute, set_cached
 from backend.apps.admin_ui.perf.metrics.cache import summarize_cache
 from backend.apps.admin_ui.perf.metrics.context import get_context
+from backend.apps.admin_ui.security import Principal
 from backend.apps.admin_ui.services.reschedule_intents import (
     BotStateRescheduleLookup,
     RescheduleIntent,
     get_bot_state_reschedule_intent_map,
     get_reschedule_intent_map,
 )
+from backend.apps.admin_ui.timezones import DEFAULT_TZ
+from backend.apps.admin_ui.utils import fmt_local, safe_zone
+from backend.apps.bot.metrics import get_test1_metrics_snapshot
+from backend.core.ai.candidate_scorecard import fit_level_from_score
 from backend.core.ai.service import schedule_warm_candidates_ai_outputs
+from backend.core.cache import CacheTTL, get_cache
+from backend.core.db import async_session
+from backend.core.scoping import scope_candidates, scope_cities
+from backend.domain.ai.models import AIOutput
+from backend.domain.analytics import FunnelEvent
+from backend.domain.analytics_models import analytics_events as ANALYTICS_EVENTS
+from backend.domain.candidate_status_service import CandidateStatusService
+from backend.domain.candidates.journey import LIFECYCLE_DRAFT
+from backend.domain.candidates.models import ChatMessage, ChatMessageDirection, User
+from backend.domain.candidates.state_contract import build_candidate_state_contract
+from backend.domain.candidates.status import (
+    CandidateStatus,
+    get_funnel_stages,
+    get_status_category,
+    get_status_color,
+    get_status_label,
+)
+from backend.domain.models import (
+    City,
+    Recruiter,
+    Slot,
+    SlotAssignment,
+    SlotStatus,
+    recruiter_city_association,
+)
+from backend.domain.repositories import resolve_city_id_and_tz_by_plain_name
 
 __all__ = [
     "dashboard_counts",
@@ -77,6 +74,8 @@ __all__ = [
     "get_ai_insights",
     "get_quick_slots",
     "get_waiting_candidates",
+    "get_waiting_candidates_payload",
+    "normalize_waiting_candidates_payload_shape",
     "normalize_waiting_candidates_limit",
     "WAITING_CANDIDATES_MAX_LIMIT",
     "get_pipeline_snapshot",
@@ -154,6 +153,39 @@ INCOMING_AI_WARM_BUDGET = 10
 INCOMING_SLOW_WARNING_MS = 1500.0
 WAITING_CANDIDATES_MAX_LIMIT = 100
 WAITING_CANDIDATES_DEFAULT_LIMIT = WAITING_CANDIDATES_MAX_LIMIT
+WAITING_CANDIDATES_DEFAULT_PAGE = 1
+WAITING_CANDIDATES_DEFAULT_PAGE_SIZE = 50
+WAITING_CANDIDATES_MAX_PAGE_SIZE = 100
+WAITING_CANDIDATES_DEFAULT_SORT = "priority"
+INCOMING_STATUS_FILTERS = {
+    "all",
+    "waiting_slot",
+    "stalled_waiting_slot",
+    "slot_pending",
+    "requested_other_time",
+}
+INCOMING_OWNER_FILTERS = {"all", "mine", "assigned", "unassigned"}
+INCOMING_WAITING_FILTERS = {"all", "24h", "48h"}
+INCOMING_AI_LEVEL_FILTERS = {"all", "high", "medium", "low", "unknown"}
+INCOMING_SORT_MODES = {
+    WAITING_CANDIDATES_DEFAULT_SORT,
+    "waiting_desc",
+    "recent_desc",
+    "ai_score_desc",
+    "name_asc",
+}
+
+WAITING_CANDIDATES_REQUIRED_FIELDS = {
+    "items",
+    "queue_total",
+    "total",
+    "page",
+    "page_size",
+    "returned_count",
+    "has_next",
+    "has_prev",
+    "sort",
+}
 
 
 def normalize_waiting_candidates_limit(limit: int) -> int:
@@ -162,6 +194,122 @@ def normalize_waiting_candidates_limit(limit: int) -> int:
     except (TypeError, ValueError):
         value = WAITING_CANDIDATES_DEFAULT_LIMIT
     return max(1, min(value, WAITING_CANDIDATES_MAX_LIMIT))
+
+
+def normalize_waiting_candidates_page(page: int | None) -> int:
+    try:
+        value = int(page or WAITING_CANDIDATES_DEFAULT_PAGE)
+    except (TypeError, ValueError):
+        value = WAITING_CANDIDATES_DEFAULT_PAGE
+    return max(1, value)
+
+
+def normalize_waiting_candidates_page_size(
+    page_size: int | None,
+    *,
+    limit: int | None = None,
+) -> int:
+    if page_size is None and limit is not None:
+        return normalize_waiting_candidates_limit(limit)
+    try:
+        value = int(page_size or WAITING_CANDIDATES_DEFAULT_PAGE_SIZE)
+    except (TypeError, ValueError):
+        value = WAITING_CANDIDATES_DEFAULT_PAGE_SIZE
+    return max(1, min(value, WAITING_CANDIDATES_MAX_PAGE_SIZE))
+
+
+def normalize_waiting_candidates_enum(value: Optional[str], options: set[str], fallback: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in options else fallback
+
+
+def _coerce_non_negative_int(value: Any) -> int | None:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if coerced >= 0 else None
+
+
+def _is_waiting_candidates_payload_complete(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if not WAITING_CANDIDATES_REQUIRED_FIELDS.issubset(payload.keys()):
+        return False
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    queue_total = _coerce_non_negative_int(payload.get("queue_total"))
+    filtered_total = _coerce_non_negative_int(payload.get("total"))
+    page = _coerce_non_negative_int(payload.get("page"))
+    page_size = _coerce_non_negative_int(payload.get("page_size"))
+    returned_count = _coerce_non_negative_int(payload.get("returned_count"))
+    if (
+        queue_total is None
+        or filtered_total is None
+        or page is None
+        or page_size is None
+        or returned_count is None
+        or page < 1
+        or page_size < 1
+    ):
+        return False
+    if not isinstance(payload.get("has_next"), bool) or not isinstance(payload.get("has_prev"), bool):
+        return False
+    if normalize_waiting_candidates_enum(payload.get("sort"), INCOMING_SORT_MODES, "") == "":
+        return False
+    if returned_count != len(items):
+        return False
+    if filtered_total < returned_count:
+        return False
+    if queue_total < filtered_total:
+        return False
+    return True
+
+
+def normalize_waiting_candidates_payload_shape(
+    payload: Any,
+    *,
+    page: int,
+    page_size: int,
+    sort: str,
+) -> Dict[str, object]:
+    normalized_page = normalize_waiting_candidates_page(page)
+    normalized_page_size = normalize_waiting_candidates_page_size(page_size)
+    normalized_sort = normalize_waiting_candidates_enum(sort, INCOMING_SORT_MODES, WAITING_CANDIDATES_DEFAULT_SORT)
+    source = payload if isinstance(payload, dict) else {}
+    items = source.get("items") if isinstance(source.get("items"), list) else []
+    actual_returned_count = len(items)
+    payload_page = _coerce_non_negative_int(source.get("page"))
+    payload_page_size = _coerce_non_negative_int(source.get("page_size"))
+    payload_filtered_total = _coerce_non_negative_int(source.get("total"))
+    payload_queue_total = _coerce_non_negative_int(source.get("queue_total"))
+    normalized_page = normalize_waiting_candidates_page(payload_page or normalized_page)
+    normalized_page_size = normalize_waiting_candidates_page_size(payload_page_size or normalized_page_size)
+    filtered_total = max(payload_filtered_total or 0, actual_returned_count)
+    queue_total = max(payload_queue_total or 0, filtered_total, actual_returned_count)
+    returned_count = actual_returned_count
+    has_prev = normalized_page > 1 and filtered_total > 0
+    has_next = ((normalized_page - 1) * normalized_page_size) + returned_count < filtered_total
+    normalized_payload = dict(source)
+    normalized_payload.update(
+        {
+            "items": items,
+            "queue_total": queue_total,
+            "total": filtered_total,
+            "page": normalized_page,
+            "page_size": normalized_page_size,
+            "returned_count": returned_count,
+            "has_next": has_next,
+            "has_prev": has_prev,
+            "sort": normalize_waiting_candidates_enum(
+                source.get("sort"),
+                INCOMING_SORT_MODES,
+                normalized_sort,
+            ),
+        }
+    )
+    return normalized_payload
 
 
 class SmartCreateError(Exception):
@@ -237,6 +385,7 @@ async def dashboard_counts(principal: Optional[Principal] = None) -> Dict[str, o
 
             # Count candidates without selecting full ORM rows (hot path under load).
             candidate_stmt = select(User.id).where(
+                User.lifecycle_state != LIFECYCLE_DRAFT,
                 User.candidate_status.in_([
                     CandidateStatus.WAITING_SLOT,
                     CandidateStatus.STALLED_WAITING_SLOT,
@@ -286,7 +435,10 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
     async with async_session() as session:
         stmt = (
             select(User)
-            .where(User.is_active == True)
+            .where(
+                User.is_active == True,
+                User.lifecycle_state != LIFECYCLE_DRAFT,
+            )
             .order_by(User.last_activity.desc())
             .limit(limit)
         )
@@ -299,17 +451,232 @@ async def get_recent_candidates(limit: int = 5, *, principal: Optional[Principal
 
 
 async def get_waiting_candidates(
-    limit: int = WAITING_CANDIDATES_DEFAULT_LIMIT,
+    limit: int | None = WAITING_CANDIDATES_DEFAULT_LIMIT,
     *,
     principal: Optional[Principal] = None,
 ) -> List[Dict[str, object]]:
-    """Return candidates waiting for manual slot assignment (prioritized)."""
-    normalized_limit = normalize_waiting_candidates_limit(limit)
-    cache_key = cache_keys.dashboard_incoming(principal=principal, limit=normalized_limit).value
+    payload = await get_waiting_candidates_payload(limit=limit, principal=principal)
+    items = payload.get("items") if isinstance(payload, dict) else []
+    return list(items) if isinstance(items, list) else []
+
+
+def _normalize_text_label(value: object, fallback: str = "") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    compact = " ".join(text.split())
+    if len(compact) <= 72:
+        return compact
+    return compact[:69].rstrip() + "..."
+
+
+def _coerce_utc(value: object) -> Optional[datetime]:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _coerce_row_timestamp(value: object) -> float:
+    if not value:
+        return 0.0
+    if isinstance(value, datetime):
+        dt = _coerce_utc(value)
+        return dt.timestamp() if dt is not None else 0.0
+    if isinstance(value, str):
+        try:
+            normalized = value.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+        except ValueError:
+            return 0.0
+        dt = _coerce_utc(dt)
+        return dt.timestamp() if dt is not None else 0.0
+    return 0.0
+
+
+def _extract_incoming_ai_reasons(scorecard: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(scorecard, dict):
+        return []
+
+    reasons: list[dict[str, str]] = []
+    seen_labels: set[str] = set()
+
+    def _append_reason(tone: str, item: object) -> None:
+        if not isinstance(item, dict):
+            return
+        label = _normalize_text_label(item.get("label") or item.get("evidence"), fallback="")
+        if not label:
+            return
+        key = label.casefold()
+        if key in seen_labels:
+            return
+        seen_labels.add(key)
+        reasons.append({"tone": tone, "label": label})
+
+    blockers = list(scorecard.get("blockers") or [])
+    missing_data = list(scorecard.get("missing_data") or [])
+    metrics = [
+        item
+        for item in list(scorecard.get("metrics") or [])
+        if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "met"
+    ]
+    metrics.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+
+    for item in blockers[:2]:
+        _append_reason("risk", item)
+    for item in missing_data[:2]:
+        if len(reasons) >= 4:
+            break
+        _append_reason("missing", item)
+    if len(reasons) < 2:
+        for item in metrics:
+            if len(reasons) >= 4:
+                break
+            _append_reason("positive", item)
+    return reasons[:4]
+
+
+def _resolve_incoming_ai_sort_state(
+    *,
+    ai_created_at: datetime | None,
+    last_activity: datetime | None,
+    status_changed_at: datetime | None,
+) -> str:
+    snapshot_at = _coerce_utc(ai_created_at)
+    if snapshot_at is None:
+        return "unknown"
+    candidate_activity = max(
+        [
+            dt
+            for dt in (
+                _coerce_utc(last_activity),
+                _coerce_utc(status_changed_at),
+            )
+            if dt is not None
+        ],
+        default=None,
+    )
+    if candidate_activity is not None and candidate_activity > snapshot_at:
+        return "stale"
+    return "ready"
+
+
+def _matches_incoming_status_filter(row: Dict[str, Any], status: str) -> bool:
+    if status == "all":
+        return True
+    queue_state = str(row.get("_queue_state") or "")
+    lifecycle = row.get("lifecycle_summary") if isinstance(row.get("lifecycle_summary"), dict) else {}
+    lifecycle_stage = str(lifecycle.get("stage") or "")
+    if status == "requested_other_time":
+        return bool(row.get("requested_another_time")) or queue_state == "requested_other_time"
+    if status == "slot_pending":
+        return bool(row.get("_pending_approval")) or queue_state == "awaiting_candidate_confirmation"
+    if status == "stalled_waiting_slot":
+        return bool(row.get("_stalled")) or queue_state == "stalled_waiting_slot"
+    if status == "waiting_slot":
+        return queue_state == "waiting_slot" or lifecycle_stage == "waiting_interview_slot"
+    return True
+
+
+def _matches_incoming_search(row: Dict[str, Any], query: str) -> bool:
+    if not query:
+        return True
+    needle = query.casefold()
+    values: list[str] = [
+        str(row.get("name") or ""),
+        str(row.get("city") or ""),
+        str(row.get("telegram_id") or ""),
+        str(row.get("telegram_username") or ""),
+        str(row.get("responsible_recruiter_name") or ""),
+        str(row.get("status_display") or ""),
+        str(((row.get("lifecycle_summary") or {}) if isinstance(row.get("lifecycle_summary"), dict) else {}).get("stage_label") or ""),
+        str(((row.get("scheduling_summary") or {}) if isinstance(row.get("scheduling_summary"), dict) else {}).get("status_label") or ""),
+        str(((row.get("candidate_next_action") or {}) if isinstance(row.get("candidate_next_action"), dict) else {}).get("primary_action", {}).get("label") or ""),
+    ]
+    reconciliation = row.get("state_reconciliation") if isinstance(row.get("state_reconciliation"), dict) else {}
+    for issue in list(reconciliation.get("issues") or []):
+        if isinstance(issue, dict):
+            values.append(str(issue.get("message") or ""))
+    for reason in list(row.get("ai_reasons") or []):
+        if isinstance(reason, dict):
+            values.append(str(reason.get("label") or ""))
+    haystack = " ".join(value for value in values if value).casefold()
+    return needle in haystack
+
+
+def _incoming_priority_tuple(row: Dict[str, Any]) -> tuple[object, ...]:
+    ai_score = int(row.get("ai_relevance_score") or -1)
+    ai_ready_bucket = 0 if row.get("_ai_sort_state") == "ready" and ai_score >= 0 else 1
+    return (
+        0 if row.get("_has_reconciliation_issues") else 1,
+        0 if row.get("requested_another_time") else 1,
+        0 if row.get("_pending_approval") else 1,
+        0 if row.get("_stalled") else 1,
+        -int(row.get("waiting_hours") or -1),
+        -_coerce_row_timestamp(row.get("last_message_at")),
+        ai_ready_bucket,
+        -ai_score,
+        int(row.get("id") or 0),
+    )
+
+
+def _incoming_sort_key(row: Dict[str, Any], mode: str) -> tuple[object, ...]:
+    priority = _incoming_priority_tuple(row)
+    if mode == "waiting_desc":
+        return (-int(row.get("waiting_hours") or -1), *priority)
+    if mode == "recent_desc":
+        return (-_coerce_row_timestamp(row.get("last_message_at")), *priority)
+    if mode == "ai_score_desc":
+        ai_state = str(row.get("_ai_sort_state") or "unknown")
+        ai_bucket = 0 if ai_state == "ready" else 1 if ai_state == "stale" else 2
+        return (ai_bucket, -int(row.get("ai_relevance_score") or -1), *priority)
+    if mode == "name_asc":
+        return (str(row.get("name") or "").casefold(), int(row.get("id") or 0))
+    return priority
+
+
+async def get_waiting_candidates_payload(
+    limit: int | None = WAITING_CANDIDATES_DEFAULT_LIMIT,
+    *,
+    page: int = WAITING_CANDIDATES_DEFAULT_PAGE,
+    page_size: int | None = None,
+    search: Optional[str] = None,
+    city_id: Optional[int] = None,
+    status: str = "all",
+    owner: str = "all",
+    waiting: str = "all",
+    ai_level: str = "all",
+    sort: str = WAITING_CANDIDATES_DEFAULT_SORT,
+    principal: Optional[Principal] = None,
+) -> Dict[str, object]:
+    """Return paged incoming candidates for operator review without changing queue semantics."""
+    normalized_page = normalize_waiting_candidates_page(page)
+    normalized_page_size = normalize_waiting_candidates_page_size(page_size, limit=limit)
+    normalized_search = " ".join(str(search or "").split())
+    normalized_city_id = int(city_id) if city_id not in (None, "", "all") else None
+    normalized_status = normalize_waiting_candidates_enum(status, INCOMING_STATUS_FILTERS, "all")
+    normalized_owner = normalize_waiting_candidates_enum(owner, INCOMING_OWNER_FILTERS, "all")
+    normalized_waiting = normalize_waiting_candidates_enum(waiting, INCOMING_WAITING_FILTERS, "all")
+    normalized_ai_level = normalize_waiting_candidates_enum(ai_level, INCOMING_AI_LEVEL_FILTERS, "all")
+    normalized_sort = normalize_waiting_candidates_enum(sort, INCOMING_SORT_MODES, WAITING_CANDIDATES_DEFAULT_SORT)
+    cache_key = cache_keys.dashboard_incoming(
+        principal=principal,
+        limit=limit,
+        page=normalized_page,
+        page_size=normalized_page_size,
+        city_id=normalized_city_id,
+        status=normalized_status,
+        owner=normalized_owner,
+        waiting=normalized_waiting,
+        ai_level=normalized_ai_level,
+        sort=normalized_sort,
+        search=normalized_search,
+    ).value
     total_started = time.perf_counter()
     perf_snapshot: dict[str, object] | None = None
 
-    async def _compute() -> List[Dict[str, object]]:
+    async def _compute() -> Dict[str, object]:
         nonlocal perf_snapshot
         last_message_map: Dict[int, dict] = {}
         recruiter_map: Dict[int, str] = {}
@@ -321,14 +688,19 @@ async def get_waiting_candidates(
         ai_missing_count = 0
         ai_warm_scheduled_count = 0
         bot_state_candidate_count = 0
+        queue_total = 0
         base_sql_started = time.perf_counter()
         ai_cache_ms = 0.0
         bot_state_ms = 0.0
         async with async_session() as session:
             recruiter_city_ids: set[int] = set()
-            query_limit = normalized_limit
             principal_type = getattr(principal, "type", None)
             principal_id = getattr(principal, "id", None)
+            status_filter = User.candidate_status.in_([
+                CandidateStatus.WAITING_SLOT,
+                CandidateStatus.STALLED_WAITING_SLOT,
+                CandidateStatus.SLOT_PENDING,
+            ])
             if principal_type == "recruiter" and principal_id is not None:
                 rows = await session.execute(
                     select(recruiter_city_association.c.city_id).where(
@@ -336,12 +708,8 @@ async def get_waiting_candidates(
                     )
                 )
                 recruiter_city_ids = {row[0] for row in rows}
-                query_limit = max(normalized_limit * 5, 20)
-            status_filter = User.candidate_status.in_([
-                CandidateStatus.WAITING_SLOT,
-                CandidateStatus.STALLED_WAITING_SLOT,
-                CandidateStatus.SLOT_PENDING,
-            ])
+            else:
+                recruiter_city_ids = set()
             stmt = (
                 select(
                     User.id,
@@ -359,10 +727,13 @@ async def get_waiting_candidates(
                     User.telegram_username,
                     User.username,
                     User.responsible_recruiter_id,
+                    User.last_activity,
                 )
-                .where(status_filter)
+                .where(
+                    status_filter,
+                    User.lifecycle_state != LIFECYCLE_DRAFT,
+                )
                 .order_by(User.status_changed_at.asc(), User.id.asc())
-                .limit(query_limit)
             )
             if principal is not None and principal_type == "admin":
                 stmt = scope_candidates(stmt, principal)
@@ -459,9 +830,12 @@ async def get_waiting_candidates(
                     ai_fit_map[candidate_id] = {
                         "score": score,
                         "level": level,
+                        "scorecard": scorecard if isinstance(scorecard, dict) else None,
                         "updated_at": created_at.isoformat() if created_at else None,
+                        "updated_at_dt": created_at,
                         "recommendation": recommendation,
                         "risk_hint": risk_hint,
+                        "reasons": _extract_incoming_ai_reasons(scorecard if isinstance(scorecard, dict) else None),
                     }
                 ai_cache_ms = (time.perf_counter() - ai_cache_started) * 1000
 
@@ -556,6 +930,7 @@ async def get_waiting_candidates(
             user_telegram_username,
             user_username,
             user_responsible_recruiter_id,
+            user_last_activity,
         ) in users:
             tz_label, city_id = await _resolve_city(user_city)
             if principal is not None and getattr(principal, "type", None) == "recruiter":
@@ -650,6 +1025,24 @@ async def get_waiting_candidates(
             canonical_queue_state = operational_summary.get("queue_state")
             if canonical_queue_state:
                 incoming_substatus = str(canonical_queue_state)
+            reconciliation = state_contract.get("reconciliation")
+            reconciliation_issues = (
+                list(reconciliation.get("issues") or [])
+                if isinstance(reconciliation, dict)
+                else []
+            )
+            has_reconciliation_issues = bool(
+                (isinstance(reconciliation, dict) and reconciliation.get("has_blockers"))
+                or reconciliation_issues
+            )
+            pending_approval = incoming_substatus == "awaiting_candidate_confirmation"
+            stalled = incoming_substatus == "stalled_waiting_slot"
+            ai_meta = ai_fit_map.get(int(user_id), {})
+            ai_sort_state = _resolve_incoming_ai_sort_state(
+                ai_created_at=ai_meta.get("updated_at_dt") if isinstance(ai_meta, dict) else None,
+                last_activity=user_last_activity,
+                status_changed_at=user_status_changed_at,
+            )
             waiting_rows.append(
                 {
                     "id": int(user_id),
@@ -697,38 +1090,86 @@ async def get_waiting_candidates(
                     "scheduling_summary": state_contract.get("scheduling_summary"),
                     "candidate_next_action": state_contract.get("candidate_next_action"),
                     "operational_summary": operational_summary,
-                    "state_reconciliation": state_contract.get("reconciliation"),
+                    "state_reconciliation": reconciliation,
                     "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
                     "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
                     "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
                     "ai_recommendation": ai_fit_map.get(int(user_id), {}).get("recommendation"),
                     "ai_risk_hint": ai_fit_map.get(int(user_id), {}).get("risk_hint"),
+                    "ai_reasons": ai_fit_map.get(int(user_id), {}).get("reasons", []),
                     "responsible_recruiter_id": user_responsible_recruiter_id,
                     "responsible_recruiter_name": recruiter_map.get(user_responsible_recruiter_id) if user_responsible_recruiter_id else None,
                     "schedule_url": f"/candidates/{int(user_id)}/schedule-slot",
                     "profile_url": f"/candidates/{int(user_id)}",
                     "priority_score": 0,  # will be updated below
+                    "_queue_state": incoming_substatus,
+                    "_pending_approval": pending_approval,
+                    "_stalled": stalled,
+                    "_has_reconciliation_issues": has_reconciliation_issues,
+                    "_ai_sort_state": ai_sort_state,
                 }
             )
 
-        def _priority(row: Dict[str, object]) -> tuple:
-            is_requested = bool(row.get("requested_another_time"))
-            is_stalled = (row.get("status_slug") == CandidateStatus.STALLED_WAITING_SLOT.value)
-            wait_hours = row.get("waiting_hours") or 0
-            wait_since = row.get("waiting_since_dt") or datetime.now(timezone.utc)
-            return (
-                0 if is_requested else 1,         # reschedule requests first
-                0 if is_stalled else 1,            # stalled first
-                -int(wait_hours),                  # longer waiting first
-                wait_since,                        # older requests first
-            )
+        queue_total = len(waiting_rows)
 
-        prioritized = sorted(waiting_rows, key=_priority)
+        filtered_rows = waiting_rows
+        if normalized_city_id is not None:
+            filtered_rows = [
+                row for row in filtered_rows
+                if row.get("city_id") == normalized_city_id
+            ]
+        if normalized_status != "all":
+            filtered_rows = [
+                row for row in filtered_rows
+                if _matches_incoming_status_filter(row, normalized_status)
+            ]
+        if normalized_owner == "mine":
+            filtered_rows = [
+                row for row in filtered_rows
+                if row.get("responsible_recruiter_id") == principal_id
+            ]
+        elif normalized_owner == "assigned":
+            filtered_rows = [
+                row for row in filtered_rows
+                if row.get("responsible_recruiter_id") is not None
+            ]
+        elif normalized_owner == "unassigned":
+            filtered_rows = [
+                row for row in filtered_rows
+                if row.get("responsible_recruiter_id") is None
+            ]
+        if normalized_waiting == "24h":
+            filtered_rows = [
+                row for row in filtered_rows
+                if int(row.get("waiting_hours") or 0) >= 24
+            ]
+        elif normalized_waiting == "48h":
+            filtered_rows = [
+                row for row in filtered_rows
+                if int(row.get("waiting_hours") or 0) >= 48
+            ]
+        if normalized_ai_level != "all":
+            filtered_rows = [
+                row for row in filtered_rows
+                if (
+                    str(row.get("ai_relevance_level") or "unknown") == normalized_ai_level
+                    if normalized_ai_level != "unknown"
+                    else str(row.get("ai_relevance_level") or "unknown") == "unknown"
+                )
+            ]
+        if normalized_search:
+            filtered_rows = [
+                row for row in filtered_rows
+                if _matches_incoming_search(row, normalized_search)
+            ]
+
+        prioritized = sorted(filtered_rows, key=lambda row: _incoming_sort_key(row, normalized_sort))
         for idx, row in enumerate(prioritized, start=1):
             row["priority_score"] = idx
-            row.pop("waiting_since_dt", None)
-
-        final_rows = prioritized[:normalized_limit]
+        filtered_total = len(prioritized)
+        page_start = max(0, (normalized_page - 1) * normalized_page_size)
+        page_end = page_start + normalized_page_size
+        final_rows = prioritized[page_start:page_end]
         ai_cached_count = sum(1 for row in final_rows if row.get("ai_relevance_score") is not None or row.get("ai_relevance_level"))
         ai_missing_candidate_ids = [
             int(row["id"])
@@ -741,10 +1182,28 @@ async def get_waiting_candidates(
         if ai_warm_candidate_ids:
             schedule_warm_candidates_ai_outputs(ai_warm_candidate_ids, principal=principal, refresh=False)
             ai_warm_scheduled_count = len(ai_warm_candidate_ids)
+        ai_warm_candidate_id_set = set(ai_warm_candidate_ids)
+
+        for row in final_rows:
+            row.pop("waiting_since_dt", None)
+            row["_ai_sort_state"] = str(row.get("_ai_sort_state") or "unknown")
+            if row.get("ai_relevance_score") is not None or row.get("ai_relevance_level"):
+                row["ai_relevance_state"] = "stale" if row["_ai_sort_state"] == "stale" else "ready"
+            elif int(row.get("id") or 0) in ai_warm_candidate_id_set:
+                row["ai_relevance_state"] = "warming"
+            else:
+                row["ai_relevance_state"] = "unknown"
+            row.pop("_queue_state", None)
+            row.pop("_pending_approval", None)
+            row.pop("_stalled", None)
+            row.pop("_has_reconciliation_issues", None)
+            row.pop("_ai_sort_state", None)
 
         serialization_ms = (time.perf_counter() - serialization_started) * 1000
         perf_snapshot = {
             "candidate_count": len(final_rows),
+            "queue_total": queue_total,
+            "total_count": filtered_total,
             "query_users_count": query_users_count,
             "ai_cached_count": ai_cached_count,
             "ai_missing_count": ai_missing_count,
@@ -755,15 +1214,46 @@ async def get_waiting_candidates(
             "bot_state_batch_ms": round(bot_state_ms, 1),
             "serialization_ms": round(serialization_ms, 1),
         }
-        return final_rows
+        return {
+            "items": final_rows,
+            "queue_total": queue_total,
+            "total": filtered_total,
+            "page": normalized_page,
+            "page_size": normalized_page_size,
+            "returned_count": len(final_rows),
+            "has_next": page_end < filtered_total,
+            "has_prev": normalized_page > 1 and filtered_total > 0,
+            "sort": normalized_sort,
+        }
 
     payload = await get_or_compute(
         cache_key,
-        expected_type=list,
+        expected_type=dict,
         ttl_seconds=DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
         stale_seconds=DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
         compute=_compute,
     )
+    if not _is_waiting_candidates_payload_complete(payload):
+        payload = await _compute()
+        payload = normalize_waiting_candidates_payload_shape(
+            payload,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort=normalized_sort,
+        )
+        await set_cached(
+            cache_key,
+            payload,
+            ttl_seconds=DASHBOARD_INCOMING_CACHE_TTL_SECONDS,
+            stale_seconds=DASHBOARD_INCOMING_CACHE_STALE_SECONDS,
+        )
+    else:
+        payload = normalize_waiting_candidates_payload_shape(
+            payload,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort=normalized_sort,
+        )
     total_duration_ms = (time.perf_counter() - total_started) * 1000
     cache_status = summarize_cache(get_context())
     ai_missing_count = int(perf_snapshot.get("ai_missing_count", 0)) if perf_snapshot else 0
@@ -783,7 +1273,14 @@ async def get_waiting_candidates(
             extra={
                 "cache_status": cache_status,
                 "duration_ms": round(total_duration_ms, 1),
-                **(perf_snapshot or {"candidate_count": len(payload)}),
+                **(
+                    perf_snapshot
+                    or {
+                        "candidate_count": len(payload.get("items", [])) if isinstance(payload, dict) else 0,
+                        "queue_total": payload.get("queue_total", 0) if isinstance(payload, dict) else 0,
+                        "total_count": payload.get("total", 0) if isinstance(payload, dict) else 0,
+                    }
+                ),
             },
         )
     return payload

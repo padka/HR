@@ -1,7 +1,7 @@
 # RecruitSmart Architecture Overview
 
 ## Purpose
-Это канонический обзор архитектуры текущего modular monolith RecruitSmart Admin. Документ фиксирует основные runtime-границы, владельцев подсистем, внешние интеграции и то, какие части репозитория считаются source of truth для архитектурных решений.
+Канонический обзор текущего RecruitSmart runtime. Документ фиксирует активные boundaries и отдельно помечает legacy/historical implementation и future target state.
 
 ## Owner
 Platform Engineering
@@ -10,92 +10,79 @@ Platform Engineering
 Canonical
 
 ## Last Reviewed
-2026-03-25
+2026-04-16
 
 ## Source Paths
 - `backend/apps/admin_ui/app.py`
 - `backend/apps/admin_api/main.py`
 - `backend/apps/bot/app.py`
-- `backend/apps/max_bot/app.py`
 - `backend/domain/`
 - `backend/migrations/`
 - `frontend/app/src/app/main.tsx`
-- `frontend/app/src/app/routes/__root.tsx`
-- `README.md`
-- `docs/TECHNICAL_OVERVIEW.md`
-- `docs/TECH_STRATEGY.md`
+- `docs/architecture/supported_channels.md`
 
-## Related Diagrams
+## Related Docs
 - [runtime-topology.md](./runtime-topology.md)
-- [core-workflows.md](./core-workflows.md)
-
-## Change Policy
-Менять этот документ только вместе с изменением code-boundary, runtime boundary или ownership model. Исторические документы вне `docs/architecture/` не переписываются как canonical source of truth; они остаются справочным материалом.
+- [supported_channels.md](./supported_channels.md)
 
 ## System Context
-RecruitSmart Admin состоит из FastAPI-сервера админки, отдельного admin API, React SPA, Telegram bot runtime, MAX bot runtime, доменного слоя и Postgres/Redis-инфраструктуры. Пользовательские и операционные сценарии проходят через backend, а UI слой отвечает только за навигацию, формы и отображение состояния.
+RecruitSmart сейчас состоит из:
+- `admin_ui` как основного HTTP boundary для CRM SPA, admin/recruiter API, auth/session/CSRF, health и operator tooling;
+- `admin_api` как отдельного boundary для Telegram Mini App / recruiter webapp и n8n HH callbacks;
+- `bot` как единственного supported live messaging runtime;
+- `backend/domain` как источника бизнес-инвариантов, workflow и persistence logic;
+- PostgreSQL и Redis как инфраструктурной базы.
 
 ```mermaid
 flowchart TB
-    browser["Браузер / SPA"]
-    admin_ui["backend.apps.admin_ui.app<br/>FastAPI admin UI + SPA host"]
-    admin_api["backend.apps.admin_api.main<br/>Admin API + webapp callbacks"]
-    bot["backend.apps.bot.app<br/>Telegram bot runtime"]
-    max_bot["backend.apps.max_bot.app<br/>MAX webhook runtime"]
-    domain["backend.domain<br/>business rules / services / repositories"]
+    browser["Admin / recruiter browser"]
+    tg["Telegram client / Mini App"]
+    hh["HH.ru"]
+    n8n["n8n"]
+
+    admin_ui["backend.apps.admin_ui.app"]
+    admin_api["backend.apps.admin_api.main"]
+    bot["backend.apps.bot.app"]
+    domain["backend.domain"]
     db[("PostgreSQL")]
     redis[("Redis")]
-    telegram["Telegram API"]
-    max["MAX platform API"]
-    hh["HH.ru API"]
-    n8n["n8n webhooks"]
-    sentry["Sentry"]
 
     browser --> admin_ui
+    tg --> admin_api
     admin_ui --> domain
-    admin_ui --> db
-    admin_ui --> redis
-    admin_ui --> sentry
-
     admin_api --> domain
-    admin_api --> db
-    admin_api --> redis
-
     bot --> domain
-    bot --> redis
-    bot --> telegram
-
-    max_bot --> domain
-    max_bot --> redis
-    max_bot --> max
-
     domain --> db
     domain --> redis
-    domain --> hh
-    domain --> n8n
+    admin_ui --> hh
+    admin_api --> n8n
+    bot --> tg
 ```
 
-## Boundary Map
-| Компонент | Владеет | Не владеет |
-| --- | --- | --- |
-| `backend/apps/admin_ui` | HTTP boundary для CRM UI, candidate portal, workflow, slots, AI, HH-интеграций, health и metrics | Не владеет доставкой сообщений, broker/retry логикой и правилами домена |
-| `backend/apps/admin_api` | Отдельные webapp endpoints, recruiter webapp, slot assignment callbacks, HH sync callbacks | Не владеет SPA-роутингом и визуальной навигацией |
-| `backend/apps/bot` | Telegram polling runtime, recruiter UX, notification worker, reminder scheduler | Не владеет бизнес-правилами назначения слотов и source of truth по данным |
-| `backend/apps/max_bot` | MAX webhook runtime, MAX-specific onboarding/linking | Не владеет общей моделью кандидата и основными workflow-правилами |
-| `backend/domain` | Модели, сервисы, репозитории, outbox, slot assignment, candidate portal, HH sync/import | Не владеет HTTP-transport и UI |
-| `backend/migrations` | Изменение схемы БД | Не владеет бизнес-логикой runtime |
-| `frontend/app` | TanStack Router, экранные состояния, запросы к API, визуальная композиция | Не владеет persistence и side effects |
+## Runtime Classification
 
-## Ownership And Contracts
-- `backend/domain` является местом, где должны жить инварианты данных и workflow-правила.
-- `backend/apps/*` слои собирают transport, auth, middleware, router wiring и runtime bootstrap.
-- `frontend/app/src/app/main.tsx` задаёт актуальную карту mounted routes для SPA.
-- `backend/migrations/` остается единственным source of truth для schema evolution.
-- `docs/architecture/*` это каноническая документация; дублирование сюда же допускается только в виде новых canonical страниц, а не в виде правки старых исторических описаний.
+| Surface class | Current truth |
+| --- | --- |
+| Supported runtime | Admin SPA, Telegram bot runtime, Telegram Mini App / recruiter webapp, HH integration, n8n HH callbacks |
+| Unsupported legacy / historical implementation | legacy candidate portal implementation, historical MAX runtime |
+| Target state, not current runtime | future standalone candidate web flow, future MAX mini-app/channel adapter, SMS / voice fallback integration |
+
+## Boundary Map
+
+| Component | Owns | Does not own |
+| --- | --- | --- |
+| `backend/apps/admin_ui` | Admin SPA host, recruiter/admin API routes, auth/session/CSRF boundary, public shallow health probes, protected observability, HH operator surfaces | Message delivery runtime, domain truth, standalone candidate web flow runtime |
+| `backend/apps/admin_api` | Telegram Mini App API, recruiter webapp API, HH sync callback endpoints | SPA routing, admin browser shell |
+| `backend/apps/bot` | Telegram polling runtime, reminder/notification workers, delivery semantics | Domain source of truth, admin browser flows |
+| `backend/domain` | Business rules, repositories, candidate lifecycle, slot workflows, HH sync/import, auditable state transitions | HTTP transport, browser routing |
+| `frontend/app` | Mounted SPA route tree, React Query client, admin UX composition | Persistence, auth enforcement, delivery side effects |
+| `backend/migrations` | Schema evolution | Runtime behavior |
 
 ## Canonical Notes
-- `admin_ui` обслуживает основной CRM boundary и candidate portal.
-- `admin_api` остается отдельным сервисным boundary для Telegram webapp, recruiter webapp и HH/n8n callbacks.
-- `bot` и `max_bot` реализуют delivery/runtime слой, а не domain source of truth.
-- Redis используется для broker/cache/rate-limit/claim semantics там, где это требуется текущим кодом.
-- PostgreSQL остается primary data store.
+- `admin_ui` is the primary supported browser runtime.
+- `admin_api` remains a separate service boundary for Telegram/webapp and automation callbacks.
+- Telegram is the only supported live messaging runtime today.
+- Legacy candidate portal implementation is unsupported and must fail closed at `/candidate*`.
+- Historical MAX runtime is unsupported and excluded from default compose/runtime.
+- Future standalone candidate web flow and future MAX mini-app/channel adapter remain target-state concepts, but they are not mounted, advertised, or supported in the current runtime.
+- OpenAPI truth must be generated from live app factories, not edited manually.

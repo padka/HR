@@ -10,14 +10,14 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import false, or_, select
 from sqlalchemy.orm import selectinload
 
 from backend.apps.admin_ui.services.bot_service import BotService
 from backend.apps.admin_ui.services.chat_meta import derive_chat_message_kind
 from backend.core.db import async_session
-from backend.core.messenger.registry import get_registry
 from backend.core.messenger.protocol import MessengerPlatform
+from backend.core.messenger.registry import get_registry
 from backend.core.redis_factory import create_redis_client
 from backend.core.settings import get_settings
 from backend.domain.candidates.models import ChatMessage, ChatMessageStatus, ChatMessageDirection, User
@@ -233,6 +233,7 @@ def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
         "delivery_stage": _delivery_stage(message.status),
         "error": message.error,
         "telegram_message_id": message.telegram_message_id,
+        "provider_message_id": payload.get("provider_message_id"),
         "created_at": message.created_at.isoformat(),
         "author": message.author_label,
         "can_retry": message.direction == ChatMessageDirection.OUTBOUND.value and message.status == ChatMessageStatus.FAILED.value,
@@ -322,27 +323,40 @@ async def _existing_message(candidate_id: int, client_request_id: Optional[str])
         return message
 
 
+async def _recent_inbound_channel(
+    candidate_id: int,
+    *,
+    horizon: timedelta = timedelta(days=14),
+) -> Optional[str]:
+    cutoff = datetime.now(timezone.utc) - horizon
+    async with async_session() as session:
+        row = await session.execute(
+            select(ChatMessage.channel)
+            .where(
+                ChatMessage.candidate_id == candidate_id,
+                ChatMessage.direction == ChatMessageDirection.INBOUND.value,
+                ChatMessage.created_at >= cutoff,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(1)
+        )
+        latest = row.scalar_one_or_none()
+    normalized = str(latest or "").strip().lower()
+    return normalized or None
+
+
 def _resolve_delivery_channel(
     candidate: User,
     *,
     preferred_channel: Optional[str] = None,
-) -> tuple[str, Optional[int]]:
+) -> tuple[str, Optional[int | str]]:
     requested = str(preferred_channel or "").strip().lower()
     telegram_user_id = candidate.telegram_user_id or candidate.telegram_id
-    max_user_id = str(candidate.max_user_id or "").strip()
-    default_channel = str(getattr(candidate, "messenger_platform", "") or "").strip().lower()
+    max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
+    preferred = str(getattr(candidate, "messenger_platform", "") or "").strip().lower()
+    default_channel = preferred or ("max" if max_user_id else "telegram")
 
     channel = requested or default_channel
-    if channel == "max":
-        if max_user_id:
-            return "max", None
-        if requested == "max":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"message": "Для кандидата не найден MAX ID"},
-            )
-        channel = ""
-
     if channel == "telegram":
         if telegram_user_id:
             return "telegram", telegram_user_id
@@ -353,14 +367,36 @@ def _resolve_delivery_channel(
             )
         channel = ""
 
+    if channel == "max":
+        if max_user_id:
+            return "max", max_user_id
+        if requested == "max":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Для кандидата не найден MAX ID"},
+            )
+        channel = ""
+
     if channel == "web":
         return "web", None
 
+    if max_user_id:
+        return "max", max_user_id
     if telegram_user_id:
         return "telegram", telegram_user_id
-    if max_user_id:
-        return "max", None
     return "web", None
+
+
+async def _resolve_reply_channel(
+    candidate: User,
+    *,
+    preferred_channel: Optional[str] = None,
+) -> tuple[str, Optional[int | str]]:
+    recent_inbound = await _recent_inbound_channel(candidate.id)
+    return _resolve_delivery_channel(
+        candidate,
+        preferred_channel=preferred_channel or recent_inbound,
+    )
 
 
 async def _dispatch_chat_message(
@@ -371,45 +407,50 @@ async def _dispatch_chat_message(
     reply_markup: Optional[object] = None,
     preferred_channel: Optional[str] = None,
 ):
-    channel, telegram_user_id = _resolve_delivery_channel(
+    channel, recipient_id = _resolve_delivery_channel(
         candidate,
         preferred_channel=preferred_channel,
     )
 
     if channel == "web":
-        return channel, SimpleNamespace(
+        return channel, recipient_id, SimpleNamespace(
             ok=True,
             success=True,
             status="sent",
             error=None,
             message=None,
+            message_id=None,
         )
 
     if channel == "telegram":
         send_result = await bot_service.send_chat_message(
-            telegram_user_id,
+            int(recipient_id),
             text,
             reply_markup=reply_markup,
         )
-        return channel, send_result
+        return channel, recipient_id, send_result
 
-    adapter = get_registry().get(MessengerPlatform.MAX)
-    if adapter is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": "MAX bot не настроен"},
+    if channel == "max":
+        adapter = get_registry().get(MessengerPlatform.MAX)
+        if adapter is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"message": "MAX adapter is not configured"},
+            )
+        send_result = await adapter.send_message(str(recipient_id), text)
+        return channel, recipient_id, SimpleNamespace(
+            ok=bool(getattr(send_result, "success", False)),
+            success=bool(getattr(send_result, "success", False)),
+            status="sent" if getattr(send_result, "success", False) else "failed",
+            error=getattr(send_result, "error", None),
+            message=None,
+            message_id=getattr(send_result, "message_id", None),
         )
-    if reply_markup is not None:
-        logger.info(
-            "chat.max.reply_markup_ignored",
-            extra={"candidate_id": candidate.id},
-        )
-    send_result = await adapter.send_message(
-        str(candidate.max_user_id),
-        text,
-        correlation_id=f"candidate-chat:{candidate.id}",
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"message": "Канал кандидата не поддерживается"},
     )
-    return channel, send_result
 
 
 def _send_result_ok(send_result: object) -> bool:
@@ -441,7 +482,7 @@ async def send_chat_message(
     reply_markup: Optional[object] = None,
 ) -> Dict[str, object]:
     candidate = await _load_candidate(candidate_id)
-    channel, telegram_user_id = _resolve_delivery_channel(candidate)
+    channel, recipient_id = await _resolve_reply_channel(candidate)
 
     duplicate = await _existing_message(candidate_id, client_request_id)
     if duplicate:
@@ -466,7 +507,7 @@ async def send_chat_message(
     async with async_session() as session:
         message = ChatMessage(
             candidate_id=candidate.id,
-            telegram_user_id=telegram_user_id if channel == "telegram" else None,
+            telegram_user_id=int(recipient_id) if channel == "telegram" and recipient_id is not None else None,
             direction=ChatMessageDirection.OUTBOUND.value,
             channel=channel,
             text=text,
@@ -484,11 +525,12 @@ async def send_chat_message(
         await session.refresh(message)
         message_id = message.id
 
-    delivery_channel, send_result = await _dispatch_chat_message(
+    delivery_channel, _delivery_recipient, send_result = await _dispatch_chat_message(
         candidate,
         text=text,
         bot_service=bot_service,
         reply_markup=reply_markup,
+        preferred_channel=channel,
     )
     if _send_result_ok(send_result):
         await _record_message_sent_async(candidate_id)
@@ -499,6 +541,11 @@ async def send_chat_message(
             telegram_message_id=(
                 getattr(send_result, "telegram_message_id", None)
                 if delivery_channel == "telegram"
+                else None
+            ),
+            provider_message_id=(
+                getattr(send_result, "message_id", None)
+                if delivery_channel == "max"
                 else None
             ),
             error=None,
@@ -528,15 +575,19 @@ async def send_chat_message(
 
 async def _resolve_recruiter_link(candidate: User) -> Optional[str]:
     tg_id = candidate.telegram_user_id or candidate.telegram_id
-    if not tg_id:
-        return None
+    tg_filter = Slot.candidate_tg_id == tg_id if tg_id else false()
     async with async_session() as session:
         row = (
             await session.execute(
                 select(Slot, Recruiter)
                 .join(Recruiter, Recruiter.id == Slot.recruiter_id)
                 .options(selectinload(Slot.recruiter))
-                .where(Slot.candidate_tg_id == tg_id)
+                .where(
+                    or_(
+                        Slot.candidate_id == candidate.candidate_id,
+                        tg_filter,
+                    )
+                )
                 .order_by(Slot.start_utc.desc())
                 .limit(1)
             )
@@ -610,7 +661,7 @@ async def retry_chat_message(
                 "remaining": remaining,
             },
         )
-    delivery_channel, send_result = await _dispatch_chat_message(
+    delivery_channel, _delivery_recipient, send_result = await _dispatch_chat_message(
         candidate,
         text=text,
         bot_service=bot_service,
@@ -624,6 +675,11 @@ async def retry_chat_message(
             telegram_message_id=(
                 getattr(send_result, "telegram_message_id", None)
                 if delivery_channel == "telegram"
+                else None
+            ),
+            provider_message_id=(
+                getattr(send_result, "message_id", None)
+                if delivery_channel == "max"
                 else None
             ),
             error=None,

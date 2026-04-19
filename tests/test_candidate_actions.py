@@ -1,11 +1,11 @@
 """Test candidate action system for simplified card."""
 
-from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.actions import (
-    CandidateAction,
     STATUS_ACTIONS,
+    CandidateAction,
     get_candidate_actions,
 )
+from backend.domain.candidates.status import CandidateStatus
 
 
 def test_status_actions_mapping_complete():
@@ -33,14 +33,9 @@ def test_status_actions_mapping_complete():
 
 
 def test_terminal_statuses_have_no_actions():
-    """Terminal statuses should have empty action lists."""
+    """Only explicitly reopenable terminal statuses should expose recruiter actions."""
     terminal_statuses = [
-        CandidateStatus.INTERVIEW_DECLINED,
-        CandidateStatus.TEST2_FAILED,
-        CandidateStatus.INTRO_DAY_DECLINED_INVITATION,
-        CandidateStatus.INTRO_DAY_DECLINED_DAY_OF,
         CandidateStatus.HIRED,
-        CandidateStatus.NOT_HIRED,
     ]
 
     for status in terminal_statuses:
@@ -70,10 +65,11 @@ def test_get_candidate_actions_test1_completed():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 3
+    assert len(actions) == 4
     assert any(a.key == "schedule_interview" for a in actions)
     assert any(a.key == "reject" for a in actions)
     assert any(a.key == "resend_test2" for a in actions)
+    assert any(a.key == "restart_test1" for a in actions)
 
     # Check schedule interview action
     schedule_action = next(a for a in actions if a.key == "schedule_interview")
@@ -120,13 +116,14 @@ def test_get_candidate_actions_stalled_waiting_slot():
         has_intro_day_slot=False,
     )
 
-    assert len(actions) == 3
+    assert len(actions) == 4
     schedule_action = next(a for a in actions if a.key == "schedule_interview")
     assert schedule_action.variant == "danger"  # Urgent!
     assert "СРОЧНО" in schedule_action.label
     assert schedule_action.icon == "⚠️"
     assert any(a.key == "reject" for a in actions)
     assert any(a.key == "resend_test2" for a in actions)
+    assert any(a.key == "restart_test1" for a in actions)
 
 
 def test_get_candidate_actions_intro_day_confirmed():
@@ -174,11 +171,11 @@ def test_get_candidate_actions_lead_status():
 
 
 def test_get_candidate_actions_terminal_status_keeps_test2_action():
-    """Even terminal statuses should still allow manual Test 2 dispatch."""
+    """Reopenable terminal statuses keep Test2 dispatch and allow Test1 restart."""
     actions = get_candidate_actions(CandidateStatus.NOT_HIRED)
-    assert len(actions) == 1
-    assert actions[0].key == "resend_test2"
-    assert actions[0].url_pattern == "/candidates/{id}/resend-test2"
+    assert len(actions) == 2
+    assert any(action.key == "resend_test2" for action in actions)
+    assert any(action.key == "restart_test1" for action in actions)
 
 
 def test_confirmation_messages():
@@ -202,7 +199,8 @@ def test_url_patterns_correct():
         "schedule_interview": "/candidates/{id}/schedule-slot",
         "schedule_intro_day": "/candidates/{id}/schedule-intro-day",
         "reschedule_interview": "/candidates/{id}/schedule-slot",
-        "resend_test2": "/candidates/{id}/resend-test2",
+        "resend_test2": "/api/candidates/{id}/actions/resend_test2",
+        "restart_test1": "/api/candidates/{id}/actions/restart_test1",
     }
 
     for _status, actions in STATUS_ACTIONS.items():

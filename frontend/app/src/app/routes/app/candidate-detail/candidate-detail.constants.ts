@@ -200,3 +200,52 @@ export function getHhSyncBadge(status?: string | null) {
   if (!status) return null
   return { label: `HH: ${status}`, tone: 'muted' as const }
 }
+
+const CHANNEL_LINK_STATUS_LABELS = {
+  linked: 'Подключён',
+  unlinked: 'Не подключён',
+} as const
+
+const MAX_ROLLOUT_STATUS_LABELS: Record<string, string> = {
+  ready: 'Готово к предпросмотру',
+  preview_ready: 'Готово к предпросмотру',
+  active: 'Активно',
+  issued: 'Выдано',
+  sent: 'Отправлено',
+  send_failed: 'Ошибка отправки',
+  revoked: 'Отозвано',
+  expired: 'Истекло',
+  launched: 'Запущено',
+  not_launched: 'Не запущено',
+  preview_only: 'Только предпросмотр',
+  not_sent: 'Не отправлено',
+  failed: 'Ошибка',
+}
+
+const CHANNEL_DELIVERY_STATUS_LABELS: Record<string, string> = {
+  sent: 'Отправлено',
+  delivered: 'Доставлено',
+  failed: 'Ошибка доставки',
+  dead_letter: 'Сбой доставки',
+  queued: 'В очереди',
+  pending: 'В очереди',
+  preview_only: 'Только предпросмотр',
+  retrying: 'Повторяется',
+  not_sent: 'Не отправлено',
+}
+
+export function formatChannelLinkStatus(linked?: boolean | null) {
+  return linked ? CHANNEL_LINK_STATUS_LABELS.linked : CHANNEL_LINK_STATUS_LABELS.unlinked
+}
+
+export function formatMaxRolloutStatus(status?: string | null, fallback?: string | null) {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (!normalized) return fallback || 'Не задан'
+  return MAX_ROLLOUT_STATUS_LABELS[normalized] || fallback || normalized.replaceAll('_', ' ')
+}
+
+export function formatChannelDeliveryStatus(status?: string | null, fallback?: string | null) {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (!normalized) return fallback || 'Неизвестно'
+  return CHANNEL_DELIVERY_STATUS_LABELS[normalized] || fallback || normalized.replaceAll('_', ' ')
+}

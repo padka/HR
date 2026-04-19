@@ -1,7 +1,7 @@
 # Frontend Canonical Docs
 
 ## Purpose
-Этот пакет - canonical source of truth по фронтенду RecruitSmart Admin. Он описывает текущий React SPA, candidate portal, Telegram Mini App, shell/navigation, тему и границы ответственности между модулями.
+Этот пакет - canonical source of truth по фронтенду RecruitSmart Admin. Он описывает текущий React SPA, Telegram Mini App, shell/navigation, тему и границы ответственности между модулями. Candidate browser portal route files могут существовать исторически, но не считаются active mounted frontend surface.
 
 ## Owner
 Frontend platform / UI engineering.
@@ -10,14 +10,13 @@ Frontend platform / UI engineering.
 Canonical.
 
 ## Last Reviewed
-2026-03-25.
+2026-04-16.
 
 ## Source Paths
 - `frontend/app/src/app/main.tsx`
 - `frontend/app/src/app/routes/__root.tsx`
 - `frontend/app/src/theme/*`
 - `frontend/app/src/app/routes/app/*`
-- `frontend/app/src/app/routes/candidate/*`
 - `frontend/app/src/app/routes/tg-app/*`
 
 ## Related Diagrams
@@ -35,7 +34,7 @@ Canonical.
 ## What This Pack Covers
 - SPA route tree и роль `main.tsx` как единого маршрутизатора.
 - Admin shell, desktop/mobile navigation, role gating, unread chat state.
-- Candidate portal flows и Telegram Mini App flows.
+- Telegram Mini App flows.
 - Theme system: tokens, surfaces, motion, responsive overrides.
 - Ownership boundaries между route modules, shared components и theme layer.
 
@@ -51,4 +50,3 @@ Canonical.
 - `frontend/app/src/app/routes/__root.tsx` - единственный источник правды по shell/navigation.
 - `frontend/app/src/theme/tokens.css` и `frontend/app/src/theme/global.css` - единственный источник правды по визуальной системе.
 - Page-level CSS может уточнять экран, но не должен переопределять основу токенов.
-

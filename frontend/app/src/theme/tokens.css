@@ -98,15 +98,15 @@
   --bg-spotlight: #22222b;
   --bg: var(--bg-canvas);
 
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-default: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.18);
   --border-focus: rgba(99, 102, 241, 0.5);
   --border-glass: 1px solid var(--border-subtle);
 
   --text-primary: #f4f4f5;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #71717a;
+  --text-secondary: #bcc4d4;
+  --text-tertiary: #97a1b5;
   --text-disabled: #52525b;
   --text: var(--text-primary);
   --fg: var(--text-primary);
@@ -282,6 +282,9 @@ html[data-ui='liquid-glass-v2'] {
   --ui-surface-2: rgba(18, 28, 43, 0.66);
   --ui-surface-3: rgba(24, 36, 56, 0.76);
   --ui-surface-4: rgba(30, 44, 70, 0.82);
+  --ui-surface-2-solid: #152031;
+  --ui-surface-3-solid: #1b293d;
+  --ui-surface-4-solid: #22334a;
 
   --ui-shadow-1: 0 8px 24px rgba(0, 0, 0, 0.2);
   --ui-shadow-2: 0 12px 32px rgba(0, 0, 0, 0.26);
@@ -340,6 +343,7 @@ html[data-ui='liquid-glass-v2'] {
   --glass-shadow: var(--ui-shadow-2);
   --glass-shadow-lg: var(--ui-shadow-4);
   --focus-ring: 0 0 0 3px rgba(134, 181, 255, 0.32);
+
 }
 
 html[data-ui='liquid-glass-v2'][data-theme='light'] {
@@ -352,6 +356,9 @@ html[data-ui='liquid-glass-v2'][data-theme='light'] {
   --ui-surface-2: rgba(252, 253, 255, 0.92);
   --ui-surface-3: rgba(255, 255, 255, 0.97);
   --ui-surface-4: rgba(255, 255, 255, 0.99);
+  --ui-surface-2-solid: #fafcff;
+  --ui-surface-3-solid: #ffffff;
+  --ui-surface-4-solid: #ffffff;
 
   --ui-shadow-1: 0 8px 24px rgba(24, 40, 63, 0.08);
   --ui-shadow-2: 0 14px 30px rgba(24, 40, 63, 0.1);
@@ -364,6 +371,37 @@ html[data-ui='liquid-glass-v2'][data-theme='light'] {
   --glass-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 248, 252, 0.84));
   --glass-gradient-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(244, 248, 252, 0.92));
   --focus-ring: 0 0 0 3px rgba(10, 124, 255, 0.18);
+}
+
+html[data-ui='liquid-glass-v2'] .max-miniapp {
+  --max-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --max-font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --max-shell-bg:
+    radial-gradient(140% 120% at 12% -12%, rgba(102, 166, 255, 0.18), transparent 52%),
+    radial-gradient(120% 110% at 96% 108%, rgba(86, 209, 178, 0.12), transparent 56%),
+    linear-gradient(180deg, #050913 0%, #09111c 44%, #0c1622 100%);
+  --max-shell-ambient-a: rgba(102, 166, 255, 0.18);
+  --max-shell-ambient-b: rgba(86, 209, 178, 0.12);
+  --max-surface-1: color-mix(in srgb, var(--ui-surface-1) 92%, rgba(6, 10, 18, 0.28));
+  --max-surface-2: color-mix(in srgb, var(--ui-surface-2) 94%, rgba(5, 9, 15, 0.32));
+  --max-surface-solid: color-mix(in srgb, var(--ui-surface-2-solid) 94%, black);
+  --max-surface-solid-strong: color-mix(in srgb, var(--ui-surface-3-solid) 94%, black);
+  --max-border: color-mix(in srgb, var(--ui-border-subtle) 94%, rgba(255, 255, 255, 0.04));
+  --max-border-strong: color-mix(in srgb, var(--ui-border-strong) 88%, rgba(255, 255, 255, 0.06));
+  --max-text: rgba(245, 248, 255, 0.96);
+  --max-text-muted: rgba(208, 219, 236, 0.72);
+  --max-accent: color-mix(in srgb, var(--accent) 84%, #a8c9ff);
+  --max-success: color-mix(in srgb, var(--success) 86%, #bff7df);
+  --max-warning: color-mix(in srgb, var(--warning) 90%, #ffe6a4);
+  --max-danger: color-mix(in srgb, var(--danger) 86%, #ffc0bd);
+  --max-radius-card: var(--ui-radius-5);
+  --max-radius-control: var(--ui-radius-3);
+  --max-blur-shell: var(--ui-blur-3);
+  --max-blur-card: var(--ui-blur-2);
+  --max-shadow-card: 0 18px 40px rgba(0, 0, 0, 0.34);
+  --max-shadow-strong: 0 28px 64px rgba(0, 0, 0, 0.42);
+  --max-motion-base: 220ms;
+  --max-motion-emphasized: 240ms;
 }
 
 @media (max-width: 768px) {

@@ -70,13 +70,19 @@ describe('CandidateNewPage submit flow', () => {
     }))
   })
 
-  it('creates candidate without immediate scheduling', async () => {
+  it('renders manual creation as default and hides telegram id input', () => {
+    render(<CandidateNewPage />)
+
+    expect(screen.queryByLabelText('Telegram ID')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Назначить собеседование сразу')).not.toBeChecked()
+  })
+
+  it('creates candidate without immediate scheduling by default', async () => {
     apiFetchMock.mockResolvedValueOnce({ id: 501, fio: 'Тест', city: 'Москва', slot_scheduled: false })
 
     render(<CandidateNewPage />)
 
     fireEvent.change(screen.getByPlaceholderText('Иван Иванов'), { target: { value: 'Тест Кандидат' } })
-    fireEvent.click(screen.getByLabelText('Назначить собеседование сразу'))
     fireEvent.click(screen.getByRole('button', { name: 'Создать кандидата' }))
 
     await waitFor(() => {
@@ -92,6 +98,10 @@ describe('CandidateNewPage submit flow', () => {
       '/candidates',
       expect.objectContaining({ method: 'POST' }),
     )
+
+    const [, request] = apiFetchMock.mock.calls[0] as [string, { body?: string }]
+    expect(JSON.parse(request.body || '{}')).not.toHaveProperty('telegram_id')
+    expect(JSON.parse(request.body || '{}')).not.toHaveProperty('interview_date')
   })
 
   it('shows warning and keeps candidate when schedule fails with missing telegram', async () => {
@@ -109,10 +119,11 @@ describe('CandidateNewPage submit flow', () => {
     render(<CandidateNewPage />)
 
     fireEvent.change(screen.getByPlaceholderText('Иван Иванов'), { target: { value: 'Кандидат Без TG' } })
+    fireEvent.click(screen.getByLabelText('Назначить собеседование сразу'))
     fireEvent.click(screen.getByRole('button', { name: 'Создать кандидата' }))
 
     await waitFor(() => {
-      expect(screen.getByText(/Кандидат создан\./)).toBeInTheDocument()
+      expect(screen.getByText(/Кандидат создан как ручной лид\./)).toBeInTheDocument()
     })
 
     expect(navigateMock).not.toHaveBeenCalled()
@@ -133,7 +144,8 @@ describe('CandidateNewPage submit flow', () => {
     render(<CandidateNewPage />)
 
     fireEvent.change(screen.getByPlaceholderText('Иван Иванов'), { target: { value: 'Кандидат С TG' } })
-    fireEvent.change(screen.getByPlaceholderText('79991234567'), { target: { value: '79991234099' } })
+    fireEvent.change(screen.getByPlaceholderText('+7 900 000-00-00'), { target: { value: '+7 999 123-40-99' } })
+    fireEvent.click(screen.getByLabelText('Назначить собеседование сразу'))
     fireEvent.click(screen.getByRole('button', { name: 'Создать кандидата' }))
 
     await waitFor(() => {

@@ -1,7 +1,65 @@
 import { formatDateTime } from '@/shared/utils/formatters'
 import type { CandidateDetail, TestSection } from '@/api/services/candidates'
 
-import type { AvailableSlot, IncomingCandidate } from './incoming.types'
+import type { AvailableSlot, IncomingCandidate, IncomingPayload } from './incoming.types'
+
+type IncomingSummaryState = {
+  page: number
+  pageSize: number
+}
+
+export type IncomingSummary = {
+  queueTotal: number
+  filteredTotal: number
+  returnedCount: number
+  shownStart: number
+  shownEnd: number
+  page: number
+  pageSize: number
+  pageCount: number
+}
+
+function coerceNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  const normalized = Math.trunc(value)
+  return normalized >= 0 ? normalized : null
+}
+
+export function deriveIncomingSummary(
+  payload: IncomingPayload | null | undefined,
+  fallback: IncomingSummaryState,
+): IncomingSummary {
+  const items = Array.isArray(payload?.items) ? payload.items : []
+  const returnedCount = items.length
+  const page = Math.max(1, coerceNonNegativeInt(payload?.page) ?? fallback.page)
+  const pageSize = Math.max(1, coerceNonNegativeInt(payload?.page_size) ?? fallback.pageSize)
+  const filteredTotal = Math.max(coerceNonNegativeInt(payload?.total) ?? 0, returnedCount)
+  const queueTotal = Math.max(coerceNonNegativeInt(payload?.queue_total) ?? 0, filteredTotal, returnedCount)
+  if (filteredTotal === 0 || returnedCount === 0) {
+    return {
+      queueTotal,
+      filteredTotal,
+      returnedCount,
+      shownStart: 0,
+      shownEnd: 0,
+      page,
+      pageSize,
+      pageCount: 1,
+    }
+  }
+  const shownStart = ((page - 1) * pageSize) + 1
+  const shownEnd = Math.min(filteredTotal, shownStart + returnedCount - 1)
+  return {
+    queueTotal,
+    filteredTotal,
+    returnedCount,
+    shownStart,
+    shownEnd,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(filteredTotal / pageSize)),
+  }
+}
 
 export function toIsoDate(value: Date) {
   return value.toISOString().slice(0, 10)
@@ -37,6 +95,55 @@ export function formatAiRecommendation(value?: IncomingCandidate['ai_recommendat
   if (value === 'clarify_before_od') return 'Уточнить'
   if (value === 'not_recommended') return 'Стоп'
   return null
+}
+
+export function formatAiFreshnessLabel(
+  state?: IncomingCandidate['ai_relevance_state'] | null,
+  updatedAt?: string | null,
+) {
+  if (state === 'warming') return 'Обновляется'
+  if (state === 'unknown') return 'Недостаточно данных'
+  if (state === 'stale') return updatedAt ? `Устарело · ${formatDateTime(updatedAt)}` : 'Устарело'
+  if (updatedAt) return `AI · ${formatDateTime(updatedAt)}`
+  return 'AI'
+}
+
+export function formatAiDetailStateLabel(state?: IncomingCandidate['ai_relevance_state'] | null) {
+  if (state === 'warming') return 'Обновляется'
+  if (state === 'unknown') return 'Нет данных'
+  if (state === 'stale') return 'Устарело'
+  return 'Актуально'
+}
+
+export function formatAiDetailScore(candidate: IncomingCandidate) {
+  if (typeof candidate.ai_relevance_score === 'number') return `${Math.round(candidate.ai_relevance_score)}/100`
+  return 'Нет оценки'
+}
+
+export function formatAiPrimaryScore(candidate: IncomingCandidate) {
+  if (typeof candidate.ai_relevance_score === 'number') return `${Math.round(candidate.ai_relevance_score)}`
+  return '—'
+}
+
+export function formatAiUpdatedAtLabel(updatedAt?: string | null) {
+  return updatedAt ? formatDateTime(updatedAt) : null
+}
+
+export function formatAiStateLabel(candidate: IncomingCandidate) {
+  const state = candidate.ai_relevance_state || 'unknown'
+  if (state === 'warming') return 'Обновляется'
+  if (state === 'unknown') return 'Unknown'
+  if (state === 'stale') return 'Устарело'
+  if (typeof candidate.ai_relevance_score === 'number') return `${Math.round(candidate.ai_relevance_score)}`
+  if (candidate.ai_relevance_level) return candidate.ai_relevance_level.toUpperCase()
+  return 'Unknown'
+}
+
+export function resolveAiStateTone(candidate: IncomingCandidate) {
+  const state = candidate.ai_relevance_state || 'unknown'
+  if (state === 'warming' || state === 'unknown') return 'muted'
+  if (state === 'stale') return 'warning'
+  return resolveAiScoreTone(candidate.ai_relevance_score, candidate.ai_recommendation)
 }
 
 export function resolveAiScoreTone(score?: number | null, recommendation?: IncomingCandidate['ai_recommendation'] | null) {

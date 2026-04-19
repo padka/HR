@@ -1,0 +1,4877 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TG Bot Admin API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/webapp/me": {
+      "get": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Get Me",
+        "description": "Get current user (candidate) information.\n\nReturns:\n    CandidateInfo with user details and candidate status",
+        "operationId": "get_me_api_webapp_me_get",
+        "parameters": [
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__CandidateInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/slots": {
+      "get": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Get Available Slots",
+        "description": "Get available slots for booking.\n\nArgs:\n    city_id: Optional city ID filter\n    from_date: Optional start date filter (defaults to now)\n    to_date: Optional end date filter (defaults to +14 days)\n    user: Authenticated Telegram user\n    session: Database session\n\nReturns:\n    List of available slots",
+        "operationId": "get_available_slots_api_webapp_slots_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by city ID",
+              "title": "City Id"
+            },
+            "description": "Filter by city ID"
+          },
+          {
+            "name": "from_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date (UTC)",
+              "title": "From Date"
+            },
+            "description": "Start date (UTC)"
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date (UTC)",
+              "title": "To Date"
+            },
+            "description": "End date (UTC)"
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__SlotInfo"
+                  },
+                  "title": "Response Get Available Slots Api Webapp Slots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/booking": {
+      "post": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Create Booking",
+        "description": "Create a new booking.\n\nArgs:\n    request: Booking request with slot_id\n    user: Authenticated Telegram user\n    session: Database session\n\nReturns:\n    Created booking information\n\nRaises:\n    HTTPException: If slot is not available or user not found",
+        "operationId": "create_booking_api_webapp_booking_post",
+        "parameters": [
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__CreateBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/reschedule": {
+      "post": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Reschedule Booking",
+        "description": "Reschedule an existing booking to a new slot.\n\nArgs:\n    request: Reschedule request with booking_id and new_slot_id\n    user: Authenticated Telegram user\n    session: Database session\n\nReturns:\n    Updated booking information\n\nRaises:\n    HTTPException: If booking not found or new slot not available",
+        "operationId": "reschedule_booking_api_webapp_reschedule_post",
+        "parameters": [
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__RescheduleBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/cancel": {
+      "post": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Cancel Booking",
+        "description": "Cancel an existing booking.\n\nArgs:\n    request: Cancel request with booking_id and optional reason\n    user: Authenticated Telegram user\n    session: Database session\n\nRaises:\n    HTTPException: If booking not found or doesn't belong to user",
+        "operationId": "cancel_booking_api_webapp_cancel_post",
+        "parameters": [
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__webapp__routers__CancelBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/intro_day": {
+      "get": {
+        "tags": [
+          "webapp",
+          "webapp"
+        ],
+        "summary": "Get Intro Day Info",
+        "description": "Get information about upcoming intro day for a city.\n\nArgs:\n    city_id: City ID\n    user: Authenticated Telegram user\n    session: Database session\n\nReturns:\n    Intro day information\n\nRaises:\n    HTTPException: If no upcoming intro day found",
+        "operationId": "get_intro_day_info_api_webapp_intro_day_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "City ID",
+              "title": "City Id"
+            },
+            "description": "City ID"
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntroDayInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/max/launch": {
+      "post": {
+        "tags": [
+          "max",
+          "max"
+        ],
+        "summary": "Launch Max Miniapp",
+        "operationId": "launch_max_miniapp_api_max_launch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaxLaunchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaxLaunchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/max/webhook": {
+      "post": {
+        "tags": [
+          "max",
+          "max"
+        ],
+        "summary": "Receive Max Webhook",
+        "operationId": "receive_max_webhook_api_max_webhook_post",
+        "parameters": [
+          {
+            "name": "X-Max-Bot-Api-Secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Max-Bot-Api-Secret"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaxWebhookAck"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/me": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Me",
+        "operationId": "get_candidate_access_me_api_candidate_access_me_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CandidateInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/contact": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Bind Candidate Access Contact",
+        "operationId": "bind_candidate_access_contact_api_candidate_access_contact_post",
+        "parameters": [
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateContactBindRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateContactBindResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/journey": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Journey",
+        "operationId": "get_candidate_access_journey_api_candidate_access_journey_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateJourneyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/cities": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Cities",
+        "operationId": "get_candidate_access_cities_api_candidate_access_cities_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateBookingCityInfo"
+                  },
+                  "title": "Response Get Candidate Access Cities Api Candidate Access Cities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/recruiters": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Recruiters",
+        "operationId": "get_candidate_access_recruiters_api_candidate_access_recruiters_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "description": "City ID to load recruiters for",
+              "title": "City Id"
+            },
+            "description": "City ID to load recruiters for"
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateBookingRecruiterInfo"
+                  },
+                  "title": "Response Get Candidate Access Recruiters Api Candidate Access Recruiters Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/booking-context": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Booking Context",
+        "operationId": "get_candidate_access_booking_context_api_candidate_access_booking_context_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateBookingContextInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Save Candidate Access Booking Context",
+        "operationId": "save_candidate_access_booking_context_api_candidate_access_booking_context_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateBookingContextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateBookingContextInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/manual-availability": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Save Candidate Access Manual Availability",
+        "operationId": "save_candidate_access_manual_availability_api_candidate_access_manual_availability_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateManualAvailabilityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateManualAvailabilityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/test1": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Test1",
+        "operationId": "get_candidate_access_test1_api_candidate_access_test1_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/test1/answers": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Save Candidate Access Test1 Answers",
+        "operationId": "save_candidate_access_test1_answers_api_candidate_access_test1_answers_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateTest1AnswersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/test1/complete": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Complete Candidate Access Test1",
+        "operationId": "complete_candidate_access_test1_api_candidate_access_test1_complete_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/test2": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Test2",
+        "operationId": "get_candidate_access_test2_api_candidate_access_test2_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest2Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/test2/answers": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Submit Candidate Access Test2 Answer",
+        "operationId": "submit_candidate_access_test2_answer_api_candidate_access_test2_answers_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateTest2AnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest2Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/intro-day": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Intro Day",
+        "operationId": "get_candidate_access_intro_day_api_candidate_access_intro_day_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateIntroDayResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/intro-day/confirm": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Confirm Candidate Access Intro Day",
+        "operationId": "confirm_candidate_access_intro_day_api_candidate_access_intro_day_confirm_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateIntroDayResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/chat-handoff": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Handoff Candidate Access To Chat",
+        "operationId": "handoff_candidate_access_to_chat_api_candidate_access_chat_handoff_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateChatHandoffResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/slots": {
+      "get": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Get Candidate Access Slots",
+        "operationId": "get_candidate_access_slots_api_candidate_access_slots_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by city ID",
+              "title": "City Id"
+            },
+            "description": "Filter by city ID"
+          },
+          {
+            "name": "recruiter_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by recruiter ID",
+              "title": "Recruiter Id"
+            },
+            "description": "Filter by recruiter ID"
+          },
+          {
+            "name": "from_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date (UTC)",
+              "title": "From Date"
+            },
+            "description": "Start date (UTC)"
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date (UTC)",
+              "title": "To Date"
+            },
+            "description": "End date (UTC)"
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__SlotInfo"
+                  },
+                  "title": "Response Get Candidate Access Slots Api Candidate Access Slots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/bookings": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Create Candidate Access Booking",
+        "operationId": "create_candidate_access_booking_api_candidate_access_bookings_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CreateBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/bookings/{booking_id}/confirm": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Confirm Candidate Access Booking",
+        "operationId": "confirm_candidate_access_booking_api_candidate_access_bookings__booking_id__confirm_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/bookings/{booking_id}/reschedule": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Reschedule Candidate Access Booking",
+        "operationId": "reschedule_candidate_access_booking_api_candidate_access_bookings__booking_id__reschedule_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__RescheduleBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-access/bookings/{booking_id}/cancel": {
+      "post": {
+        "tags": [
+          "candidate-access",
+          "candidate-access"
+        ],
+        "summary": "Cancel Candidate Access Booking",
+        "operationId": "cancel_candidate_access_booking_api_candidate_access_bookings__booking_id__cancel_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          },
+          {
+            "name": "X-Max-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Max-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CancelBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/dashboard": {
+      "get": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Dashboard",
+        "description": "KPI dashboard for the recruiter Mini App.",
+        "operationId": "recruiter_dashboard_api_webapp_recruiter_dashboard_get",
+        "parameters": [
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/incoming": {
+      "get": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Incoming",
+        "description": "Incoming candidates waiting for slot assignment.",
+        "operationId": "recruiter_incoming_api_webapp_recruiter_incoming_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncomingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/candidates/{candidate_id}": {
+      "get": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Candidate Detail",
+        "description": "Full candidate detail for the Mini App.",
+        "operationId": "recruiter_candidate_detail_api_webapp_recruiter_candidates__candidate_id__get",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/candidates/{candidate_id}/status": {
+      "post": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Update Status",
+        "description": "Update candidate status from the Mini App.",
+        "operationId": "recruiter_update_status_api_webapp_recruiter_candidates__candidate_id__status_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/candidates/{candidate_id}/message": {
+      "post": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Send Message",
+        "description": "Send a candidate message from the Mini App using the candidate's active channel.",
+        "operationId": "recruiter_send_message_api_webapp_recruiter_candidates__candidate_id__message_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webapp/recruiter/candidates/{candidate_id}/notes": {
+      "post": {
+        "tags": [
+          "webapp-recruiter",
+          "webapp-recruiter"
+        ],
+        "summary": "Recruiter Save Note",
+        "description": "Persist a recruiter quick note for a candidate.",
+        "operationId": "recruiter_save_note_api_webapp_recruiter_candidates__candidate_id__notes_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "X-Telegram-Init-Data",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Telegram-Init-Data"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/slot-assignments/{assignment_id}/confirm": {
+      "post": {
+        "tags": [
+          "slot-assignments"
+        ],
+        "summary": "Api Confirm Slot Assignment",
+        "operationId": "api_confirm_slot_assignment_api_slot_assignments__assignment_id__confirm_post",
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotAssignmentConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/slot-assignments/{assignment_id}/request-reschedule": {
+      "post": {
+        "tags": [
+          "slot-assignments"
+        ],
+        "summary": "Api Request Reschedule",
+        "operationId": "api_request_reschedule_api_slot_assignments__assignment_id__request_reschedule_post",
+        "parameters": [
+          {
+            "name": "assignment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Assignment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotAssignmentRescheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hh-sync/callback": {
+      "post": {
+        "tags": [
+          "hh-sync"
+        ],
+        "summary": "Hh Sync Callback",
+        "description": "Handle callback from n8n after hh.ru status sync API call.",
+        "operationId": "hh_sync_callback_api_hh_sync_callback_post",
+        "parameters": [
+          {
+            "name": "x-webhook-secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Webhook-Secret"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncCallbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hh-sync/resolve-callback": {
+      "post": {
+        "tags": [
+          "hh-sync"
+        ],
+        "summary": "Hh Resolve Callback",
+        "description": "Handle callback from n8n after negotiation resolve attempt.",
+        "operationId": "hh_resolve_callback_api_hh_sync_resolve_callback_post",
+        "parameters": [
+          {
+            "name": "x-webhook-secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Webhook-Secret"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveCallbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hh-integration/webhooks/{webhook_key}": {
+      "post": {
+        "tags": [
+          "hh-integration"
+        ],
+        "summary": "Receive Hh Webhook",
+        "operationId": "receive_hh_webhook_api_hh_integration_webhooks__webhook_key__post",
+        "parameters": [
+          {
+            "name": "webhook_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Webhook Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint for monitoring and load balancers.\n\nReturns:\n    - 200 if all components are healthy\n    - 503 if any component is unhealthy",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CandidateBookingCityInfo": {
+        "properties": {
+          "city_id": {
+            "type": "integer",
+            "title": "City Id"
+          },
+          "city_name": {
+            "type": "string",
+            "title": "City Name"
+          },
+          "tz": {
+            "type": "string",
+            "title": "Tz"
+          },
+          "has_available_recruiters": {
+            "type": "boolean",
+            "title": "Has Available Recruiters"
+          },
+          "available_recruiters": {
+            "type": "integer",
+            "title": "Available Recruiters"
+          },
+          "available_slots": {
+            "type": "integer",
+            "title": "Available Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "city_id",
+          "city_name",
+          "tz",
+          "has_available_recruiters",
+          "available_recruiters",
+          "available_slots"
+        ],
+        "title": "CandidateBookingCityInfo"
+      },
+      "CandidateBookingContextInfo": {
+        "properties": {
+          "city_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Id"
+          },
+          "city_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Name"
+          },
+          "recruiter_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Id"
+          },
+          "recruiter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Name"
+          },
+          "recruiter_tz": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Tz"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "is_explicit": {
+            "type": "boolean",
+            "title": "Is Explicit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "is_explicit"
+        ],
+        "title": "CandidateBookingContextInfo"
+      },
+      "CandidateBookingContextRequest": {
+        "properties": {
+          "city_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "City Id"
+          },
+          "recruiter_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "city_id"
+        ],
+        "title": "CandidateBookingContextRequest"
+      },
+      "CandidateBookingRecruiterInfo": {
+        "properties": {
+          "recruiter_id": {
+            "type": "integer",
+            "title": "Recruiter Id"
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name"
+          },
+          "tz": {
+            "type": "string",
+            "title": "Tz"
+          },
+          "available_slots": {
+            "type": "integer",
+            "title": "Available Slots"
+          },
+          "next_slot_utc": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Slot Utc"
+          },
+          "city_id": {
+            "type": "integer",
+            "title": "City Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recruiter_id",
+          "recruiter_name",
+          "tz",
+          "available_slots",
+          "city_id"
+        ],
+        "title": "CandidateBookingRecruiterInfo"
+      },
+      "CandidateChatHandoffResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "surface": {
+            "type": "string",
+            "title": "Surface",
+            "default": "max_chat"
+          },
+          "handoff_sent": {
+            "type": "boolean",
+            "title": "Handoff Sent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handoff_sent"
+        ],
+        "title": "CandidateChatHandoffResponse"
+      },
+      "CandidateContactBindRequest": {
+        "properties": {
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact"
+          }
+        },
+        "type": "object",
+        "title": "CandidateContactBindRequest"
+      },
+      "CandidateContactBindResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "start_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Param"
+          },
+          "application_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "CandidateContactBindResponse"
+      },
+      "CandidateDetailResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fio": {
+            "type": "string",
+            "title": "Fio"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "status_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Label"
+          },
+          "telegram_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telegram Id"
+          },
+          "transitions": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Transitions",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fio"
+        ],
+        "title": "CandidateDetailResponse"
+      },
+      "CandidateIntroDayResponse": {
+        "properties": {
+          "booking_id": {
+            "type": "integer",
+            "title": "Booking Id"
+          },
+          "city_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Name"
+          },
+          "recruiter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Name"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "intro_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intro Contact"
+          },
+          "contact_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Name"
+          },
+          "contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Phone"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking_id",
+          "start_utc",
+          "end_utc",
+          "status"
+        ],
+        "title": "CandidateIntroDayResponse"
+      },
+      "CandidateItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fio": {
+            "type": "string",
+            "title": "Fio"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "status_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Label"
+          },
+          "waiting_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Hours"
+          },
+          "telegram_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telegram Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fio"
+        ],
+        "title": "CandidateItem"
+      },
+      "CandidateJourneyContentCard": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "tone": {
+            "type": "string",
+            "title": "Tone",
+            "default": "neutral"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "body"
+        ],
+        "title": "CandidateJourneyContentCard"
+      },
+      "CandidateJourneyPrimaryAction": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "kind"
+        ],
+        "title": "CandidateJourneyPrimaryAction"
+      },
+      "CandidateJourneyResponse": {
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CandidateInfo"
+          },
+          "session": {
+            "$ref": "#/components/schemas/JourneySessionInfo"
+          },
+          "active_booking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateJourneyTimelineStep"
+            },
+            "type": "array",
+            "title": "Timeline"
+          },
+          "primary_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateJourneyPrimaryAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status_card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateJourneyStatusCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prep_card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateJourneyContentCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateJourneyContentCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "help_card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateJourneyContentCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "screening_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateTest1Decision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate",
+          "session"
+        ],
+        "title": "CandidateJourneyResponse"
+      },
+      "CandidateJourneyStatusCard": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "tone": {
+            "type": "string",
+            "title": "Tone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "body",
+          "tone"
+        ],
+        "title": "CandidateJourneyStatusCard"
+      },
+      "CandidateJourneyTimelineStep": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "state_label": {
+            "type": "string",
+            "title": "State Label"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "state",
+          "state_label"
+        ],
+        "title": "CandidateJourneyTimelineStep"
+      },
+      "CandidateManualAvailabilityRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "timezone_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone Label"
+          }
+        },
+        "type": "object",
+        "title": "CandidateManualAvailabilityRequest"
+      },
+      "CandidateManualAvailabilityResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "recruiters_notified": {
+            "type": "boolean",
+            "title": "Recruiters Notified"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "recruiters_notified"
+        ],
+        "title": "CandidateManualAvailabilityResponse"
+      },
+      "CandidateTest1AnswersRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Answers"
+          }
+        },
+        "type": "object",
+        "title": "CandidateTest1AnswersRequest"
+      },
+      "CandidateTest1Decision": {
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "reason_code": {
+            "type": "string",
+            "title": "Reason Code"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          },
+          "strictness": {
+            "type": "string",
+            "title": "Strictness"
+          },
+          "required_next_action": {
+            "type": "string",
+            "title": "Required Next Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "outcome",
+          "reason_code",
+          "explanation",
+          "strictness",
+          "required_next_action"
+        ],
+        "title": "CandidateTest1Decision"
+      },
+      "CandidateTest1Response": {
+        "properties": {
+          "journey_step": {
+            "type": "string",
+            "title": "Journey Step"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/Test1Question"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "draft_answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Draft Answers"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          },
+          "screening_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateTest1Decision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "interview_offer": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interview Offer"
+          },
+          "required_next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Next Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "journey_step",
+          "questions",
+          "draft_answers",
+          "is_completed"
+        ],
+        "title": "CandidateTest1Response"
+      },
+      "CandidateTest2AnswerRequest": {
+        "properties": {
+          "question_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Question Index"
+          },
+          "answer_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Answer Index"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_index",
+          "answer_index"
+        ],
+        "title": "CandidateTest2AnswerRequest"
+      },
+      "CandidateTest2Response": {
+        "properties": {
+          "journey_step": {
+            "type": "string",
+            "title": "Journey Step"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/Test2Question"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "current_question_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Question Index"
+          },
+          "attempts": {
+            "type": "object",
+            "title": "Attempts"
+          },
+          "is_started": {
+            "type": "boolean",
+            "title": "Is Started"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "correct_answers": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Answers"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "required_next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Next Action"
+          },
+          "result_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "journey_step",
+          "questions",
+          "is_started",
+          "is_completed",
+          "total_questions"
+        ],
+        "title": "CandidateTest2Response"
+      },
+      "DashboardResponse": {
+        "properties": {
+          "waiting_candidates_total": {
+            "type": "integer",
+            "title": "Waiting Candidates Total",
+            "default": 0
+          },
+          "scheduled_today": {
+            "type": "integer",
+            "title": "Scheduled Today",
+            "default": 0
+          },
+          "free_slots": {
+            "type": "integer",
+            "title": "Free Slots",
+            "default": 0
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "DashboardResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IncomingResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateItem"
+            },
+            "type": "array",
+            "title": "Candidates",
+            "default": []
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "IncomingResponse"
+      },
+      "IntroDayInfo": {
+        "properties": {
+          "intro_day_id": {
+            "type": "integer",
+            "title": "Intro Day Id"
+          },
+          "city_id": {
+            "type": "integer",
+            "title": "City Id"
+          },
+          "city_name": {
+            "type": "string",
+            "title": "City Name"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Date"
+          },
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "contact_name": {
+            "type": "string",
+            "title": "Contact Name"
+          },
+          "contact_phone": {
+            "type": "string",
+            "title": "Contact Phone"
+          },
+          "available_slots": {
+            "type": "integer",
+            "title": "Available Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "intro_day_id",
+          "city_id",
+          "city_name",
+          "date",
+          "address",
+          "contact_name",
+          "contact_phone",
+          "available_slots"
+        ],
+        "title": "IntroDayInfo",
+        "description": "Intro day information."
+      },
+      "JourneySessionInfo": {
+        "properties": {
+          "journey_key": {
+            "type": "string",
+            "title": "Journey Key"
+          },
+          "journey_version": {
+            "type": "string",
+            "title": "Journey Version"
+          },
+          "current_step_key": {
+            "type": "string",
+            "title": "Current Step Key"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "application_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          },
+          "last_surface": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Surface"
+          },
+          "last_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Auth Method"
+          },
+          "session_version": {
+            "type": "integer",
+            "title": "Session Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "journey_key",
+          "journey_version",
+          "current_step_key",
+          "status",
+          "application_id",
+          "last_surface",
+          "last_auth_method",
+          "session_version"
+        ],
+        "title": "JourneySessionInfo"
+      },
+      "MaxLaunchBindingInfo": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "requires_contact": {
+            "type": "boolean",
+            "title": "Requires Contact",
+            "default": false
+          },
+          "start_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Param"
+          },
+          "chat_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chat Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "MaxLaunchBindingInfo"
+      },
+      "MaxLaunchCandidateSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "application_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "candidate_id"
+        ],
+        "title": "MaxLaunchCandidateSummary"
+      },
+      "MaxLaunchCapabilities": {
+        "properties": {
+          "request_contact": {
+            "type": "boolean",
+            "title": "Request Contact"
+          },
+          "open_link": {
+            "type": "boolean",
+            "title": "Open Link"
+          },
+          "open_max_link": {
+            "type": "boolean",
+            "title": "Open Max Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_contact",
+          "open_link",
+          "open_max_link"
+        ],
+        "title": "MaxLaunchCapabilities"
+      },
+      "MaxLaunchRequest": {
+        "properties": {
+          "init_data": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Init Data"
+          },
+          "start_param": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Param"
+          }
+        },
+        "type": "object",
+        "required": [
+          "init_data"
+        ],
+        "title": "MaxLaunchRequest"
+      },
+      "MaxLaunchResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "surface": {
+            "type": "string",
+            "title": "Surface"
+          },
+          "auth_method": {
+            "type": "string",
+            "title": "Auth Method"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaxLaunchCandidateSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaxLaunchSessionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/MaxLaunchCapabilities"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/MaxLaunchBindingInfo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "surface",
+          "auth_method",
+          "capabilities",
+          "binding"
+        ],
+        "title": "MaxLaunchResponse"
+      },
+      "MaxLaunchSessionSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "journey_session_id": {
+            "type": "integer",
+            "title": "Journey Session Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "surface": {
+            "type": "string",
+            "title": "Surface"
+          },
+          "auth_method": {
+            "type": "string",
+            "title": "Auth Method"
+          },
+          "launch_channel": {
+            "type": "string",
+            "title": "Launch Channel"
+          },
+          "reused": {
+            "type": "boolean",
+            "title": "Reused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "journey_session_id",
+          "status",
+          "surface",
+          "auth_method",
+          "launch_channel",
+          "reused"
+        ],
+        "title": "MaxLaunchSessionSummary"
+      },
+      "MaxWebhookAck": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "handled": {
+            "type": "boolean",
+            "title": "Handled",
+            "default": true
+          },
+          "update_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Update Type"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "title": "Duplicate",
+            "default": false
+          },
+          "ignored_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ignored Reason"
+          }
+        },
+        "type": "object",
+        "title": "MaxWebhookAck"
+      },
+      "MessageRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "MessageRequest"
+      },
+      "NoteRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "NoteRequest"
+      },
+      "ResolveCallbackRequest": {
+        "properties": {
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "negotiation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Negotiation Id"
+          },
+          "vacancy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vacancy Id"
+          },
+          "not_found": {
+            "type": "boolean",
+            "title": "Not Found",
+            "default": false
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "response_payload": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id"
+        ],
+        "title": "ResolveCallbackRequest",
+        "description": "Callback payload from n8n after negotiation resolve."
+      },
+      "SlotAssignmentConfirmRequest": {
+        "properties": {
+          "action_token": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 6,
+            "title": "Action Token"
+          },
+          "candidate_tg_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Tg Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action_token"
+        ],
+        "title": "SlotAssignmentConfirmRequest"
+      },
+      "SlotAssignmentRescheduleRequest": {
+        "properties": {
+          "action_token": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 6,
+            "title": "Action Token"
+          },
+          "candidate_tg_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Tg Id"
+          },
+          "requested_start_utc": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start Utc"
+          },
+          "requested_end_utc": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested End Utc"
+          },
+          "requested_tz": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Tz"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action_token"
+        ],
+        "title": "SlotAssignmentRescheduleRequest"
+      },
+      "StatusUpdateRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Target status slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "StatusUpdateRequest"
+      },
+      "SuccessResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "SuccessResponse"
+      },
+      "SyncCallbackRequest": {
+        "properties": {
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "hh_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hh Status"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "response_payload": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "success"
+        ],
+        "title": "SyncCallbackRequest",
+        "description": "Callback payload from n8n after hh.ru status sync."
+      },
+      "Test1Question": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "placeholder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder"
+          },
+          "helper": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helper"
+          },
+          "question_index": {
+            "type": "integer",
+            "title": "Question Index"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/Test1QuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "prompt",
+          "question_index"
+        ],
+        "title": "Test1Question"
+      },
+      "Test1QuestionOption": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "city_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Id"
+          },
+          "tz": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tz"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "Test1QuestionOption"
+      },
+      "Test2Question": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "question_index": {
+            "type": "integer",
+            "title": "Question Index"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/Test2QuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "prompt",
+          "question_index"
+        ],
+        "title": "Test2Question"
+      },
+      "Test2QuestionOption": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "Test2QuestionOption"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "backend__apps__admin_api__candidate_access__router__BookingInfo": {
+        "properties": {
+          "booking_id": {
+            "type": "integer",
+            "title": "Booking Id"
+          },
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "meet_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meet Link"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking_id",
+          "slot_id",
+          "candidate_id",
+          "recruiter_name",
+          "start_utc",
+          "end_utc",
+          "status"
+        ],
+        "title": "BookingInfo"
+      },
+      "backend__apps__admin_api__candidate_access__router__CancelBookingRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "CancelBookingRequest"
+      },
+      "backend__apps__admin_api__candidate_access__router__CandidateInfo": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "city_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Id"
+          },
+          "city_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "full_name"
+        ],
+        "title": "CandidateInfo"
+      },
+      "backend__apps__admin_api__candidate_access__router__CreateBookingRequest": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Slot Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id"
+        ],
+        "title": "CreateBookingRequest"
+      },
+      "backend__apps__admin_api__candidate_access__router__RescheduleBookingRequest": {
+        "properties": {
+          "new_slot_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "New Slot Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_slot_id"
+        ],
+        "title": "RescheduleBookingRequest"
+      },
+      "backend__apps__admin_api__candidate_access__router__SlotInfo": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "recruiter_id": {
+            "type": "integer",
+            "title": "Recruiter Id"
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name"
+          },
+          "recruiter_tz": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recruiter Tz"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "is_available": {
+            "type": "boolean",
+            "title": "Is Available"
+          },
+          "city_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Id"
+          },
+          "city_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "recruiter_id",
+          "recruiter_name",
+          "start_utc",
+          "end_utc",
+          "duration_minutes",
+          "is_available",
+          "city_id"
+        ],
+        "title": "SlotInfo"
+      },
+      "backend__apps__admin_api__webapp__routers__BookingInfo": {
+        "properties": {
+          "booking_id": {
+            "type": "integer",
+            "title": "Booking Id"
+          },
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "candidate_id": {
+            "type": "integer",
+            "title": "Candidate Id"
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "meet_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meet Link"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking_id",
+          "slot_id",
+          "candidate_id",
+          "recruiter_name",
+          "start_utc",
+          "end_utc",
+          "status"
+        ],
+        "title": "BookingInfo",
+        "description": "Booking information."
+      },
+      "backend__apps__admin_api__webapp__routers__CancelBookingRequest": {
+        "properties": {
+          "booking_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Booking Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking_id"
+        ],
+        "title": "CancelBookingRequest",
+        "description": "Request to cancel a booking."
+      },
+      "backend__apps__admin_api__webapp__routers__CandidateInfo": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "city_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Id"
+          },
+          "city_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "full_name"
+        ],
+        "title": "CandidateInfo",
+        "description": "Candidate information response."
+      },
+      "backend__apps__admin_api__webapp__routers__CreateBookingRequest": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Slot Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id"
+        ],
+        "title": "CreateBookingRequest",
+        "description": "Request to create a booking."
+      },
+      "backend__apps__admin_api__webapp__routers__RescheduleBookingRequest": {
+        "properties": {
+          "booking_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Booking Id"
+          },
+          "new_slot_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "New Slot Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking_id",
+          "new_slot_id"
+        ],
+        "title": "RescheduleBookingRequest",
+        "description": "Request to reschedule a booking."
+      },
+      "backend__apps__admin_api__webapp__routers__SlotInfo": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "recruiter_id": {
+            "type": "integer",
+            "title": "Recruiter Id"
+          },
+          "recruiter_name": {
+            "type": "string",
+            "title": "Recruiter Name"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "is_available": {
+            "type": "boolean",
+            "title": "Is Available"
+          },
+          "city_id": {
+            "type": "integer",
+            "title": "City Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "recruiter_id",
+          "recruiter_name",
+          "start_utc",
+          "end_utc",
+          "duration_minutes",
+          "is_available",
+          "city_id"
+        ],
+        "title": "SlotInfo",
+        "description": "Available slot information."
+      }
+    }
+  }
+}

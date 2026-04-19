@@ -2,7 +2,6 @@ import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   applyCandidateAction,
-  createCandidateMaxLink,
   fetchCandidateChannelHealth,
   fetchCandidateAiCoach,
   fetchCandidateAiSummary,
@@ -13,13 +12,13 @@ import {
   fetchCandidateDetail,
   fetchCandidateHHSummary,
   fetchCities,
+  issueCandidateMaxLaunchInvite,
   markCandidateChatRead,
   refreshCandidateAiCoach,
   refreshCandidateAiSummary,
-  restartCandidatePortal,
+  revokeCandidateMaxLaunchInvite,
   scheduleCandidateInterview,
   scheduleCandidateIntroDay,
-  sendCandidateHhEntryLink,
   sendCandidateChatMessage,
   upsertCandidateAiResume,
   waitForCandidateChat,
@@ -203,26 +202,36 @@ export function useCandidateActions(candidateId: number) {
     mutationFn: (payload: { date: string; time: string; city_id?: number | null; custom_message?: string | null }) =>
       scheduleCandidateIntroDay(candidateId, payload),
   })
-
-  const createMaxLinkMutation = useMutation({
-    mutationFn: () => createCandidateMaxLink(candidateId),
-  })
-
-  const restartPortalMutation = useMutation({
-    mutationFn: () => restartCandidatePortal(candidateId),
-  })
-
-  const sendHhEntryLinkMutation = useMutation({
-    mutationFn: () => sendCandidateHhEntryLink(candidateId),
-  })
-
   return {
     actionMutation,
     scheduleInterviewMutation,
     scheduleIntroDayMutation,
-    createMaxLinkMutation,
-    restartPortalMutation,
-    sendHhEntryLinkMutation,
+  }
+}
+
+export function useCandidateMaxRollout(candidateId: number) {
+  const queryClient = useQueryClient()
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['candidate-detail', candidateId] })
+    void queryClient.invalidateQueries({ queryKey: ['candidates'] })
+  }
+
+  const issueMutation = useMutation({
+    mutationFn: (payload: Parameters<typeof issueCandidateMaxLaunchInvite>[1]) =>
+      issueCandidateMaxLaunchInvite(candidateId, payload),
+    onSuccess: invalidate,
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: (applicationId?: number | null) =>
+      revokeCandidateMaxLaunchInvite(candidateId, applicationId),
+    onSuccess: invalidate,
+  })
+
+  return {
+    issueMutation,
+    revokeMutation,
   }
 }
 

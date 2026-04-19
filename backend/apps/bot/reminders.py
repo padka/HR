@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 try:  # pragma: no cover - optional dependency handling
     from apscheduler.jobstores.base import JobLookupError
@@ -106,6 +107,7 @@ from backend.apps.bot.runtime_config import (
 from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.core.redis_factory import parse_redis_target
+from backend.domain.candidates.models import User
 from backend.domain.models import City, Recruiter, SlotReminderJob, SlotStatus, Slot
 from backend.domain.repositories import add_outbox_notification, get_slot
 
@@ -171,7 +173,6 @@ class ReminderService:
                 if not rows:
                     slot_rows = await session.scalars(
                         select(Slot).where(
-                            Slot.candidate_tg_id.is_not(None),
                             Slot.status.in_(
                                 [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
                             ),
@@ -179,6 +180,8 @@ class ReminderService:
                         )
                     )
                     for slot in slot_rows:
+                        if not await self._slot_has_delivery_target(session, slot):
+                            continue
                         slot_id = slot.id
                         try:
                             candidate_tz = await self._resolve_slot_timezone(slot)
@@ -299,7 +302,6 @@ class ReminderService:
                 async with async_session() as session:
                     slot_rows = await session.scalars(
                         select(Slot).where(
-                            Slot.candidate_tg_id.is_not(None),
                             Slot.status.in_(
                                 [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
                             ),
@@ -307,6 +309,8 @@ class ReminderService:
                         )
                     )
                     for slot in slot_rows:
+                        if not await self._slot_has_delivery_target(session, slot):
+                            continue
                         candidate_tz = await self._resolve_slot_timezone(slot)
                         plans = self._build_schedule(
                             slot.start_utc,
@@ -351,7 +355,6 @@ class ReminderService:
                 async with async_session() as session:
                     slot_ids = list(await session.scalars(
                         select(Slot.id).where(
-                            Slot.candidate_tg_id.is_not(None),
                             Slot.status.in_(
                                 [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
                             ),
@@ -381,13 +384,14 @@ class ReminderService:
             slot = await get_slot(slot_id)
             if not slot:
                 return
-            if slot.candidate_tg_id is None:
-                return
             if (slot.status or "").lower() not in {
                 SlotStatus.BOOKED,
                 SlotStatus.CONFIRMED_BY_CANDIDATE,
             }:
                 return
+            async with async_session() as session:
+                if not await self._slot_has_delivery_target(session, slot):
+                    return
 
             reminder_policy, _ = await get_reminder_policy_config()
 
@@ -634,7 +638,6 @@ class ReminderService:
             slot_ids = list(
                 await session.scalars(
                     select(Slot.id).where(
-                        Slot.candidate_tg_id.is_not(None),
                         Slot.status.in_(
                             [SlotStatus.BOOKED, SlotStatus.CONFIRMED_BY_CANDIDATE]
                         ),
@@ -740,7 +743,15 @@ class ReminderService:
             )
             return
         candidate_id = slot.candidate_tg_id
-        if candidate_id is None:
+        candidate_external_id = None
+        if slot.candidate_id:
+            async with async_session() as session:
+                candidate_external_id = await session.scalar(
+                    select(User.max_user_id).where(User.candidate_id == slot.candidate_id)
+                )
+                if candidate_external_id:
+                    candidate_external_id = str(candidate_external_id).strip() or None
+        if candidate_id is None and not candidate_external_id:
             await record_reminder_skipped(kind, "candidate_missing")
             logger.info(
                 "reminder.job.skip",
@@ -787,7 +798,11 @@ class ReminderService:
                 notification_type="slot_reminder",
                 booking_id=slot_id,
                 candidate_tg_id=candidate_id,
-                payload={"reminder_kind": reminder_kind},
+                payload={
+                    "reminder_kind": reminder_kind,
+                    **({"candidate_external_id": candidate_external_id} if candidate_external_id else {}),
+                },
+                messenger_channel="max" if candidate_external_id else "telegram",
             )
             enqueued = await notification_service._enqueue_outbox(
                 outbox_entry.id,
@@ -813,6 +828,17 @@ class ReminderService:
         except Exception:
             await record_reminder_skipped(kind, "enqueue_exception")
             logger.exception("Failed to enqueue reminder for slot %s", slot_id)
+
+    async def _slot_has_delivery_target(self, session: AsyncSession, slot: Slot) -> bool:
+        if slot.candidate_tg_id is not None:
+            return True
+        candidate_public_id = str(getattr(slot, "candidate_id", "") or "").strip()
+        if not candidate_public_id:
+            return False
+        max_user_id = await session.scalar(
+            select(User.max_user_id).where(User.candidate_id == candidate_public_id)
+        )
+        return bool(str(max_user_id or "").strip())
 
     def _build_schedule(
         self,

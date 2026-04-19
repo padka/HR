@@ -1,4 +1,4 @@
-"""Shared Telegram/MAX reliability helpers."""
+"""Shared messenger reliability helpers."""
 
 from __future__ import annotations
 
@@ -30,8 +30,6 @@ _MISCONFIG_MARKERS = {
     "adapter_missing": "adapter_missing",
     "invalid token": "invalid_token",
     "unauthorized": "invalid_token",
-    "max_bot_disabled": "channel_disabled",
-    "webhook": "webhook_configuration",
     "bot_not_configured": "channel_disabled",
 }
 
@@ -65,11 +63,6 @@ def classify_delivery_failure(*, channel: str, error: str | None) -> DeliveryFai
     return DeliveryFailure("transient", normalized_error.replace(" ", "_")[:64] or "unknown_error")
 
 
-def default_max_public_entry_enabled() -> bool:
-    settings = get_settings()
-    return str(settings.environment or "").strip().lower() != "production"
-
-
 def utc_iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -79,7 +72,7 @@ def normalize_channel_health_map(
 ) -> dict[str, dict[str, object]]:
     state = dict(payload or {})
     normalized: dict[str, dict[str, object]] = {}
-    for channel in ("telegram", "max"):
+    for channel in ("telegram",):
         raw = state.get(channel)
         if isinstance(raw, dict):
             normalized[channel] = dict(raw)
