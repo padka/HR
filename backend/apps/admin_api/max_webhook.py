@@ -488,7 +488,7 @@ async def _handle_message_created(payload: dict[str, Any], *, settings: Settings
             elif wants_max_chat_handoff(message_text):
                 prompt = await activate_max_chat_handoff(session, context.principal)
             else:
-                prompt = None
+                prompt = await activate_max_chat_handoff(session, context.principal)
 
     if prompt is not None:
         await send_max_chat_prompt(

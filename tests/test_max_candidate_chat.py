@@ -473,6 +473,53 @@ def test_max_webhook_message_created_advances_test1_in_chat_mode(
     assert any(message.direction == "outbound" for message in history)
 
 
+def test_max_webhook_message_created_auto_handoff_bootstraps_prompt_without_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    max_chat_client: TestClient,
+):
+    seeded = asyncio.run(_seed_chat_candidate(start_param="implicit-chat", user_id=730009))
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr("backend.apps.admin_api.max_candidate_chat.ensure_max_adapter", _fake_adapter)
+
+    headers, _ = _launch_headers(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+        query_id="implicit-chat-query",
+    )
+    _complete_chat_test1(max_chat_client, headers=headers)
+    adapter.messages.clear()
+
+    response = max_chat_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_created",
+            "timestamp": 11,
+            "message": {
+                "sender": {"user_id": str(seeded["user_id"]), "username": "candidate_max"},
+                "body": {"mid": "mid-implicit-1", "text": "Привет"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    prompt = _last_prompt(adapter)
+    assert "Продолжим здесь." in str(prompt["text"])
+    assert "Сейчас выбран город: Москва." in str(prompt["text"])
+    journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
+    assert journey is not None
+    assert journey.last_surface == CandidateJourneySurface.MAX_CHAT.value
+    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_city"
+    history = asyncio.run(_candidate_chat_messages(int(seeded["candidate_id"])))
+    assert any(message.direction == "inbound" for message in history)
+    assert any(message.direction == "outbound" and message.channel == "max" for message in history)
+
+
 def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule_and_cancel(
     monkeypatch: pytest.MonkeyPatch,
     max_chat_client: TestClient,
