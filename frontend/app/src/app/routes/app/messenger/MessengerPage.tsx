@@ -46,19 +46,30 @@ export function MessengerPage() {
     () => sortThreadsForInbox(threadsQuery.data?.threads || []),
     [threadsQuery.data?.threads],
   )
-  const folderCounts = useMemo(
-    () => buildFolderCounts(allThreads.filter((thread) => matchesChannelFilter(thread, channelFilter))),
+  const channelScopedThreads = useMemo(
+    () => sortThreadsForInbox(allThreads.filter((thread) => matchesChannelFilter(thread, channelFilter))),
     [allThreads, channelFilter],
+  )
+  const folderCounts = useMemo(
+    () => buildFolderCounts(channelScopedThreads),
+    [channelScopedThreads],
+  )
+  const folderScopedThreads = useMemo(
+    () =>
+      sortThreadsForInbox(
+        channelScopedThreads.filter((thread) => {
+          if (activeFolder === 'all') return true
+          return classifyThreadToFolder(thread) === activeFolder
+        }),
+      ),
+    [activeFolder, channelScopedThreads],
   )
   const visibleThreads = useMemo(
     () =>
       sortThreadsForInbox(
-        allThreads.filter((thread) => {
-          const inFolder = activeFolder === 'all' || classifyThreadToFolder(thread) === activeFolder
-          return inFolder && matchesQuickFilter(thread, quickFilter) && matchesChannelFilter(thread, channelFilter)
-        }),
+        folderScopedThreads.filter((thread) => matchesQuickFilter(thread, quickFilter)),
       ),
-    [activeFolder, allThreads, channelFilter, quickFilter],
+    [folderScopedThreads, quickFilter],
   )
 
   useEffect(() => {
@@ -155,6 +166,7 @@ export function MessengerPage() {
           <ThreadList
             threads={visibleThreads}
             allThreads={allThreads}
+            folderScopedThreads={folderScopedThreads}
             folderCounts={folderCounts}
             activeCandidateId={activeCandidateId}
             activeFolder={activeFolder}

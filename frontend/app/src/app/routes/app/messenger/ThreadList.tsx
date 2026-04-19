@@ -4,15 +4,26 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { fadeIn, listItem, stagger } from '@/shared/motion'
 
 import {
-  compactThreadStatusLabel,
+  MESSENGER_CHANNEL_FILTERS,
+  MESSENGER_QUICK_FILTERS,
+  compactPriorityLabel,
   formatThreadTime,
+  folderStatusLabel,
+  matchesQuickFilter,
   previewText,
   priorityLabel,
   priorityTone,
-  scoreTone,
+  quietRelevanceScore,
+  relevanceScoreTitle,
   threadAvatar,
 } from './messenger.utils'
-import type { CandidateChatThread } from './messenger.types'
+import type {
+  CandidateChatThread,
+  MessengerChannelFilter,
+  MessengerFolderSummary,
+  MessengerQuickFilter,
+  MessengerStageFolder,
+} from './messenger.types'
 
 function TrashIcon() {
   return (
@@ -41,22 +52,11 @@ const InboxThreadCard = memo(function InboxThreadCard({
   onSelect: () => void
 }) {
   const bucketTone = priorityTone(thread.priority_bucket)
-  const aiTone = scoreTone(thread.relevance_score, thread.relevance_level)
   const preview = previewText(thread)
-  const statusLabel = compactThreadStatusLabel(thread.status_label, thread.priority_bucket)
-  const priorityText = priorityLabel(thread.priority_bucket)
-  const showPriorityChip = Boolean(thread.priority_bucket && !['waiting_candidate', 'system'].includes(thread.priority_bucket))
-  const aiLabel =
-    typeof thread.relevance_score === 'number'
-      ? `AI ${Math.round(thread.relevance_score)}`
-      : thread.relevance_level
-        ? `AI ${thread.relevance_level}`
-        : null
-  const secondaryChip = showPriorityChip
-    ? { tone: bucketTone, label: priorityText, modifier: 'messenger-thread-card__priority' }
-    : aiLabel
-      ? { tone: aiTone, label: aiLabel, modifier: 'messenger-thread-card__ai' }
-      : null
+  const statusLabel = folderStatusLabel(thread)
+  const priorityText = compactPriorityLabel(thread.priority_bucket) || priorityLabel(thread.priority_bucket)
+  const scoreLabel = quietRelevanceScore(thread)
+  const hasUnread = (thread.unread_count || 0) > 0
 
   return (
     <div
@@ -96,30 +96,42 @@ const InboxThreadCard = memo(function InboxThreadCard({
       <div className="messenger-thread-card__avatar">{threadAvatar(thread)}</div>
       <div className="messenger-thread-card__body">
         <div className="messenger-thread-card__top">
-          <strong className="messenger-thread-card__title">{thread.title}</strong>
-          <span className="messenger-thread-card__time">{formatThreadTime(thread.last_message_at || thread.created_at)}</span>
+          <div className="messenger-thread-card__title-stack">
+            <strong className="messenger-thread-card__title">{thread.title}</strong>
+            <span className="messenger-thread-card__meta-item">{thread.city || 'Без города'}</span>
+          </div>
+          <div className="messenger-thread-card__signals">
+            <span className="messenger-thread-card__score" title={relevanceScoreTitle(thread)}>
+              {scoreLabel}
+            </span>
+            {hasUnread ? (
+              <span className="messenger-thread-card__unread" aria-label={`${thread.unread_count} непрочитанных`}>
+                <span className="messenger-thread-card__unread-dot" aria-hidden="true" />
+                <span className="messenger-thread-card__badge">{thread.unread_count}</span>
+              </span>
+            ) : null}
+          </div>
         </div>
-        <div className="messenger-thread-card__preview-row">
-          <span className={`messenger-thread-card__preview is-${thread.last_message_kind || 'candidate'}`}>{preview}</span>
-          {thread.unread_count ? (
-            <span className="messenger-thread-card__unread" aria-label={`${thread.unread_count} непрочитанных`}>
-              <span className="messenger-thread-card__unread-dot" aria-hidden="true" />
-              <span className="messenger-thread-card__badge">{thread.unread_count}</span>
+        <div className="messenger-thread-card__status-line">
+          <span className="messenger-inline-chip messenger-thread-card__chip is-status">{statusLabel}</span>
+          {priorityText && !['В работе', 'Ждём кандидата'].includes(priorityText) ? (
+            <span className={`messenger-inline-chip messenger-thread-card__chip messenger-thread-card__priority is-${bucketTone}`}>
+              {priorityText}
+            </span>
+          ) : null}
+          {thread.preferred_channel ? (
+            <span className="messenger-inline-chip messenger-thread-card__chip messenger-thread-card__channel">
+              {thread.preferred_channel === 'max' ? 'MAX' : 'Telegram'}
             </span>
           ) : null}
         </div>
-        <div className="messenger-thread-card__meta-line">
-          <span className="messenger-thread-card__meta-item">{thread.city || 'Без города'}</span>
-          <span className="messenger-thread-card__meta-separator" aria-hidden="true" />
-          <span className="messenger-thread-card__meta-item">{statusLabel}</span>
+        <div className="messenger-thread-card__preview-row">
+          <span className={`messenger-thread-card__preview is-${thread.last_message_kind || 'candidate'}`}>{preview}</span>
         </div>
-        {secondaryChip ? (
-          <div className="messenger-thread-card__chips">
-            <span className={`messenger-inline-chip messenger-thread-card__chip ${secondaryChip.modifier} is-${secondaryChip.tone}`}>
-              {secondaryChip.label}
-            </span>
-          </div>
-        ) : null}
+        <div className="messenger-thread-card__bottom">
+          <span className="messenger-thread-card__meta-item">{formatThreadTime(thread.last_message_at || thread.created_at)}</span>
+          {thread.requires_reply ? <span className="messenger-thread-card__reply-flag">Нужен ответ</span> : null}
+        </div>
       </div>
     </div>
   )
@@ -271,10 +283,19 @@ const SwipeableThreadRow = memo(function SwipeableThreadRow({
 
 type ThreadListProps = {
   threads: CandidateChatThread[]
+  allThreads: CandidateChatThread[]
+  folderScopedThreads: CandidateChatThread[]
+  folderCounts: MessengerFolderSummary[]
   activeCandidateId: number | null
+  activeFolder: MessengerStageFolder
+  quickFilter: MessengerQuickFilter
+  channelFilter: MessengerChannelFilter
   isLoading: boolean
   isError: boolean
   archivePendingCandidateId: number | null
+  onFolderChange: (folder: MessengerStageFolder) => void
+  onQuickFilterChange: (filter: MessengerQuickFilter) => void
+  onChannelFilterChange: (filter: MessengerChannelFilter) => void
   onRefresh: () => void
   onArchive: (candidateId: number) => void
   onSelect: (candidateId: number) => void
@@ -282,10 +303,19 @@ type ThreadListProps = {
 
 export function ThreadList({
   threads,
+  allThreads,
+  folderScopedThreads,
+  folderCounts,
   activeCandidateId,
+  activeFolder,
+  quickFilter,
+  channelFilter,
   isLoading,
   isError,
   archivePendingCandidateId,
+  onFolderChange,
+  onQuickFilterChange,
+  onChannelFilterChange,
   onRefresh,
   onArchive,
   onSelect,
@@ -299,6 +329,15 @@ export function ThreadList({
   }, [])
 
   const searchValue = search.trim().toLowerCase()
+  const quickFilterCounts = useMemo(
+    () => ({
+      all: folderScopedThreads.length,
+      needs_reply: folderScopedThreads.filter((thread) => matchesQuickFilter(thread, 'needs_reply')).length,
+      overdue: folderScopedThreads.filter((thread) => matchesQuickFilter(thread, 'overdue')).length,
+      unread: folderScopedThreads.filter((thread) => matchesQuickFilter(thread, 'unread')).length,
+    }),
+    [folderScopedThreads],
+  )
   const visibleThreads = useMemo(
     () =>
       threads.filter((thread) => {
@@ -323,62 +362,117 @@ export function ThreadList({
 
   return (
     <aside className="messenger-thread-list-panel messenger-sidebar messenger-inbox-rail" aria-label="Чаты кандидатов">
-      <div className="messenger-thread-list-header messenger-sidebar__toolbar">
-        <div className="messenger-sidebar__search-slot">
-          <input
-            className="thread-search"
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Поиск по кандидату, городу или статусу"
-            aria-label="Поиск по чатам"
-          />
-        </div>
-        <button
-          className="ui-btn ui-btn--ghost ui-btn--sm messenger-sidebar__refresh"
-          onClick={onRefresh}
-          type="button"
-          aria-label="Обновить список чатов"
-        >
-          Обновить
-        </button>
-      </div>
-
-      <div className="messenger-thread-list-body">
-        {isLoading && <p className="subtitle">Загрузка диалогов…</p>}
-        {isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
-        {!isLoading && visibleThreads.length === 0 && (
-          <div className="messenger-empty-state messenger-empty-state--compact">
-            <strong>{threads.length === 0 ? 'Ничего не найдено' : 'Поиск не дал совпадений'}</strong>
-            <span>
-              {threads.length === 0
-                ? 'Когда появятся кандидаты или новые сообщения, они появятся здесь.'
-                : 'Попробуйте другое имя, город или статус.'}
-            </span>
-          </div>
-        )}
-
-        <div className="messenger-thread-list" data-testid="messenger-thread-list">
-          <motion.div
-            key={animationKey}
-            className="messenger-thread-list__content"
-            variants={firstRenderAnimation ? stagger(0.03) : undefined}
-            initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
-            animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
-            transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
-          >
-            {visibleThreads.map((thread) => (
-              <motion.div key={thread.candidate_id} variants={firstRenderAnimation ? listItem : undefined}>
-                <SwipeableThreadRow
-                  thread={thread}
-                  isActive={thread.candidate_id === activeCandidateId}
-                  isPendingArchive={archivePendingCandidateId === thread.candidate_id}
-                  onArchive={onArchive}
-                  onSelect={onSelect}
-                />
-              </motion.div>
+      <div className="messenger-inbox-workspace">
+        <nav className="messenger-folder-rail" aria-label="Папки чатов">
+          <div className="messenger-folder-rail__scroller" data-testid="messenger-folder-rail">
+            {folderCounts.map((folder) => (
+              <button
+                key={folder.key}
+                type="button"
+                className={`messenger-folder-pill ${folder.key === activeFolder ? 'is-active' : ''}`}
+                onClick={() => onFolderChange(folder.key)}
+                aria-pressed={folder.key === activeFolder}
+              >
+                <span className="messenger-folder-pill__label">{folder.label}</span>
+                <span className="messenger-folder-pill__count">{folder.count}</span>
+                {folder.attentionCount > 0 ? (
+                  <span className="messenger-folder-pill__alert" aria-label={`${folder.attentionCount} требуют ответа`}>
+                    {folder.attentionCount}
+                  </span>
+                ) : null}
+              </button>
             ))}
-          </motion.div>
+          </div>
+        </nav>
+
+        <div className="messenger-inbox-shell">
+          <div className="messenger-thread-list-header messenger-sidebar__toolbar">
+            <div className="messenger-sidebar__search-slot">
+              <input
+                className="thread-search"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Поиск по кандидату, городу или статусу"
+                aria-label="Поиск по чатам"
+              />
+            </div>
+            <button
+              className="ui-btn ui-btn--ghost ui-btn--sm messenger-sidebar__refresh"
+              onClick={onRefresh}
+              type="button"
+              aria-label="Обновить список чатов"
+            >
+              Обновить
+            </button>
+            <div className="messenger-thread-toolbar__row" data-testid="messenger-quick-filters">
+              {MESSENGER_QUICK_FILTERS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`messenger-filter-chip ${item.key === quickFilter ? 'is-active' : ''}`}
+                  onClick={() => onQuickFilterChange(item.key)}
+                  aria-pressed={item.key === quickFilter}
+                >
+                  <span>{item.label}</span>
+                  <strong>{quickFilterCounts[item.key]}</strong>
+                </button>
+              ))}
+            </div>
+            <div className="messenger-thread-toolbar__row messenger-thread-toolbar__row--channels">
+              {MESSENGER_CHANNEL_FILTERS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`messenger-filter-chip messenger-filter-chip--channel ${item.key === channelFilter ? 'is-active' : ''}`}
+                  onClick={() => onChannelFilterChange(item.key)}
+                  aria-pressed={item.key === channelFilter}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="messenger-thread-list-body">
+            {isLoading && <p className="subtitle">Загрузка диалогов…</p>}
+            {isError && <p className="text-danger">Не удалось загрузить список чатов</p>}
+            {!isLoading && visibleThreads.length === 0 && (
+              <div className="messenger-empty-state messenger-empty-state--compact">
+                <strong>{allThreads.length === 0 ? 'Диалоги пока не появились' : 'В текущей папке ничего не найдено'}</strong>
+                <span>
+                  {allThreads.length === 0
+                    ? 'Когда появятся новые сообщения кандидатов, они отобразятся здесь.'
+                    : searchValue
+                      ? 'Попробуйте другое имя, город или статус.'
+                      : 'Смените папку или фильтр, чтобы увидеть другие диалоги.'}
+                </span>
+              </div>
+            )}
+
+            <div className="messenger-thread-list" data-testid="messenger-thread-list">
+              <motion.div
+                key={animationKey}
+                className="messenger-thread-list__content"
+                variants={firstRenderAnimation ? stagger(0.03) : undefined}
+                initial={prefersReducedMotion ? false : firstRenderAnimation ? 'initial' : { opacity: 0 }}
+                animate={prefersReducedMotion ? undefined : firstRenderAnimation ? 'animate' : { opacity: 1 }}
+                transition={prefersReducedMotion || firstRenderAnimation ? undefined : fadeIn.transition}
+              >
+                {visibleThreads.map((thread) => (
+                  <motion.div key={thread.candidate_id} variants={firstRenderAnimation ? listItem : undefined}>
+                    <SwipeableThreadRow
+                      thread={thread}
+                      isActive={thread.candidate_id === activeCandidateId}
+                      isPendingArchive={archivePendingCandidateId === thread.candidate_id}
+                      onArchive={onArchive}
+                      onSelect={onSelect}
+                    />
+                  </motion.div>
+                ))}
+              </motion.div>
+            </div>
+          </div>
         </div>
       </div>
     </aside>

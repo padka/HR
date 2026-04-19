@@ -1,7 +1,17 @@
 import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react'
 
 import type { CandidateChannelHealth } from '@/api/services/candidates'
-import { normalizeTextLinks, splitMessageText, messageAuthorLabel, formatFullDateTime, threadAvatar } from './messenger.utils'
+import {
+  compactPriorityLabel,
+  formatFullDateTime,
+  normalizeTextLinks,
+  previewText,
+  quietRelevanceScore,
+  relevanceScoreTitle,
+  splitMessageText,
+  messageAuthorLabel,
+  threadAvatar,
+} from './messenger.utils'
 import { URL_RE } from './messenger.constants'
 import type { CandidateChatTemplate, CandidateChatThread, GroupedMessageRow } from './messenger.types'
 
@@ -71,6 +81,122 @@ const MessengerMessageBubble = memo(function MessengerMessageBubble({ row }: { r
   )
 })
 
+const MessengerContextPanel = memo(function MessengerContextPanel({
+  activeThread,
+  channelHealth,
+  isMobile,
+  onClose,
+}: {
+  activeThread: CandidateChatThread
+  channelHealth?: CandidateChannelHealth | null
+  isMobile: boolean
+  onClose: () => void
+}) {
+  const relevance = quietRelevanceScore(activeThread)
+  const nextAction = compactPriorityLabel(activeThread.priority_bucket) || 'Открыть карточку'
+  const preferredChannel =
+    activeThread.preferred_channel === 'max'
+      ? 'MAX'
+      : activeThread.preferred_channel === 'telegram'
+        ? 'Telegram'
+        : channelHealth?.preferred_channel === 'max'
+          ? 'MAX'
+          : channelHealth?.preferred_channel === 'telegram'
+            ? 'Telegram'
+            : 'Не указан'
+  const telegramUsername = activeThread.telegram_username || channelHealth?.telegram?.telegram_username || null
+  const deliveryStatus = channelHealth?.last_outbound_delivery?.status || null
+  const deliveryError = channelHealth?.last_outbound_delivery?.error || null
+
+  return (
+    <aside
+      className={`messenger-context-panel ${isMobile ? 'is-mobile' : ''}`}
+      data-testid="messenger-context-panel"
+      aria-label="Контекст кандидата"
+    >
+      <div className="messenger-context-panel__header">
+        <div>
+          <div className="messenger-card__eyebrow">Контекст кандидата</div>
+          <strong>{activeThread.title}</strong>
+        </div>
+        <button className="ui-btn ui-btn--ghost ui-btn--sm" onClick={onClose} type="button">
+          Закрыть
+        </button>
+      </div>
+
+      <div className="messenger-context-panel__meta">
+        <div className="messenger-context-panel__cell">
+          <span>Город</span>
+          <strong>{activeThread.city || 'Без города'}</strong>
+        </div>
+        <div className="messenger-context-panel__cell">
+          <span>Этап</span>
+          <strong>{activeThread.status_label || 'Без статуса'}</strong>
+        </div>
+        <div className="messenger-context-panel__cell">
+          <span>AI relevance</span>
+          <strong title={relevanceScoreTitle(activeThread)}>{relevance}</strong>
+        </div>
+        <div className="messenger-context-panel__cell">
+          <span>Следующий шаг</span>
+          <strong>{nextAction}</strong>
+        </div>
+      </div>
+
+      <div className="messenger-context-panel__section">
+        <span className="messenger-context-panel__label">Канал</span>
+        <div className="messenger-context-panel__chips">
+          <span className="messenger-inline-chip messenger-thread-card__chip messenger-thread-card__channel">{preferredChannel}</span>
+          {activeThread.unread_count ? (
+            <span className="messenger-inline-chip messenger-thread-card__chip is-info">
+              {activeThread.unread_count} непрочит.
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {activeThread.risk_hint ? (
+        <div className="messenger-context-panel__section">
+          <span className="messenger-context-panel__label">Сигнал</span>
+          <p>{activeThread.risk_hint}</p>
+        </div>
+      ) : null}
+
+      {deliveryStatus || deliveryError ? (
+        <div className="messenger-context-panel__section">
+          <span className="messenger-context-panel__label">Доставка</span>
+          <p>
+            {deliveryStatus ? `Статус: ${deliveryStatus}.` : null}
+            {deliveryError ? ` ${deliveryError}` : null}
+          </p>
+        </div>
+      ) : null}
+
+      <div className="messenger-context-panel__section">
+        <span className="messenger-context-panel__label">Последний входящий</span>
+        <p>{previewText(activeThread)}</p>
+        <small>{formatFullDateTime(activeThread.last_message_at || activeThread.last_message?.created_at || activeThread.created_at)}</small>
+      </div>
+
+      <div className="messenger-context-panel__links">
+        {activeThread.profile_url ? (
+          <a className="ui-btn ui-btn--ghost ui-btn--sm" href={activeThread.profile_url}>
+            Открыть карточку
+          </a>
+        ) : null}
+        {telegramUsername ? (
+          <a className="ui-btn ui-btn--ghost ui-btn--sm" href={`https://t.me/${telegramUsername.replace(/^@/, '')}`} target="_blank" rel="noreferrer">
+            Telegram
+          </a>
+        ) : null}
+        {preferredChannel === 'MAX' ? (
+          <span className="ui-btn ui-btn--ghost ui-btn--sm is-static">MAX подключён</span>
+        ) : null}
+      </div>
+    </aside>
+  )
+})
+
 function renderMessageText(text?: string | null) {
   const value = splitMessageText(text)
   return (
@@ -107,6 +233,9 @@ type ThreadViewProps = {
   shouldStickToBottomRef: MutableRefObject<boolean>
   onMessagesScroll: (gap: number) => void
   onBack: () => void
+  showContextPanel: boolean
+  onToggleContextPanel: () => void
+  onCloseContextPanel: () => void
   showTemplateTray: boolean
   selectedTemplateKey: string
   templates: CandidateChatTemplate[]
@@ -130,6 +259,9 @@ export function ThreadView({
   shouldStickToBottomRef,
   onMessagesScroll,
   onBack,
+  showContextPanel,
+  onToggleContextPanel,
+  onCloseContextPanel,
   showTemplateTray,
   selectedTemplateKey,
   templates,
@@ -144,6 +276,7 @@ export function ThreadView({
   const [hasHistoryAbove, setHasHistoryAbove] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const activeCandidateId = activeThread?.candidate_id ?? null
+  const preferredChannel = channelHealth?.preferred_channel || activeThread?.preferred_channel || null
 
   useEffect(() => {
     setHasHistoryAbove(false)
@@ -201,14 +334,9 @@ export function ThreadView({
                       activeThread.title
                     )}
                   </h2>
-                  {channelHealth?.preferred_channel ? (
-                    <span className={`status-badge status-badge--${channelHealth.preferred_channel === 'max' ? 'info' : 'success'}`}>
-                      {channelHealth.preferred_channel === 'max' ? 'MAX' : 'Telegram'}
-                    </span>
-                  ) : null}
-                  {channelHealth?.last_outbound_delivery?.status ? (
-                    <span className="status-badge status-badge--warning">
-                      send: {channelHealth.last_outbound_delivery.status}
+                  {preferredChannel ? (
+                    <span className={`status-badge status-badge--${preferredChannel === 'max' ? 'info' : 'success'}`}>
+                      {preferredChannel === 'max' ? 'MAX' : 'Telegram'}
                     </span>
                   ) : null}
                 </div>
@@ -219,9 +347,6 @@ export function ThreadView({
                     {activeThread.status_label ? <span>{activeThread.status_label}</span> : null}
                   </div>
                 ) : null}
-                {channelHealth?.last_outbound_delivery?.error ? (
-                  <div className="subtitle subtitle--danger">{channelHealth.last_outbound_delivery.error}</div>
-                ) : null}
               </div>
             </div>
             <div className="messenger-chat-pane__actions">
@@ -230,96 +355,110 @@ export function ThreadView({
                   Карточка
                 </a>
               ) : null}
+              <button className="ui-btn ui-btn--ghost ui-btn--sm" type="button" onClick={onToggleContextPanel}>
+                {showContextPanel ? 'Скрыть контекст' : 'Контекст'}
+              </button>
             </div>
           </header>
 
-          <div className="messenger-conversation">
-            <div
-              className={`messenger-messages ${hasHistoryAbove ? 'is-scrolled' : ''}`}
-              data-testid="messenger-messages"
-              ref={messagesRef}
-              onScroll={(event) => {
-                const node = event.currentTarget
-                const gap = node.scrollHeight - node.scrollTop - node.clientHeight
-                setHasHistoryAbove(node.scrollTop > 12)
-                onMessagesScroll(gap)
-              }}
-            >
-              <div className="messenger-messages-inner">
-                {isLoading && <p className="subtitle">Загрузка переписки…</p>}
-                {isError && <p className="text-danger">Не удалось загрузить сообщения</p>}
-                {!isLoading && groupedMessages.length === 0 && (
-                  <div className="messenger-empty-state messenger-empty-state--compact">
-                    <strong>История пока пуста</strong>
-                    <span>Отправьте первое сообщение или дождитесь ответа кандидата.</span>
+          <div className={`messenger-chat__shell ${showContextPanel ? 'is-context-open' : ''}`}>
+            <div className="messenger-conversation">
+              <div
+                className={`messenger-messages ${hasHistoryAbove ? 'is-scrolled' : ''}`}
+                data-testid="messenger-messages"
+                ref={messagesRef}
+                onScroll={(event) => {
+                  const node = event.currentTarget
+                  const gap = node.scrollHeight - node.scrollTop - node.clientHeight
+                  setHasHistoryAbove(node.scrollTop > 12)
+                  onMessagesScroll(gap)
+                }}
+              >
+                <div className="messenger-messages-inner">
+                  {isLoading && <p className="subtitle">Загрузка переписки…</p>}
+                  {isError && <p className="text-danger">Не удалось загрузить сообщения</p>}
+                  {!isLoading && groupedMessages.length === 0 && (
+                    <div className="messenger-empty-state messenger-empty-state--compact">
+                      <strong>История пока пуста</strong>
+                      <span>Отправьте первое сообщение или дождитесь ответа кандидата.</span>
+                    </div>
+                  )}
+
+                  {groupedMessages.map((row) =>
+                    row.type === 'divider' ? (
+                      <MessengerDayDivider key={row.key} label={row.label} />
+                    ) : row.message.kind === 'bot' || row.message.kind === 'system' ? (
+                      <MessengerEventCard key={row.message.id} row={row} />
+                    ) : (
+                      <MessengerMessageBubble key={row.message.id} row={row} />
+                    ),
+                  )}
+                  <div ref={messagesEndRef} className="messenger-messages-anchor" aria-hidden="true" />
+                </div>
+              </div>
+
+              <div
+                className={`messenger-input-area messenger-composer message-input-area ${messageText.trim() ? 'is-typing' : ''}`}
+                data-testid="messenger-composer"
+              >
+                <div className="messenger-composer__tools">
+                  <button className={`messenger-template-chip ${showTemplateTray ? 'is-active' : ''}`} onClick={onToggleTemplateTray} type="button">
+                    Шаблоны
+                  </button>
+                </div>
+
+                {showTemplateTray && (
+                  <div className="messenger-composer__templates">
+                    {templates.slice(0, 6).map((item) => (
+                      <button
+                        key={item.key}
+                        className={`messenger-template-chip ${selectedTemplateKey === item.key ? 'is-active' : ''}`}
+                        onClick={() => onApplyTemplate(item)}
+                        type="button"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
                 )}
 
-                {groupedMessages.map((row) =>
-                  row.type === 'divider' ? (
-                    <MessengerDayDivider key={row.key} label={row.label} />
-                  ) : row.message.kind === 'bot' || row.message.kind === 'system' ? (
-                    <MessengerEventCard key={row.message.id} row={row} />
-                  ) : (
-                    <MessengerMessageBubble key={row.message.id} row={row} />
-                  ),
-                )}
-                <div ref={messagesEndRef} className="messenger-messages-anchor" aria-hidden="true" />
-              </div>
-            </div>
-
-            <div
-              className={`messenger-input-area messenger-composer message-input-area ${messageText.trim() ? 'is-typing' : ''}`}
-              data-testid="messenger-composer"
-            >
-              <div className="messenger-composer__tools">
-                <button className={`messenger-template-chip ${showTemplateTray ? 'is-active' : ''}`} onClick={onToggleTemplateTray} type="button">
-                  Шаблоны
-                </button>
-              </div>
-
-              {showTemplateTray && (
-                <div className="messenger-composer__templates">
-                  {templates.slice(0, 6).map((item) => (
-                    <button
-                      key={item.key}
-                      className={`messenger-template-chip ${selectedTemplateKey === item.key ? 'is-active' : ''}`}
-                      onClick={() => onApplyTemplate(item)}
-                      type="button"
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+                <div className="messenger-composer__input-row">
+                  <textarea
+                    className="message-input"
+                    rows={1}
+                    value={messageText}
+                    onChange={(event) => onMessageTextChange(event.target.value)}
+                    placeholder="Написать кандидату…"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        if (messageText.trim()) onSend()
+                      }
+                    }}
+                  />
+                  <button
+                    className="ui-btn ui-btn--primary messenger-composer__send"
+                    onClick={onSend}
+                    disabled={sendPending || !messageText.trim()}
+                    aria-label={sendPending ? 'Отправка сообщения' : 'Отправить сообщение'}
+                    title={sendPending ? 'Отправка...' : 'Отправить'}
+                    data-state={sendPending ? 'pending' : 'idle'}
+                    type="button"
+                  >
+                    <SendIcon />
+                  </button>
                 </div>
-              )}
-
-              <div className="messenger-composer__input-row">
-                <textarea
-                  className="message-input"
-                  rows={1}
-                  value={messageText}
-                  onChange={(event) => onMessageTextChange(event.target.value)}
-                  placeholder="Написать кандидату…"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      if (messageText.trim()) onSend()
-                    }
-                  }}
-                />
-                <button
-                  className="ui-btn ui-btn--primary messenger-composer__send"
-                  onClick={onSend}
-                  disabled={sendPending || !messageText.trim()}
-                  aria-label={sendPending ? 'Отправка сообщения' : 'Отправить сообщение'}
-                  title={sendPending ? 'Отправка...' : 'Отправить'}
-                  data-state={sendPending ? 'pending' : 'idle'}
-                  type="button"
-                >
-                  <SendIcon />
-                </button>
+                {sendError ? <div className="messenger-error">{sendError}</div> : null}
               </div>
-              {sendError ? <div className="messenger-error">{sendError}</div> : null}
+
+              {showContextPanel ? (
+                <MessengerContextPanel
+                  activeThread={activeThread}
+                  channelHealth={channelHealth}
+                  isMobile={isMobile}
+                  onClose={onCloseContextPanel}
+                />
+              ) : null}
             </div>
           </div>
         </>

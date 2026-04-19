@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CandidateChatThread, GroupedMessageRow } from './messenger.types'
@@ -25,6 +25,9 @@ const baseProps = {
   shouldStickToBottomRef: { current: true },
   onMessagesScroll: vi.fn(),
   onBack: vi.fn(),
+  showContextPanel: false,
+  onToggleContextPanel: vi.fn(),
+  onCloseContextPanel: vi.fn(),
   showTemplateTray: false,
   selectedTemplateKey: '',
   templates: [],
@@ -115,11 +118,12 @@ describe('ThreadView layout behavior', () => {
     })
   })
 
-  it('renders channel and delivery badges in the header', async () => {
+  it('opens candidate context panel with quiet advisory details', async () => {
     render(
       <ThreadView
         {...baseProps}
         groupedMessages={[]}
+        showContextPanel
         channelHealth={{
           candidate_id: 101,
           preferred_channel: 'max',
@@ -134,8 +138,18 @@ describe('ThreadView layout behavior', () => {
       />,
     )
 
-    expect(screen.getByText('MAX')).toBeInTheDocument()
-    expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
-    expect(screen.getByText('max:invalid_token')).toBeInTheDocument()
+    const contextPanel = screen.getByTestId('messenger-context-panel')
+    expect(screen.getAllByText('MAX').length).toBeGreaterThan(0)
+    expect(contextPanel).toBeInTheDocument()
+    expect(within(contextPanel).getByText('Контекст кандидата')).toBeInTheDocument()
+    expect(within(contextPanel).getByText('Статус: dead_letter. max:invalid_token')).toBeInTheDocument()
+    expect(within(contextPanel).getByRole('link', { name: 'Открыть карточку' })).toHaveAttribute('href', '/app/candidates/101')
+  })
+
+  it('renders context toggle action in header', () => {
+    render(<ThreadView {...baseProps} groupedMessages={[]} />)
+
+    expect(screen.getByRole('button', { name: 'Контекст' })).toBeInTheDocument()
+    expect(screen.queryByTestId('messenger-context-panel')).not.toBeInTheDocument()
   })
 })

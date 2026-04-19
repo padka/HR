@@ -1510,17 +1510,20 @@ describe('UI cosmetics smoke', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('complementary', { name: 'Чаты кандидатов' })).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-folder-rail')).toBeInTheDocument()
       expect(screen.getAllByText('Иван Петров').length).toBeGreaterThan(0)
       expect(screen.getAllByText(/Можете предложить утро/).length).toBeGreaterThan(0)
       expect(screen.getByLabelText('Поиск по чатам')).toBeInTheDocument()
+      expect(screen.getByTestId('messenger-quick-filters')).toBeInTheDocument()
       expect(screen.getByTestId('messenger-messages')).toBeInTheDocument()
       expect(screen.getByTestId('messenger-composer')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Отправить сообщение' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Детали' })).not.toBeInTheDocument()
       expect(screen.getByRole('link', { name: 'Карточка' })).toBeInTheDocument()
-      expect(screen.getByText('MAX')).toBeInTheDocument()
-      expect(screen.getByText(/send: dead_letter/)).toBeInTheDocument()
-      expect(screen.getByText('max:invalid_token')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Контекст' })).toBeInTheDocument()
+      expect(screen.getAllByText('MAX').length).toBeGreaterThan(0)
+      expect(screen.queryByText(/send: dead_letter/)).not.toBeInTheDocument()
+      expect(screen.queryByText('max:invalid_token')).not.toBeInTheDocument()
     })
   })
 
