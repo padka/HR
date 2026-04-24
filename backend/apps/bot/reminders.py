@@ -92,7 +92,6 @@ except Exception:  # pragma: no cover - fallback when apscheduler is missing
 
 
 from backend.apps.bot.config import DEFAULT_TZ
-from backend.apps.bot.keyboards import kb_attendance_confirm
 from backend.apps.bot.metrics import (
     record_reminder_executed,
     record_reminder_scheduled,

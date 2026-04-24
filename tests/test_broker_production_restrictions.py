@@ -3,9 +3,6 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from backend.apps.bot.broker import InMemoryNotificationBroker
-
-
 @pytest.mark.asyncio
 async def test_inmemory_broker_forbidden_in_production():
     """

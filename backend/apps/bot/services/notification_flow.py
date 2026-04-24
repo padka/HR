@@ -11,7 +11,7 @@ from backend.core.messenger.channel_state import (
     mark_messenger_channel_healthy,
     set_messenger_channel_degraded,
 )
-from backend.core.messenger.protocol import InlineButton, SendResult
+from backend.core.messenger.protocol import SendResult
 from backend.core.messenger.reliability import classify_delivery_failure
 from backend.core.db import async_session
 from backend.domain.candidates.models import User

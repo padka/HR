@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -19,7 +18,6 @@ from backend.apps.admin_ui.services.city_reminder_policy import (
 from backend.apps.bot.reminders import ReminderKind, ReminderService, create_scheduler
 from backend.apps.bot.runtime_config import DEFAULT_REMINDER_POLICY
 from backend.apps.bot.services import NotificationService
-from backend.apps.bot.state_store import build_state_manager
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.models import MessageTemplate

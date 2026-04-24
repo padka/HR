@@ -3,14 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional, Sequence
 
-from backend.domain.candidates.actions import CandidateAction
 from backend.domain.candidates.scheduling_integrity import (
-    ACTIVE_ASSIGNMENT_STATUSES,
     ACTIVE_SLOT_STATUSES,
     WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR,
     build_scheduling_integrity_report,
 )
-from backend.domain.candidates.status import CandidateStatus, get_status_label
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.workflow import (
     workflow_status_for_candidate_status,
     workflow_status_from_raw_value,

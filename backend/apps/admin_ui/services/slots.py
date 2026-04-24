@@ -132,7 +132,6 @@ def _ensure_recruiter_city_link(recruiter: Recruiter, city: City) -> bool:
 def _notification_feedback(action: NotificationAction, result) -> Tuple[str, bool]:
     status = getattr(result, "status", "") or ""
     reason = (getattr(result, "reason", "") or "").lower()
-    notified = status in {"queued", "sent"}
 
     if action == "reschedule":
         queued_msg = "Слот освобождён. Уведомление поставлено в очередь."
