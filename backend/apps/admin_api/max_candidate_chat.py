@@ -39,9 +39,7 @@ from backend.apps.admin_api.candidate_access.services import (
     slot_duration_minutes,
     submit_candidate_test2_answer,
 )
-from backend.apps.admin_api.max_launch import (
-    bootstrap_max_global_intake_token,
-)
+from backend.apps.admin_api.max_launch import bootstrap_max_global_intake_token
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
 from backend.core.messenger.protocol import InlineButton
@@ -58,7 +56,10 @@ from backend.domain.candidates.models import (
     CandidateLaunchChannel,
     User,
 )
-from backend.domain.candidates.services import log_outbound_max_message
+from backend.domain.candidates.services import (
+    load_preferred_user_by_max_user_id,
+    log_outbound_max_message,
+)
 from backend.domain.candidates.test1_shared import (
     BOOKING_STEP_KEY,
     NEXT_ACTION_ASK_CANDIDATE,
@@ -155,7 +156,7 @@ async def resolve_max_chat_context(
     if not normalized:
         return None
 
-    candidate = await session.scalar(select(User).where(User.max_user_id == normalized))
+    candidate = await load_preferred_user_by_max_user_id(session, normalized)
     if candidate is None or not candidate.is_active:
         return None
 
@@ -188,14 +189,76 @@ async def resolve_max_chat_context(
         )
         .limit(1)
     )
-    if access_session is None:
-        return None
+    journey_session = None
+    if access_session is not None:
+        journey_session = await session.get(CandidateJourneySession, access_session.journey_session_id)
+        if journey_session is None or journey_session.candidate_id != candidate.id:
+            access_session = None
+            journey_session = None
+        elif int(access_session.session_version_snapshot or 0) != int(journey_session.session_version or 0):
+            access_session = None
+            journey_session = None
 
-    journey_session = await session.get(CandidateJourneySession, access_session.journey_session_id)
-    if journey_session is None or journey_session.candidate_id != candidate.id:
-        return None
-    if int(access_session.session_version_snapshot or 0) != int(journey_session.session_version or 0):
-        return None
+    if access_session is None:
+        journey_session = await session.scalar(
+            select(CandidateJourneySession)
+            .where(
+                CandidateJourneySession.candidate_id == int(candidate.id),
+                CandidateJourneySession.status == CandidateJourneySessionStatus.ACTIVE.value,
+                CandidateJourneySession.last_surface.in_(
+                    [
+                        CandidateJourneySurface.MAX_MINIAPP.value,
+                        CandidateJourneySurface.MAX_CHAT.value,
+                    ]
+                ),
+            )
+            .order_by(
+                CandidateJourneySession.last_activity_at.desc().nullslast(),
+                CandidateJourneySession.id.desc(),
+            )
+            .limit(1)
+            .with_for_update()
+        )
+        if journey_session is None:
+            return None
+        sqlite_session_id = None
+        bind = session.get_bind()
+        if bind is not None and bind.dialect.name == "sqlite":
+            sqlite_session_id = int(
+                await session.scalar(select(func.coalesce(func.max(CandidateAccessSession.id), 0) + 1))
+                or 1
+            )
+        auth_method = str(journey_session.last_auth_method or "").strip() or CandidateAccessAuthMethod.ADMIN_INVITE.value
+        if auth_method not in {
+            CandidateAccessAuthMethod.MAX_INIT_DATA.value,
+            CandidateAccessAuthMethod.ADMIN_INVITE.value,
+        }:
+            auth_method = CandidateAccessAuthMethod.ADMIN_INVITE.value
+        access_session = CandidateAccessSession(
+            id=sqlite_session_id,
+            candidate_id=int(candidate.id),
+            application_id=journey_session.application_id,
+            journey_session_id=int(journey_session.id),
+            journey_surface=CandidateJourneySurface.MAX_CHAT.value,
+            auth_method=auth_method,
+            launch_channel=CandidateLaunchChannel.MAX.value,
+            provider_session_id=f"max-chat-recovery:{normalized}:{journey_session.id}",
+            provider_user_id=normalized,
+            session_version_snapshot=max(1, int(journey_session.session_version or 1)),
+            status=CandidateAccessSessionStatus.ACTIVE.value,
+            issued_at=now,
+            last_seen_at=now,
+            refreshed_at=now,
+            expires_at=now + MAX_ACCESS_SESSION_IDLE_TTL,
+            correlation_id=str(uuid.uuid4()),
+            metadata_json={
+                "bootstrapped_from": "resolve_max_chat_context_recovery",
+                "recovered_candidate_id": int(candidate.id),
+                "recovered_journey_session_id": int(journey_session.id),
+            },
+        )
+        session.add(access_session)
+        await session.flush()
 
     access_session.last_seen_at = now
     access_session.refreshed_at = now
@@ -441,6 +504,13 @@ def _format_slot_window(start_utc: datetime, duration_min: int, tz_name: str) ->
     return f"{local_start.strftime('%d %b, %H:%M')}–{local_end.strftime('%H:%M')}"
 
 
+def _format_slot_button_moment(start_utc: datetime, tz_name: str) -> str:
+    zone = ZoneInfo(str(tz_name or "Europe/Moscow"))
+    aware_start = _as_utc(start_utc) or _utcnow()
+    local_start = aware_start.astimezone(zone)
+    return local_start.strftime("%d.%m %H:%M")
+
+
 def _question_progress(envelope: CandidateTest1Envelope) -> tuple[dict[str, Any] | None, int, int]:
     total = len(envelope.questions)
     for index, question in enumerate(envelope.questions, start=1):
@@ -576,6 +646,44 @@ def _city_choice_buttons(
     return rows
 
 
+def _manual_time_input_text(
+    *,
+    city_label: str | None = None,
+    prefix: str = "",
+) -> str:
+    city_line = (
+        f"Для города {city_label} сейчас нет свободных слотов.\n"
+        if city_label
+        else "Свободных слотов в вашем городе сейчас нет.\n"
+    )
+    return (
+        f"{prefix}{city_line}"
+        "Напишите, пожалуйста, когда вам удобно пройти интервью, и мы предложим подходящее время вручную.\n\n"
+        "Пример: 25.07 12:00-16:00 или завтра 10:00-13:00."
+    )
+
+
+async def _build_manual_time_input_prompt(
+    session: AsyncSession,
+    principal: CandidateAccessPrincipal,
+    *,
+    city_label: str | None = None,
+    timezone_label: str | None = None,
+    prefix: str = "",
+) -> MaxChatPrompt:
+    candidate = await session.get(User, principal.candidate_id)
+    if candidate is not None:
+        candidate.manual_slot_requested_at = _utcnow()
+        if timezone_label:
+            candidate.manual_slot_timezone = timezone_label
+        await session.flush()
+    return MaxChatPrompt(
+        text=_manual_time_input_text(city_label=city_label, prefix=prefix),
+        buttons=[],
+        state="manual_time_input",
+    )
+
+
 async def _build_city_prompt(
     session: AsyncSession,
     principal: CandidateAccessPrincipal,
@@ -594,13 +702,11 @@ async def _build_city_prompt(
                 "journey_session_id": principal.journey_session_id,
             },
         )
-        return MaxChatPrompt(
-            text=(
-                f"{prefix}Пока не получилось загрузить города для записи. "
-                "Напишите удобные дату и время на ближайшие 1–2 дня, и рекрутер свяжется с вами."
-            ),
-            buttons=[[InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")]],
-            state="manual_time_input",
+        return await _build_manual_time_input_prompt(
+            session,
+            principal,
+            timezone_label=context.profile.timezone_name,
+            prefix=prefix,
         )
 
     current_city = context.city_name or "город из анкеты"
@@ -633,8 +739,6 @@ def _recruiter_choice_buttons(
                 )
             ]
         )
-    rows.append([InlineButton(text="Другой город", callback_data="booking:change_city", kind="callback")])
-    rows.append([InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")])
     return rows
 
 
@@ -659,16 +763,12 @@ async def _build_recruiter_prompt(
                 "city_id": context.city_id,
             },
         )
-        return MaxChatPrompt(
-            text=(
-                f"{prefix}Для города {context.city_name or 'из анкеты'} пока нет свободных слотов у рекрутёров. "
-                "Можно выбрать другой город или написать удобные дату и время на ближайшие 1–2 дня."
-            ),
-            buttons=[
-                [InlineButton(text="Другой город", callback_data="booking:change_city", kind="callback")],
-                [InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")],
-            ],
-            state="booking_recruiter",
+        return await _build_manual_time_input_prompt(
+            session,
+            principal,
+            city_label=context.city_name,
+            timezone_label=context.profile.timezone_name,
+            prefix=prefix,
         )
 
     return MaxChatPrompt(
@@ -684,6 +784,7 @@ async def _build_recruiter_prompt(
 def _slot_choice_buttons(
     slots: list[Slot],
     *,
+    candidate_tz: str,
     booking_id: int | None = None,
 ) -> list[list[InlineButton]]:
     rows: list[list[InlineButton]] = []
@@ -692,7 +793,7 @@ def _slot_choice_buttons(
         rows.append(
             [
                 InlineButton(
-                    text=f"Выбрать {slot.start_utc.strftime('%d.%m %H:%M')}",
+                    text=f"Выбрать {_format_slot_button_moment(slot.start_utc, candidate_tz)}",
                     callback_data=(
                         f"{prefix}:{booking_id}:{slot.id}"
                         if booking_id is not None
@@ -702,9 +803,6 @@ def _slot_choice_buttons(
                 )
             ]
         )
-    rows.append([InlineButton(text="Другой рекрутёр", callback_data="booking:change_recruiter", kind="callback")])
-    rows.append([InlineButton(text="Другой город", callback_data="booking:change_city", kind="callback")])
-    rows.append([InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")])
     return rows
 
 
@@ -734,18 +832,12 @@ async def _build_slot_prompt(
                 "recruiter_id": context.recruiter_id,
             },
         )
-        return MaxChatPrompt(
-            text=(
-                f"{prefix}Для города {city_label} у {recruiter_label} пока нет свободных слотов. "
-                "Можно выбрать другого рекрутёра, другой город или написать удобные дату и время."
-            ),
-            buttons=[
-                [InlineButton(text="Другой рекрутёр", callback_data="booking:change_recruiter", kind="callback")],
-                [InlineButton(text="Другой город", callback_data="booking:change_city", kind="callback")],
-                [InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")],
-            ],
-            state="booking_selecting",
-            booking_id=booking_id,
+        return await _build_manual_time_input_prompt(
+            session,
+            principal,
+            city_label=context.city_name,
+            timezone_label=context.profile.timezone_name,
+            prefix=prefix,
         )
 
     lines = [
@@ -764,27 +856,37 @@ async def _build_slot_prompt(
 
     return MaxChatPrompt(
         text="\n".join(lines).strip(),
-        buttons=_slot_choice_buttons(slots, booking_id=booking_id),
+        buttons=_slot_choice_buttons(
+            slots,
+            candidate_tz=tz_name,
+            booking_id=booking_id,
+        ),
         state="booking_rescheduling" if booking_id is not None else "booking_selecting",
         booking_id=booking_id,
     )
 
 
-def _booking_summary_prompt(slot: Slot) -> MaxChatPrompt:
+def _booking_waiting_approval_prompt(slot: Slot) -> MaxChatPrompt:
     tz_name = getattr(slot, "candidate_tz", None) or getattr(slot, "tz_name", None) or "Europe/Moscow"
     recruiter = getattr(getattr(slot, "recruiter", None), "name", None) or "Рекрутер RecruitSmart"
     text = (
-        "Запись готова.\n\n"
+        "Слот забронирован и отправлен рекрутёру на согласование.\n\n"
         f"{_format_slot_window(slot.start_utc, slot_duration_minutes(slot), str(tz_name))} · {recruiter}\n\n"
-        "Подтвердите слот или выберите другое время."
+        "После согласования мы отдельным сообщением пришлём детали встречи и кнопки для подтверждения."
     )
-    buttons = [
-        [InlineButton(text="Подтвердить", callback_data=f"slot:confirm:{slot.id}", kind="callback")],
-        [InlineButton(text="Выбрать другое время", callback_data=f"slot:reschedule:{slot.id}", kind="callback")],
-        [InlineButton(text="Отменить запись", callback_data=f"slot:cancel:{slot.id}", kind="callback")],
-        [InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")],
-    ]
-    return MaxChatPrompt(text=text, buttons=buttons, state="booking_pending", booking_id=int(slot.id))
+    return MaxChatPrompt(text=text, buttons=[], state="booking_pending", booking_id=int(slot.id))
+
+
+def _approved_booking_prompt(slot: Slot) -> MaxChatPrompt:
+    tz_name = getattr(slot, "candidate_tz", None) or getattr(slot, "tz_name", None) or "Europe/Moscow"
+    recruiter = getattr(getattr(slot, "recruiter", None), "name", None) or "Рекрутер RecruitSmart"
+    text = (
+        "Рекрутер согласовал выбранный слот.\n\n"
+        f"{_format_slot_window(slot.start_utc, slot_duration_minutes(slot), str(tz_name))} · {recruiter}\n\n"
+        "Подтвердите встречу в личном кабинете mini app внутри MAX, чтобы получить ссылку на подключение.\n"
+        "Ссылка и детали встречи доступны там же."
+    )
+    return MaxChatPrompt(text=text, buttons=[], state="booking_approved", booking_id=int(slot.id))
 
 
 def _confirmed_booking_prompt(slot: Slot) -> MaxChatPrompt:
@@ -793,13 +895,9 @@ def _confirmed_booking_prompt(slot: Slot) -> MaxChatPrompt:
     text = (
         "Готово, встречу подтвердили.\n\n"
         f"{_format_slot_window(slot.start_utc, slot_duration_minutes(slot), str(tz_name))} · {recruiter}\n\n"
-        "Если понадобится, здесь же можно выбрать другое время."
+        "Ссылка и детали встречи доступны в личном кабинете mini app внутри MAX."
     )
-    buttons = [
-        [InlineButton(text="Выбрать другое время", callback_data=f"slot:reschedule:{slot.id}", kind="callback")],
-        [InlineButton(text="Отменить запись", callback_data=f"slot:cancel:{slot.id}", kind="callback")],
-    ]
-    return MaxChatPrompt(text=text, buttons=buttons, state="booking_pending", booking_id=int(slot.id))
+    return MaxChatPrompt(text=text, buttons=[], state="booking_confirmed", booking_id=int(slot.id))
 
 
 def _completion_only_prompt(envelope: CandidateTest1Envelope) -> MaxChatPrompt:
@@ -921,7 +1019,12 @@ async def build_max_chat_prompt(
         intro_day = await load_candidate_intro_day(session, principal)
         return _build_intro_day_prompt(envelope=intro_day, intro=intro)
     if journey.active_booking is not None:
-        return _booking_summary_prompt(journey.active_booking)
+        booking_status = str(getattr(journey.active_booking, "status", "") or "").strip().lower()
+        if booking_status == "pending":
+            return _booking_waiting_approval_prompt(journey.active_booking)
+        if booking_status in {"confirmed", "confirmed_by_candidate"}:
+            return _confirmed_booking_prompt(journey.active_booking)
+        return _approved_booking_prompt(journey.active_booking)
 
     if (
         envelope.required_next_action == NEXT_ACTION_SELECT_INTERVIEW_SLOT
@@ -942,7 +1045,7 @@ async def build_max_chat_prompt(
                 intro=intro,
                 booking_id=booking_id,
             )
-        if not context.is_explicit:
+        if context.city_id is None:
             return await _build_city_prompt(session, principal, intro=intro)
         return await _build_recruiter_prompt(session, principal, intro=intro)
 
@@ -987,7 +1090,7 @@ async def book_max_chat_slot(
             )
             if journey_session is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Journey session not found")
-            prompt = _booking_summary_prompt(slot)
+            prompt = _booking_waiting_approval_prompt(slot)
             _set_chat_cursor(journey_session, state=prompt.state, booking_id=prompt.booking_id)
             return prompt
 
@@ -1185,7 +1288,7 @@ async def process_max_chat_callback(
             new_slot_id=int(raw_slot_id),
         )
         del candidate
-        prompt = _booking_summary_prompt(slot)
+        prompt = _booking_waiting_approval_prompt(slot)
     elif callback_payload.startswith("slot:reschedule:"):
         booking_id = int(callback_payload.split(":", 2)[2])
         envelope = await load_candidate_test1_state(session, principal)

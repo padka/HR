@@ -850,6 +850,62 @@ async def test_candidate_detail_without_test2_data_keeps_not_started_state() -> 
 
 
 @pytest.mark.asyncio
+async def test_candidate_detail_invited_candidate_waits_for_test1_instead_of_sending_test2() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999306,
+        fio="Invited Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.INVITED,
+    )
+
+    detail = await get_candidate_detail(candidate.id)
+
+    assert detail is not None
+    assert detail["candidate_status_slug"] == CandidateStatus.INVITED.value
+    assert detail["lifecycle_summary"]["stage"] == "screening"
+    assert detail["candidate_next_action"]["primary_action"]["type"] == "wait_for_candidate"
+    assert detail["candidate_next_action"]["primary_action"]["label"] == "Ожидаем ответ кандидата"
+    assert detail["candidate_next_action"]["worklist_bucket"] == "awaiting_candidate"
+
+
+@pytest.mark.asyncio
+async def test_candidate_detail_interview_in_past_surfaces_send_test2_action() -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=999307,
+        fio="Past Interview Candidate",
+        city="Москва",
+        initial_status=CandidateStatus.INTERVIEW_SCHEDULED,
+    )
+
+    async with async_session() as session:
+        recruiter = Recruiter(name="Past Interview Recruiter", tz="Europe/Moscow", active=True)
+        session.add(recruiter)
+        await session.flush()
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            candidate_city_id=None,
+            start_utc=datetime.now(timezone.utc) - timedelta(minutes=5),
+            duration_min=20,
+            status=SlotStatus.BOOKED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.commit()
+
+    detail = await get_candidate_detail(candidate.id)
+
+    assert detail is not None
+    assert detail["candidate_status_slug"] == CandidateStatus.INTERVIEW_SCHEDULED.value
+    assert detail["candidate_next_action"]["primary_action"]["type"] == "send_test2"
+    assert detail["candidate_next_action"]["primary_action"]["label"] == "Отправить Тест 2"
+    assert detail["candidate_next_action"]["worklist_bucket"] == "today"
+
+
+@pytest.mark.asyncio
 async def test_candidate_cohort_comparison_groups_similar_candidates():
     lead = await candidate_services.create_or_update_user(
         telegram_id=999201,

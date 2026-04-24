@@ -132,7 +132,7 @@ describe('candidate-state.adapter', () => {
     }
 
     expect(matchesIncomingStatusFilter(requested, 'requested_other_time')).toBe(true)
-    expect(matchesIncomingStatusFilter(pending, 'slot_pending')).toBe(true)
+    expect(matchesIncomingStatusFilter(pending, 'waiting_slot')).toBe(false)
     expect(compareIncomingCandidates(requested, pending, 'waiting')).toBeLessThan(0)
 
     const summary = summarizeIncomingCandidates([requested, pending])

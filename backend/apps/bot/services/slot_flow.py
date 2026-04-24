@@ -45,6 +45,16 @@ def _clamp(value: int, *, low: int, high: int) -> int:
     return max(low, min(value, high))
 
 
+_AVAILABILITY_SINGLE_TIME_RE = re.compile(
+    r"(?:^|[\s,;])(?:в\s*)?(?P<hour>\d{1,2}):(?P<minute>\d{2})(?:$|[\s,;.!?])"
+)
+_KEYWORD_DATE_OFFSETS = {
+    "сегодня": 0,
+    "завтра": 1,
+    "послезавтра": 2,
+}
+
+
 def _parse_manual_availability_window(
     text: str,
     tz_label: Optional[str],
@@ -56,25 +66,47 @@ def _parse_manual_availability_window(
         return None, None
 
     range_match = _AVAILABILITY_RANGE_RE.search(cleaned)
-    if not range_match:
-        return None, None
+    has_date_hint = bool(_AVAILABILITY_DATE_RE.search(cleaned))
+    lowered = cleaned.lower()
+    if not has_date_hint:
+        has_date_hint = any(keyword in lowered for keyword in _KEYWORD_DATE_OFFSETS)
 
-    try:
-        start_hour = _clamp(int(range_match.group("from_h")), low=0, high=23)
-    except (TypeError, ValueError):
-        start_hour = 0
-    try:
-        start_min = _clamp(int(range_match.group("from_m") or 0), low=0, high=59)
-    except (TypeError, ValueError):
-        start_min = 0
-    try:
-        end_hour = _clamp(int(range_match.group("to_h")), low=0, high=23)
-    except (TypeError, ValueError):
-        end_hour = 0
-    try:
-        end_min = _clamp(int(range_match.group("to_m") or 0), low=0, high=59)
-    except (TypeError, ValueError):
-        end_min = 0
+    if range_match:
+        try:
+            start_hour = _clamp(int(range_match.group("from_h")), low=0, high=23)
+        except (TypeError, ValueError):
+            start_hour = 0
+        try:
+            start_min = _clamp(int(range_match.group("from_m") or 0), low=0, high=59)
+        except (TypeError, ValueError):
+            start_min = 0
+        try:
+            end_hour = _clamp(int(range_match.group("to_h")), low=0, high=23)
+        except (TypeError, ValueError):
+            end_hour = 0
+        try:
+            end_min = _clamp(int(range_match.group("to_m") or 0), low=0, high=59)
+        except (TypeError, ValueError):
+            end_min = 0
+    else:
+        single_match = _AVAILABILITY_SINGLE_TIME_RE.search(cleaned)
+        if not single_match or not has_date_hint:
+            return None, None
+        try:
+            start_hour = _clamp(int(single_match.group("hour")), low=0, high=23)
+        except (TypeError, ValueError):
+            start_hour = 0
+        try:
+            start_min = _clamp(int(single_match.group("minute") or 0), low=0, high=59)
+        except (TypeError, ValueError):
+            start_min = 0
+        start_total_minutes = start_hour * 60 + start_min
+        end_total_minutes = min(start_total_minutes + 60, 24 * 60)
+        if end_total_minutes >= 24 * 60:
+            end_hour = 23
+            end_min = 59
+        else:
+            end_hour, end_min = divmod(end_total_minutes, 60)
 
     tzinfo = _safe_zone(tz_label or DEFAULT_TZ)
     now_local = datetime.now(tzinfo)
@@ -100,7 +132,6 @@ def _parse_manual_availability_window(
             target_date = None
 
     if target_date is None:
-        lowered = cleaned.lower()
         for keyword, offset in _KEYWORD_DATE_OFFSETS.items():
             if keyword in lowered:
                 target_date = (now_local + timedelta(days=offset)).date()
@@ -108,7 +139,11 @@ def _parse_manual_availability_window(
 
     if target_date is None:
         target_date = now_local.date()
-        candidate_start = datetime.combine(target_date, time(start_hour, start_min), tzinfo=tzinfo)
+        candidate_start = datetime.combine(
+            target_date,
+            datetime_time(start_hour, start_min),
+            tzinfo=tzinfo,
+        )
         if candidate_start <= now_local - timedelta(minutes=30):
             target_date = target_date + timedelta(days=1)
 

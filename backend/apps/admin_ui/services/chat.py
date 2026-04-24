@@ -16,17 +16,25 @@ from sqlalchemy.orm import selectinload
 from backend.apps.admin_ui.services.bot_service import BotService
 from backend.apps.admin_ui.services.chat_meta import derive_chat_message_kind
 from backend.core.db import async_session
+from backend.core.messenger.bootstrap import ensure_max_adapter
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import get_registry
 from backend.core.redis_factory import create_redis_client
 from backend.core.settings import get_settings
-from backend.domain.candidates.models import ChatMessage, ChatMessageStatus, ChatMessageDirection, User
+from backend.domain.candidates.models import (
+    ChatMessage,
+    ChatMessageDirection,
+    ChatMessageStatus,
+    User,
+)
 from backend.domain.candidates.services import (
     list_chat_messages as domain_list_chat_messages,
-    update_chat_message_status,
-    set_conversation_mode,
 )
-from backend.domain.models import Slot, Recruiter
+from backend.domain.candidates.services import (
+    set_conversation_mode,
+    update_chat_message_status,
+)
+from backend.domain.models import Recruiter, Slot
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +440,8 @@ async def _dispatch_chat_message(
 
     if channel == "max":
         adapter = get_registry().get(MessengerPlatform.MAX)
+        if adapter is None or not bool(getattr(adapter, "is_configured", True)):
+            adapter = await ensure_max_adapter(settings=get_settings())
         if adapter is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

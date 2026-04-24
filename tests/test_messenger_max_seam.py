@@ -109,6 +109,10 @@ async def test_max_adapter_sends_message_when_configured():
         assert params == {"user_id": "max-user-1"}
         assert json["text"] == "hello"
         assert json["attachments"][0]["payload"]["buttons"][0][0]["type"] == "open_app"
+        assert (
+            json["attachments"][0]["payload"]["buttons"][0][0]["webApp"]
+            == "https://example.com/app"
+        )
         return SimpleNamespace(
             status_code=200,
             json=lambda: {"message": {"mid": "msg-1"}},

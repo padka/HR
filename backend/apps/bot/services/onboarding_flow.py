@@ -2,6 +2,9 @@
 
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
+from backend.domain.candidates.status import get_status_label
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.workflow import WorkflowStatus, workflow_status_from_raw_value
 
 from . import base as _base
 
@@ -12,6 +15,47 @@ for _name in dir(_base):
 
 from .test1_flow import send_test1_question
 from .test2_flow import start_test2
+
+
+def _candidate_status_text(candidate: User, *, fallback: str) -> str:
+    candidate_status = getattr(candidate, "candidate_status", None)
+    if candidate_status is not None:
+        return get_status_label(candidate_status)
+
+    workflow_status = str(getattr(candidate, "workflow_status", "") or "").strip()
+    if workflow_status:
+        return workflow_status
+
+    return fallback
+
+
+_ACTIVE_REPEAT_BLOCKING_CANDIDATE_STATUSES = {
+    CandidateStatus.SLOT_PENDING,
+    CandidateStatus.INTERVIEW_SCHEDULED,
+    CandidateStatus.INTERVIEW_CONFIRMED,
+    CandidateStatus.INTRO_DAY_SCHEDULED,
+    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+    CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+}
+
+_ACTIVE_REPEAT_BLOCKING_WORKFLOW_STATUSES = {
+    WorkflowStatus.INTERVIEW_SCHEDULED,
+    WorkflowStatus.INTERVIEW_CONFIRMED,
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+}
+
+
+def _candidate_blocks_test1_restart(candidate: User) -> bool:
+    candidate_status = getattr(candidate, "candidate_status", None)
+    if candidate_status in _ACTIVE_REPEAT_BLOCKING_CANDIDATE_STATUSES:
+        return True
+
+    workflow_status = workflow_status_from_raw_value(getattr(candidate, "workflow_status", None))
+    if workflow_status in _ACTIVE_REPEAT_BLOCKING_WORKFLOW_STATUSES:
+        return True
+
+    return False
 
 
 async def _send_active_candidate_summary(user_id: int, *, candidate: User) -> None:
@@ -26,7 +70,7 @@ async def _send_active_candidate_summary(user_id: int, *, candidate: User) -> No
                 return
     lines = [
         "У вас уже есть активность в системе. Повторно проходить Test 1 не нужно.",
-        f"Статус: {stored_candidate.status or 'В работе'}",
+        f"Статус: {_candidate_status_text(stored_candidate, fallback='В работе')}",
         "Продолжайте текущий путь кандидата в этом чате.",
     ]
     lines.append("Если нужно продолжение, рекрутер отправит следующий шаг прямо в Telegram.")
@@ -78,7 +122,7 @@ async def begin_interview(user_id: int, username: Optional[str] = None) -> None:
     except Exception:  # pragma: no cover - best effort
         logger.debug("Failed to reset conversation mode for %s", user_id, exc_info=True)
     existing_candidate = await candidate_services.get_user_by_telegram_id(user_id)
-    if existing_candidate is not None:
+    if existing_candidate is not None and _candidate_blocks_test1_restart(existing_candidate):
         await _send_active_candidate_summary(user_id, candidate=existing_candidate)
         return
     await state_manager.set(

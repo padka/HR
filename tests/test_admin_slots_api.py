@@ -24,6 +24,7 @@ from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import User
 
 
 def _login(
@@ -1004,6 +1005,73 @@ async def test_api_slots_returns_local_time(admin_slots_app) -> None:
     # Accept both with and without timezone suffix
     assert found["start_utc"] in ["2024-01-01T06:00:00+00:00", "2024-01-01T06:00:00"]
     assert found["local_time"] in ["2024-01-01T13:00:00+07:00", "2024-01-01T13:00:00"]
+
+
+@pytest.mark.asyncio
+async def test_api_slots_returns_max_channel_identity_without_telegram(admin_slots_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=79991240021,
+        fio="MAX Slot Candidate",
+        city="Краснодар",
+        username="max_slot_candidate",
+    )
+
+    async with async_session() as session:
+        stored = await session.get(User, candidate.id)
+        assert stored is not None
+        stored.telegram_id = None
+        stored.telegram_user_id = None
+        stored.max_user_id = "max-slot-candidate"
+        stored.messenger_platform = "max"
+
+        recruiter = models.Recruiter(name="MAX Slot Recruiter", tz="Europe/Moscow", active=True)
+        city = models.City(name="Краснодар", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([recruiter, city])
+        await session.flush()
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime(2026, 4, 21, 7, 0, tzinfo=UTC),
+            duration_min=20,
+            status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=None,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            tz_name=city.tz,
+        )
+        session.add(slot)
+        await session.flush()
+        slot_id = int(slot.id)
+        session.add(
+            models.SlotAssignment(
+                slot_id=slot.id,
+                recruiter_id=recruiter.id,
+                candidate_id=candidate.candidate_id,
+                candidate_tg_id=None,
+                candidate_tz="Europe/Moscow",
+                status=models.SlotAssignmentStatus.CONFIRMED,
+                confirmed_at=datetime(2026, 4, 21, 6, 0, tzinfo=UTC),
+            )
+        )
+        await session.commit()
+
+    response = await _async_request(
+        admin_slots_app,
+        "get",
+        "/api/slots",
+        params={"limit": 20},
+    )
+
+    assert response.status_code == 200
+    found = next((item for item in response.json() if item["id"] == slot_id), None)
+    assert found is not None
+    assert found["candidate_tg_id"] is None
+    assert found["candidate_channel"] == "max"
+    assert found["candidate_channel_id"] == "max-slot-candidate"
+    assert found["candidate_identity_label"] == "MAX"
 
 
 @pytest.mark.asyncio

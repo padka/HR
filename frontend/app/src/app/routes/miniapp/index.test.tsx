@@ -113,6 +113,8 @@ describe('MaxMiniAppPage', () => {
       expect(screen.getByTestId('miniapp-test1')).toBeInTheDocument()
       expect(screen.getByText(/Короткая анкета/i)).toBeInTheDocument()
     })
+    expect(screen.queryByText(/Ответы по анкете/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Открыть чат MAX' })).not.toBeInTheDocument()
   })
 
   it('fails closed outside MAX and does not call launch bootstrap without initData', async () => {
@@ -273,7 +275,7 @@ describe('MaxMiniAppPage', () => {
     })
   })
 
-  it('shows chat-ready success state after chat handoff', async () => {
+  it('opens help panel for a legacy chat primary action without leaving mini app', async () => {
     queueJsonResponses(
       {
         body: {
@@ -342,8 +344,8 @@ describe('MaxMiniAppPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Продолжить в чат' }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('miniapp-chat-ready')).toBeInTheDocument()
-      expect(screen.getByText(/Чат MAX готов/i)).toBeInTheDocument()
+      expect(screen.getByTestId('miniapp-help')).toBeInTheDocument()
+      expect(screen.getByText(/Что делать дальше/i)).toBeInTheDocument()
     })
   })
 
@@ -498,9 +500,9 @@ describe('MaxMiniAppPage', () => {
         body: {
           timeline: [],
           primary_action: {
-            key: 'chat_fallback',
-            label: 'Открыть чат MAX',
-            kind: 'chat',
+            key: 'review_manual_request',
+            label: 'Проверить статус',
+            kind: 'help',
             detail: 'Пожелания по времени уже отправлены.',
           },
           status_card: {
@@ -589,6 +591,7 @@ describe('MaxMiniAppPage', () => {
             start_utc: '2030-01-01T10:00:00Z',
             end_utc: '2030-01-01T11:00:00Z',
             status: 'confirmed_by_candidate',
+            meet_link: 'https://telemost.example/max-room',
           },
           timeline: [],
           primary_action: { key: 'review_booking', label: 'Проверить детали встречи', kind: 'booking' },
@@ -624,10 +627,349 @@ describe('MaxMiniAppPage', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('miniapp-booked')).toBeInTheDocument()
-      expect(screen.getByText(/Собеседование назначено/i)).toBeInTheDocument()
+      expect(screen.getByText(/Встреча подтверждена/i)).toBeInTheDocument()
       expect(screen.getByText(/MAX Recruiter/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Открыть конференцию' })).toBeInTheDocument()
     })
     expect(screen.getByTestId('miniapp-booking-success')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Подтвердить встречу' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Открыть чат MAX' })).not.toBeInTheDocument()
+  })
+
+  it('shows urgent confirmation copy when approved interview starts in less than two hours', async () => {
+    const soonStart = new Date(Date.now() + 75 * 60 * 1000).toISOString()
+    const soonEnd = new Date(Date.now() + 135 * 60 * 1000).toISOString()
+
+    queueJsonResponses(
+      {
+        body: {
+          binding: {
+            status: 'bound',
+            message: 'Кандидатский доступ готов.',
+          },
+          session: {
+            session_id: 'session-urgent-booking',
+          },
+        },
+      },
+      {
+        body: {
+          active_booking: {
+            booking_id: 18,
+            recruiter_name: 'MAX Recruiter',
+            start_utc: soonStart,
+            end_utc: soonEnd,
+            status: 'booked',
+          },
+          timeline: [],
+          primary_action: { key: 'review_booking', label: 'Проверить детали встречи', kind: 'booking' },
+          status_card: { title: 'Собеседование уже назначено', body: 'Проверьте детали', tone: 'success' },
+          prep_card: { title: 'Что дальше', body: 'Памятка' },
+          company_card: { title: 'О компании', body: 'RecruitSmart' },
+          help_card: { title: 'Нужна помощь', body: 'Откройте чат MAX' },
+        },
+      },
+      {
+        body: {
+          journey_step: 'booking',
+          questions: [],
+          draft_answers: {},
+          is_completed: true,
+          required_next_action: 'select_interview_slot',
+        },
+      },
+      {
+        body: {
+          city_id: 1,
+          recruiter_id: 1,
+          source: 'explicit',
+          is_explicit: true,
+        },
+      },
+      { body: [] },
+      { body: [] },
+      { body: [] },
+    )
+
+    render(<MaxMiniAppPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('miniapp-booked')).toBeInTheDocument()
+      expect(screen.getByText(/меньше двух часов/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Подтвердить встречу' })).toBeInTheDocument()
+    })
+  })
+
+  it('renders pending booking as recruiter review without candidate confirmation actions', async () => {
+    queueJsonResponses(
+      {
+        body: {
+          binding: {
+            status: 'bound',
+            message: 'Кандидатский доступ готов.',
+          },
+          session: {
+            session_id: 'session-pending',
+          },
+        },
+      },
+      {
+        body: {
+          active_booking: {
+            booking_id: 11,
+            recruiter_name: 'MAX Recruiter',
+            start_utc: '2030-01-01T10:00:00Z',
+            end_utc: '2030-01-01T11:00:00Z',
+            status: 'pending',
+            candidate_can_confirm_pending: false,
+          },
+          timeline: [],
+          primary_action: { key: 'review_pending_booking', label: 'Проверить статус заявки', kind: 'booking' },
+          status_card: { title: 'Слот отправлен на согласование', body: 'Мы просматриваем ваше резюме и результаты Test1.', tone: 'progress' },
+          prep_card: { title: 'Что дальше', body: 'Мы просматриваем ваше резюме и результаты Test1.' },
+          company_card: { title: 'О компании', body: 'RecruitSmart' },
+          help_card: { title: 'Нужна помощь', body: 'Откройте чат MAX' },
+        },
+      },
+      {
+        body: {
+          journey_step: 'booking',
+          questions: [],
+          draft_answers: {},
+          is_completed: true,
+          required_next_action: 'select_interview_slot',
+        },
+      },
+      {
+        body: {
+          city_id: 1,
+          recruiter_id: 1,
+          source: 'explicit',
+          is_explicit: true,
+        },
+      },
+      { body: [] },
+      { body: [] },
+      { body: [] },
+    )
+
+    render(<MaxMiniAppPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('miniapp-booked')).toBeInTheDocument()
+      expect(screen.getByText(/Слот на согласовании/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/Мы просматриваем ваше резюме/i).length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByRole('button', { name: 'Подтвердить встречу' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Выбрать другое время' })).not.toBeInTheDocument()
+  })
+
+  it('renders recruiter pending offer with confirm action only', async () => {
+    queueJsonResponses(
+      {
+        body: {
+          binding: {
+            status: 'bound',
+            message: 'Кандидатский доступ готов.',
+          },
+          session: {
+            session_id: 'session-pending-offer',
+          },
+        },
+      },
+      {
+        body: {
+          active_booking: {
+            booking_id: 12,
+            recruiter_name: 'MAX Recruiter',
+            start_utc: '2030-01-01T10:00:00Z',
+            end_utc: '2030-01-01T11:00:00Z',
+            status: 'pending',
+            candidate_can_confirm_pending: true,
+          },
+          timeline: [],
+          primary_action: { key: 'confirm_pending_offer', label: 'Подтвердить предложенное время', kind: 'booking' },
+          status_card: { title: 'Мы предлагаем время собеседования', body: 'Если этот слот вам подходит, подтвердите встречу в mini app.', tone: 'progress' },
+          prep_card: { title: 'Что дальше', body: 'Если время подходит, подтвердите встречу в mini app.' },
+          company_card: { title: 'О компании', body: 'RecruitSmart' },
+          help_card: { title: 'Нужна помощь', body: 'RecruitSmart' },
+        },
+      },
+      {
+        body: {
+          journey_step: 'booking',
+          questions: [],
+          draft_answers: {},
+          is_completed: true,
+          required_next_action: 'select_interview_slot',
+        },
+      },
+      {
+        body: {
+          city_id: 1,
+          recruiter_id: 1,
+          source: 'explicit',
+          is_explicit: true,
+        },
+      },
+      { body: [] },
+      { body: [] },
+      { body: [] },
+    )
+
+    render(<MaxMiniAppPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('miniapp-booked')).toBeInTheDocument()
+      expect(screen.getByText(/Мы предлагаем время собеседования/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Подтвердить встречу' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Выбрать другое время' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Отменить запись' })).not.toBeInTheDocument()
+  })
+
+  it('shows final Test1 review instead of restarting from the first question when all answers are captured', async () => {
+    queueJsonResponses(
+      {
+        body: {
+          binding: {
+            status: 'bound',
+            message: 'Кандидатский доступ готов.',
+          },
+          session: {
+            session_id: 'session-test1-review',
+          },
+        },
+      },
+      {
+        body: {
+          timeline: [],
+          primary_action: { key: 'continue_test1', label: 'Продолжить анкету', kind: 'test1' },
+          status_card: { title: 'Нужно закончить анкету', body: 'Ответьте на вопросы Test1.', tone: 'progress' },
+          prep_card: { title: 'Что дальше', body: 'После анкеты покажем следующий шаг.' },
+          company_card: { title: 'О компании', body: 'RecruitSmart' },
+          help_card: { title: 'Нужна помощь', body: 'Откройте чат MAX' },
+        },
+      },
+      {
+        body: {
+          journey_step: 'test1',
+          questions: [
+            {
+              id: 'fio',
+              prompt: 'Введите <b>ФИО</b>',
+              question_index: 0,
+              options: [],
+            },
+          ],
+          draft_answers: { fio: 'Иванов Иван Иванович' },
+          is_completed: false,
+          required_next_action: null,
+        },
+      },
+      {
+        body: {
+          source: 'profile',
+          is_explicit: false,
+        },
+      },
+    )
+
+    render(<MaxMiniAppPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('miniapp-test1-review')).toBeInTheDocument()
+      expect(screen.getByText(/Проверьте анкету и завершите Test 1/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/<b>ФИО<\/b>/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Введите ФИО/i)).not.toBeInTheDocument()
+  })
+
+  it('opens Test2 immediately on bootstrap when the journey is already at test2', async () => {
+    queueJsonResponses(
+      {
+        body: {
+          binding: {
+            status: 'bound',
+            message: 'Кандидатский доступ готов.',
+          },
+          session: {
+            session_id: 'session-test2-direct',
+          },
+        },
+      },
+      {
+        body: {
+          timeline: [],
+          primary_action: {
+            key: 'continue_test2',
+            label: 'Пройти Тест 2',
+            kind: 'test2',
+            detail: 'Продолжите Тест 2.',
+          },
+          status_card: {
+            title: 'Открыт Тест 2',
+            body: 'Продолжите следующий шаг.',
+            tone: 'progress',
+          },
+          prep_card: { title: 'Что дальше', body: 'После Теста 2 покажем следующий шаг.' },
+          company_card: { title: 'О компании', body: 'RecruitSmart' },
+          help_card: { title: 'Помощь', body: 'Откройте чат MAX.' },
+        },
+      },
+      {
+        body: {
+          journey_step: 'test1',
+          questions: [
+            {
+              id: 'fio',
+              prompt: 'Введите <b>ФИО</b>',
+              question_index: 0,
+              options: [],
+            },
+          ],
+          draft_answers: {},
+          is_completed: false,
+          required_next_action: null,
+        },
+      },
+      {
+        body: {
+          source: 'explicit',
+          is_explicit: true,
+        },
+      },
+      {
+        body: {
+          journey_step: 'test2',
+          questions: [
+            {
+              id: 'test2-0',
+              prompt: 'Выберите правильный вариант',
+              question_index: 0,
+              options: [
+                { label: 'Ответ 1', value: '0' },
+                { label: 'Ответ 2', value: '1' },
+              ],
+            },
+          ],
+          current_question_index: 0,
+          attempts: {},
+          is_started: true,
+          is_completed: false,
+          total_questions: 1,
+          passed: null,
+        },
+      },
+    )
+
+    render(<MaxMiniAppPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('miniapp-test2')).toBeInTheDocument()
+      expect(screen.getByText(/Выберите правильный вариант/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('miniapp-test1-review')).not.toBeInTheDocument()
   })
 
   it('opens Test2 from the home action and submits an answer', async () => {
@@ -776,13 +1118,6 @@ describe('MaxMiniAppPage', () => {
     render(<MaxMiniAppPage />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('miniapp-home')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Пройти Тест 2' })).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Пройти Тест 2' }))
-
-    await waitFor(() => {
       expect(screen.getByTestId('miniapp-test2')).toBeInTheDocument()
       expect(screen.getByText(/Выберите правильный вариант/i)).toBeInTheDocument()
     })
@@ -903,13 +1238,6 @@ describe('MaxMiniAppPage', () => {
     )
 
     render(<MaxMiniAppPage />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('miniapp-home')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Проверить детали ознакомительного дня' })).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Проверить детали ознакомительного дня' }))
 
     await waitFor(() => {
       expect(screen.getByTestId('miniapp-intro-day')).toBeInTheDocument()

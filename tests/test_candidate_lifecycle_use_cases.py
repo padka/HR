@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import backend.apps.admin_ui.services.candidates.lifecycle_use_cases as lifecycle_use_cases
 import pytest
+from backend.apps.admin_ui.services.bot_service import BotSendResult
 from backend.core.db import async_session
 from backend.domain import models
 from backend.domain.candidates import services as candidate_services
@@ -32,6 +33,31 @@ async def _create_candidate(
         username=f"user_{telegram_id}",
         initial_status=status,
     )
+
+
+async def _create_max_only_candidate(
+    *,
+    fio: str,
+    status: CandidateStatus,
+    max_user_id: str,
+) -> User:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=int(max_user_id[-6:]) or 1,
+        fio=fio,
+        city="Москва",
+        username=f"max_{max_user_id}",
+        initial_status=status,
+    )
+    async with async_session() as session:
+        persisted = await session.get(User, candidate.id)
+        assert persisted is not None
+        persisted.telegram_id = None
+        persisted.telegram_user_id = None
+        persisted.max_user_id = max_user_id
+        await session.commit()
+        await session.refresh(persisted)
+        session.expunge(persisted)
+        return persisted
 
 
 async def _create_candidate_slot(
@@ -321,6 +347,203 @@ async def test_execute_send_to_test2_surfaces_partial_transition_requires_repair
     assert result.ok is False
     assert result.error == "partial_transition_requires_repair"
     assert result.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_execute_send_to_test2_uses_strict_dispatch_for_max_only_candidate(monkeypatch) -> None:
+    candidate = await _create_max_only_candidate(
+        fio="MAX Only Interview Passed",
+        status=CandidateStatus.INTERVIEW_CONFIRMED,
+        max_user_id="129613760",
+    )
+    slot_id = await _create_candidate_slot(
+        candidate,
+        purpose="interview",
+        status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+    )
+
+    observed: dict[str, object] = {}
+
+    async def _fake_trigger_test2(candidate_id, candidate_tz, candidate_city, candidate_name, **kwargs):
+        observed["candidate_id"] = candidate_id
+        observed["candidate_tz"] = candidate_tz
+        observed["candidate_city"] = candidate_city
+        observed["candidate_name"] = candidate_name
+        observed["required"] = kwargs.get("required")
+        observed["slot_id"] = kwargs.get("slot_id")
+        observed["candidate_public_id"] = kwargs.get("candidate_public_id")
+        observed["max_user_id"] = kwargs.get("max_user_id")
+        return BotSendResult(ok=True, status="sent_test2", message="Тест 2 отправлен")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases._trigger_test2",
+        _fake_trigger_test2,
+    )
+
+    result = await lifecycle_use_cases.execute_send_to_test2(
+        candidate.id,
+        principal=None,
+        bot_service=None,
+        action_key="interview_passed",
+    )
+
+    assert result.ok is True
+    assert result.status == CandidateStatus.TEST2_SENT.value
+    assert observed["candidate_id"] == 0
+    assert observed["required"] is True
+    assert observed["slot_id"] == slot_id
+    assert observed["candidate_public_id"] == candidate.candidate_id
+    assert observed["max_user_id"] == "129613760"
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        slot = await session.get(models.Slot, slot_id)
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.TEST2_SENT
+    assert slot is not None
+    assert slot.interview_outcome == "success"
+    assert slot.test2_sent_at is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_send_to_test2_keeps_max_only_candidate_status_on_dispatch_failure(monkeypatch) -> None:
+    candidate = await _create_max_only_candidate(
+        fio="MAX Only Interview Failed Delivery",
+        status=CandidateStatus.INTERVIEW_CONFIRMED,
+        max_user_id="129613761",
+    )
+    slot_id = await _create_candidate_slot(
+        candidate,
+        purpose="interview",
+        status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+    )
+
+    async def _fake_trigger_test2(*_args, **_kwargs):
+        return BotSendResult(ok=False, status="skipped:error", error="HTTP 404: Link not found")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases._trigger_test2",
+        _fake_trigger_test2,
+    )
+
+    result = await lifecycle_use_cases.execute_send_to_test2(
+        candidate.id,
+        principal=None,
+        bot_service=None,
+        action_key="interview_passed",
+    )
+
+    assert result.ok is False
+    assert result.error == "test2_dispatch_failed"
+    assert result.message.startswith("Исход «Прошёл» сохранён, но Тест 2 не отправлен.")
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        slot = await session.get(models.Slot, slot_id)
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.INTERVIEW_CONFIRMED
+    assert slot is not None
+    assert slot.interview_outcome == "success"
+    assert slot.test2_sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_execute_resend_test2_uses_strict_dispatch_for_max_only_candidate(monkeypatch) -> None:
+    candidate = await _create_max_only_candidate(
+        fio="MAX Only Test2 Candidate",
+        status=CandidateStatus.INTERVIEW_CONFIRMED,
+        max_user_id="129613756",
+    )
+    slot_id = await _create_candidate_slot(
+        candidate,
+        purpose="interview",
+        status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+    )
+
+    observed: dict[str, object] = {}
+
+    async def _fake_trigger_test2(candidate_id, candidate_tz, candidate_city, candidate_name, **kwargs):
+        observed["candidate_id"] = candidate_id
+        observed["candidate_tz"] = candidate_tz
+        observed["candidate_city"] = candidate_city
+        observed["candidate_name"] = candidate_name
+        observed["required"] = kwargs.get("required")
+        observed["slot_id"] = kwargs.get("slot_id")
+        observed["candidate_public_id"] = kwargs.get("candidate_public_id")
+        observed["max_user_id"] = kwargs.get("max_user_id")
+        return BotSendResult(ok=True, status="sent_test2", message="Тест 2 отправлен")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases._trigger_test2",
+        _fake_trigger_test2,
+    )
+
+    result = await lifecycle_use_cases.execute_resend_test2(
+        candidate.id,
+        principal=None,
+        bot_service=None,
+        action_key="resend_test2",
+    )
+
+    assert result.ok is True
+    assert result.status == CandidateStatus.TEST2_SENT.value
+    assert observed["candidate_id"] == 0
+    assert observed["candidate_tz"] == "Europe/Moscow"
+    assert observed["candidate_city"] is not None
+    assert observed["candidate_name"] == "MAX Only Test2 Candidate"
+    assert observed["required"] is True
+    assert observed["slot_id"] == slot_id
+    assert observed["candidate_public_id"] == candidate.candidate_id
+    assert observed["max_user_id"] == "129613756"
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        slot = await session.get(models.Slot, slot_id)
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.TEST2_SENT
+    assert slot is not None
+    assert slot.test2_sent_at is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_resend_test2_does_not_persist_status_or_slot_timestamp_on_failure(monkeypatch) -> None:
+    candidate = await _create_max_only_candidate(
+        fio="MAX Only Failed Test2 Candidate",
+        status=CandidateStatus.INTERVIEW_CONFIRMED,
+        max_user_id="129613757",
+    )
+    slot_id = await _create_candidate_slot(
+        candidate,
+        purpose="interview",
+        status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+    )
+
+    async def _fake_trigger_test2(*_args, **_kwargs):
+        return BotSendResult(ok=False, status="skipped:error", error="HTTP 403: error.dialog.suspended")
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.candidates.lifecycle_use_cases._trigger_test2",
+        _fake_trigger_test2,
+    )
+
+    result = await lifecycle_use_cases.execute_resend_test2(
+        candidate.id,
+        principal=None,
+        bot_service=None,
+        action_key="resend_test2",
+    )
+
+    assert result.ok is False
+    assert result.error == "test2_dispatch_failed"
+    assert result.status_code == 400
+
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        slot = await session.get(models.Slot, slot_id)
+    assert user is not None
+    assert user.candidate_status == CandidateStatus.INTERVIEW_CONFIRMED
+    assert slot is not None
+    assert slot.test2_sent_at is None
 
 
 @pytest.mark.asyncio

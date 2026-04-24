@@ -766,12 +766,11 @@ export function buildCandidateSurfaceState(candidate: CandidateStateCarrier): Ca
 
 export function matchesIncomingStatusFilter(
   candidate: CandidateStateCarrier,
-  filter: 'all' | 'waiting_slot' | 'stalled_waiting_slot' | 'slot_pending' | 'requested_other_time',
+  filter: 'all' | 'waiting_slot' | 'stalled_waiting_slot' | 'requested_other_time',
 ): boolean {
   if (filter === 'all') return true
   const state = buildCandidateSurfaceState(candidate)
   if (filter === 'requested_other_time') return state.queueState === 'requested_other_time' || state.requestedOtherTime
-  if (filter === 'slot_pending') return state.queueState === 'awaiting_candidate_confirmation' || state.pendingApproval
   if (filter === 'stalled_waiting_slot') return state.queueState === 'stalled_waiting_slot' || state.stalled
   if (filter === 'waiting_slot') return state.queueState === 'waiting_slot' || state.lifecycle.stage === 'waiting_interview_slot'
   return false

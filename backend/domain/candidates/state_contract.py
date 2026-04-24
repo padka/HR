@@ -234,6 +234,19 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat()
 
 
+def _parse_utc_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _status_slug(value: Any) -> Optional[str]:
     if isinstance(value, CandidateStatus):
         return value.value
@@ -716,8 +729,59 @@ def _build_primary_action(
         )
 
     primary_legacy_action = _choose_primary_legacy_action(candidate_actions)
+    primary_legacy_action_key = (
+        str(_action_field(primary_legacy_action, "key") or "").strip().lower()
+        if primary_legacy_action is not None
+        else ""
+    )
+    scheduling_status = str(scheduling_summary.get("status") or "").strip().lower()
+    scheduling_start = _parse_utc_datetime(scheduling_summary.get("start_utc"))
+    interview_window_started = bool(
+        stage == LIFECYCLE_STAGE_INTERVIEW
+        and scheduling_status in {SCHEDULING_STATUS_SCHEDULED, SCHEDULING_STATUS_CONFIRMED}
+        and scheduling_start is not None
+        and scheduling_start <= datetime.now(timezone.utc)
+    )
+    if interview_window_started:
+        for candidate_action in candidate_actions:
+            candidate_action_key = str(_action_field(candidate_action, "key") or "").strip().lower()
+            if candidate_action_key in {"interview_outcome_passed", "interview_passed", "resend_test2"}:
+                primary_legacy_action = candidate_action
+                primary_legacy_action_key = candidate_action_key
+                break
+    if primary_legacy_action_key in {"interview_outcome_passed", "interview_passed", "resend_test2"} and stage in {
+        LIFECYCLE_STAGE_LEAD,
+        LIFECYCLE_STAGE_SCREENING,
+        LIFECYCLE_STAGE_WAITING_INTERVIEW_SLOT,
+    }:
+        primary_legacy_action = None
+        primary_legacy_action_key = ""
+    elif interview_window_started and primary_legacy_action is not None and primary_legacy_action_key in {
+        "interview_outcome_passed",
+        "interview_passed",
+        "resend_test2",
+    }:
+        action_key = str(_action_field(primary_legacy_action, "key") or "").strip()
+        action_label = str(_action_field(primary_legacy_action, "label") or "").strip() or action_key
+        return (
+            {
+                "type": ACTION_TYPE_BY_KEY.get(action_key, action_key or "wait_for_candidate"),
+                "label": action_label,
+                "enabled": True,
+                "owner_role": "recruiter",
+                "blocking_reasons": [],
+                "deadline_at": None,
+                "source_ref": {
+                    "kind": "slot_assignment" if scheduling_summary.get("slot_assignment_id") else "slot",
+                    "id": scheduling_summary.get("slot_assignment_id") or scheduling_summary.get("slot_id"),
+                },
+                "ui_action": UI_ACTION_BY_KEY.get(action_key, "invoke_candidate_action"),
+                "legacy_action_key": action_key or None,
+            },
+            [],
+            "Время интервью прошло. Можно отправить кандидату Тест 2.",
+        )
     if primary_legacy_action is None:
-        scheduling_status = str(scheduling_summary.get("status") or "").strip().lower()
         if stage == LIFECYCLE_STAGE_INTERVIEW and scheduling_status in {
             SCHEDULING_STATUS_OFFERED,
             SCHEDULING_STATUS_SCHEDULED,
@@ -798,12 +862,12 @@ def build_candidate_next_action(
     if record_state == RECORD_STATE_CLOSED:
         worklist_bucket = "closed"
         urgency = "normal"
-    elif blocking_reasons:
-        worklist_bucket = "blocked"
-        urgency = "blocked"
     elif primary_action and primary_action.get("type") == "wait_for_candidate":
         worklist_bucket = "awaiting_candidate"
         urgency = "normal"
+    elif blocking_reasons:
+        worklist_bucket = "blocked"
+        urgency = "blocked"
     elif stage in {LIFECYCLE_STAGE_INTERVIEW, LIFECYCLE_STAGE_INTRO_DAY} and scheduling_start:
         worklist_bucket = "today"
         urgency = "attention"

@@ -34,6 +34,7 @@ from backend.core.settings import Settings, get_settings
 from backend.domain.candidates.models import ChatMessage, User
 from backend.domain.candidates.services import (
     bind_max_to_candidate,
+    get_user_by_max_user_id,
     log_inbound_max_message,
     log_outbound_max_message,
     mark_manual_slot_requested_for_candidate,
@@ -86,7 +87,20 @@ def _stable_client_request_id(prefix: str, raw_value: str | None) -> str:
     if len(normalized) <= 64 and normalized.rstrip(":") != "max":
         return normalized
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return f"max:{prefix}:{digest[:48]}"
+    base_prefix = f"max:{prefix}:"
+    max_digest_len = max(8, 64 - len(base_prefix))
+    return f"{base_prefix}{digest[:max_digest_len]}"
+
+
+def _bot_started_request_id(payload: dict[str, Any], *, start_param: str | None, max_user_id: str) -> str:
+    timestamp = str(
+        payload.get("timestamp")
+        or payload.get("event_time")
+        or payload.get("created_at")
+        or ""
+    ).strip()
+    request_seed = f"{start_param or max_user_id}:{timestamp}" if timestamp else (start_param or max_user_id)
+    return _stable_client_request_id("welcome", request_seed)
 
 
 def _update_type(payload: dict[str, Any]) -> str:
@@ -129,9 +143,14 @@ def _extract_username(payload: dict[str, Any]) -> str | None:
 
 def _extract_display_name(payload: dict[str, Any]) -> str | None:
     user = _extract_user(payload)
+    first_name = str(user.get("first_name") or "").strip()
+    last_name = str(user.get("last_name") or "").strip()
+    full_name = " ".join(part for part in (first_name, last_name) if part).strip()
+    if full_name:
+        return full_name
     display = str(
         user.get("name")
-        or user.get("first_name")
+        or first_name
         or user.get("display_name")
         or ""
     ).strip()
@@ -227,40 +246,37 @@ def _start_chat_callback_payload(start_param: str | None = None) -> str:
     return f"entry:start_chat:{normalized}"
 
 
-def _contextual_welcome_buttons(*, start_param: str | None = None) -> list[list[InlineButton]]:
-    return [
-        [
-            InlineButton(
-                text="Пройти в чате",
-                callback_data=_start_chat_callback_payload(start_param),
-                kind="callback",
-            )
-        ],
-        [InlineButton(text="Нужно другое время", callback_data="booking:manual_time", kind="callback")],
-    ]
+def _contextual_welcome_buttons(
+    *,
+    settings: Settings,
+    start_param: str | None = None,
+) -> list[list[InlineButton]]:
+    del settings, start_param
+    return []
 
 
 def _contextual_welcome_text(candidate_name: str) -> str:
     return (
         f"Здравствуйте, {candidate_name}!\n\n"
-        "Вас ждёт короткая анкета RecruitSmart. Её можно пройти двумя способами:\n"
-        "• открыть мини-приложение через кнопку в шапке чата;\n"
-        "• продолжить здесь, в чате.\n\n"
-        "Сразу после анкеты можно выбрать удобные дату и время онлайн-собеседования."
+        "Добро пожаловать в RecruitSmart.\n\n"
+        "Чтобы записаться на первый этап собеседования в формате онлайн-конференции, "
+        "пройдите короткое тестирование в mini app.\n\n"
+        "Тестирование поможет нам лучше понять ваш опыт, а вам — быстро и удобно выбрать "
+        "доступный слот собеседования.\n\n"
+        "Сообщения от RecruitSmart, напоминания и детали встречи будут приходить в этот чат. "
+        "Тестирование и запись на слот проходят только в mini app внутри MAX."
     )
 
 
 def _generic_welcome_text(*, invite_might_be_active: bool) -> str:
-    if invite_might_be_active:
-        return (
-            "Здравствуйте!\n\n"
-            "У вас уже есть активный шаг RecruitSmart. Откройте мини-приложение через кнопку в шапке чата "
-            "или продолжите здесь, в чате. После анкеты можно будет выбрать дату и время онлайн-собеседования."
-        )
+    del invite_might_be_active
     return (
         "Здравствуйте!\n\n"
-        "Когда RecruitSmart откроет для вас следующий шаг, в этом чате станет доступна короткая анкета и запись "
-        "на онлайн-собеседование. Если приглашение уже было, откройте системную кнопку приложения в шапке чата."
+        "Добро пожаловать в RecruitSmart.\n\n"
+        "Чтобы записаться на первый этап собеседования в формате онлайн-конференции, "
+        "откройте mini app в этом боте и пройдите короткое тестирование.\n\n"
+        "Сообщения от RecruitSmart, напоминания и детали встречи будут приходить в этот чат. "
+        "Тестирование и запись на слот проходят только в mini app внутри MAX."
     )
 
 
@@ -286,11 +302,7 @@ async def _resolve_existing_chat_principal(max_user_id: str) -> tuple[str | None
 
 
 async def _load_candidate_by_max_user_id(max_user_id: str) -> User | None:
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.max_user_id == max_user_id))
-        if user is not None:
-            await session.refresh(user)
-        return user
+    return await get_user_by_max_user_id(max_user_id)
 
 
 def _manual_request_pending(candidate: User) -> bool:
@@ -348,8 +360,11 @@ async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) ->
             ignored_reason="missing_user",
         )
 
-    request_seed = start_param or max_user_id
-    welcome_request_id = _stable_client_request_id("welcome", request_seed)
+    welcome_request_id = _bot_started_request_id(
+        payload,
+        start_param=start_param,
+        max_user_id=max_user_id,
+    )
     if await _chat_message_exists(welcome_request_id):
         return MaxWebhookAck(
             update_type="bot_started",
@@ -368,62 +383,58 @@ async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) ->
 
     candidate_name = str(getattr(candidate, "fio", "") or "").strip() or None
     existing_name, existing_principal = await _resolve_existing_chat_principal(max_user_id)
-    if not start_param:
-        prompt = None
-        guidance_text = None
-        principal = existing_principal
-        try:
-            async with async_session() as session:
-                async with session.begin():
-                    if principal is None:
-                        principal = await bootstrap_max_chat_principal(
-                            session,
-                            settings=settings,
-                            max_user_id=max_user_id,
-                            provider_session_id=f"max-bot-started:{max_user_id}",
-                            display_name=_extract_display_name(payload),
-                            username=_extract_username(payload),
-                        )
-                    if principal is not None:
-                        prompt = await activate_max_chat_handoff(session, principal)
-        except MaxLaunchError as exc:
-            if exc.code == "launch_context_ambiguous":
-                guidance_text = _manual_review_welcome_text()
-            elif exc.code != "max_rollout_disabled":
-                logger.warning(
-                    "max.webhook.bot_started_global_bootstrap_failed",
-                    extra={"code": exc.code, "max_user_id": max_user_id},
-                )
-        if prompt is not None:
-            await send_max_chat_prompt(
-                settings=settings,
-                max_user_id=max_user_id,
-                prompt=prompt,
-                client_request_id=welcome_request_id,
-                payload={
-                    "origin_channel": "max",
-                    "kind": "candidate_chat_prompt",
-                    "bootstrap": "global_start",
+    guidance_text = None
+    principal = existing_principal
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                if principal is None:
+                    provider_session_suffix = start_param or max_user_id
+                    principal = await bootstrap_max_chat_principal(
+                        session,
+                        settings=settings,
+                        max_user_id=max_user_id,
+                        start_param=start_param or None,
+                        provider_session_id=f"max-bot-started:{provider_session_suffix}",
+                        display_name=_extract_display_name(payload),
+                        username=_extract_username(payload),
+                    )
+    except MaxLaunchError as exc:
+        if exc.code == "launch_context_ambiguous":
+            guidance_text = _manual_review_welcome_text()
+        elif exc.code != "max_rollout_disabled":
+            logger.warning(
+                "max.webhook.bot_started_global_bootstrap_failed",
+                extra={
+                    "code": exc.code,
+                    "max_user_id": max_user_id,
+                    "start_param": bool(start_param),
                 },
             )
-            return MaxWebhookAck(update_type="bot_started")
-        if guidance_text:
-            await _send_max_message(
-                settings=settings,
-                max_user_id=max_user_id,
-                text=guidance_text,
-                client_request_id=welcome_request_id,
-                payload={
-                    "origin_channel": "max",
-                    "kind": "start_manual_review",
-                    "active_context": existing_principal is not None,
-                },
-            )
-            return MaxWebhookAck(update_type="bot_started")
+    if guidance_text:
+        await _send_max_message(
+            settings=settings,
+            max_user_id=max_user_id,
+            text=guidance_text,
+            client_request_id=welcome_request_id,
+            payload={
+                "origin_channel": "max",
+                "kind": "start_manual_review",
+                "active_context": existing_principal is not None,
+            },
+        )
+        return MaxWebhookAck(update_type="bot_started")
 
-    if candidate_name or existing_principal is not None:
+    if candidate_name is None and principal is not None:
+        candidate = await _load_candidate_by_max_user_id(max_user_id)
+        candidate_name = str(getattr(candidate, "fio", "") or "").strip() or None
+
+    if candidate_name or principal is not None or existing_principal is not None:
         welcome_text = _contextual_welcome_text(candidate_name or existing_name or "кандидат")
-        buttons = _contextual_welcome_buttons(start_param=start_param if candidate is not None else None)
+        buttons = _contextual_welcome_buttons(
+            settings=settings,
+            start_param=start_param if candidate is not None else None,
+        )
     else:
         welcome_text = _generic_welcome_text(invite_might_be_active=bool(start_param))
         buttons = []
@@ -655,62 +666,16 @@ async def _handle_message_callback(payload: dict[str, Any], *, settings: Setting
         )
 
     if str(callback_payload or "").startswith("entry:start_chat"):
-        prompt = None
-        guidance_text = None
-        async with async_session() as session:
-            async with session.begin():
-                context = await resolve_max_chat_context(session, max_user_id=max_user_id)
-                principal = context.principal if context is not None else None
-                if principal is None:
-                    raw_start_param = str(callback_payload or "").split(":", 2)
-                    start_param = raw_start_param[2].strip() if len(raw_start_param) == 3 else ""
-                    try:
-                        principal = await bootstrap_max_chat_principal(
-                            session,
-                            max_user_id=max_user_id,
-                            start_param=start_param,
-                            settings=settings,
-                            provider_session_id=f"max-start-chat:{max_user_id}:{callback_id}",
-                            display_name=_extract_display_name(payload),
-                            username=_extract_username(payload),
-                        )
-                    except MaxLaunchError as exc:
-                        if exc.code == "launch_context_ambiguous":
-                            guidance_text = _manual_review_welcome_text()
-                        else:
-                            guidance_text = (
-                                "Сейчас не удалось открыть анкету автоматически. "
-                                "Попробуйте ещё раз чуть позже."
-                                if exc.code == "max_rollout_disabled"
-                                else (
-                                    "Сейчас не удалось открыть анкету в чате. "
-                                    "Откройте мини-приложение через кнопку в шапке чата или попросите рекрутера помочь с доступом."
-                                )
-                            )
-                if principal is not None:
-                    prompt = await activate_max_chat_handoff(session, principal)
-                elif guidance_text is None:
-                    guidance_text = (
-                        "Сейчас не удалось открыть анкету в чате. "
-                        "Откройте мини-приложение через кнопку в шапке чата или попросите рекрутера помочь с доступом."
-                    )
-
-        if guidance_text:
-            await _send_max_message(
-                settings=settings,
-                max_user_id=max_user_id,
-                text=guidance_text,
-                client_request_id=_stable_client_request_id("chat-guidance", callback_id),
-                payload={"origin_channel": "max", "kind": "candidate_chat_guidance"},
-            )
-            return MaxWebhookAck(update_type="message_callback")
-
-        await send_max_chat_prompt(
+        await _send_max_message(
             settings=settings,
             max_user_id=max_user_id,
-            prompt=prompt,
-            client_request_id=_stable_client_request_id("chat-start", callback_id),
-            payload={"origin_channel": "max", "kind": "candidate_chat_prompt"},
+            text=(
+                "Тестирование и запись на слот проходят только в mini app внутри MAX.\n\n"
+                "Откройте mini app через системную кнопку приложения в этом боте. "
+                "В этот чат RecruitSmart будет отправлять напоминания, детали встречи и сообщения от рекрутера."
+            ),
+            client_request_id=_stable_client_request_id("miniapp-guidance", callback_id),
+            payload={"origin_channel": "max", "kind": "candidate_miniapp_guidance"},
         )
         return MaxWebhookAck(update_type="message_callback")
 

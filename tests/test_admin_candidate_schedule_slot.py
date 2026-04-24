@@ -535,6 +535,33 @@ async def test_schedule_slot_reuses_active_reschedule_assignment(admin_app) -> N
     assert payload["ok"] is True
     assert payload["status"] == "pending_offer"
     assert int(payload.get("slot_assignment_id") or 0) == assignment_id
+    new_slot_id = int(payload.get("slot_id") or 0)
+    assert new_slot_id > 0
+
+    detail_after = await get_candidate_detail(
+        candidate.id,
+        principal=Principal(type="admin", id=-1),
+    )
+    assert detail_after is not None
+    assert detail_after["operational_summary"]["has_scheduling_conflict"] is False
+    assert detail_after["scheduling_summary"]["slot_id"] == new_slot_id
+    assert detail_after["scheduling_summary"]["slot_assignment_id"] == assignment_id
+
+    async with async_session() as session:
+        old_slot = await session.get(models.Slot, slot_id)
+        new_slot = await session.get(models.Slot, new_slot_id)
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+
+    assert old_slot is not None
+    assert old_slot.status == models.SlotStatus.FREE
+    assert old_slot.candidate_id is None
+    assert old_slot.candidate_tg_id is None
+    assert new_slot is not None
+    assert new_slot.status == models.SlotStatus.PENDING
+    assert new_slot.candidate_id == candidate.candidate_id
+    assert new_slot.candidate_tg_id == candidate.telegram_id
+    assert assignment is not None
+    assert assignment.slot_id == new_slot_id
 
 
 @pytest.mark.asyncio
@@ -1182,6 +1209,79 @@ async def test_api_slot_propose_uses_telegram_user_id_fallback(admin_app) -> Non
 
 
 @pytest.mark.asyncio
+async def test_api_slot_propose_allows_max_candidate_without_telegram(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=7771121,
+        fio="API MAX Propose Candidate",
+        city="Алматы",
+        username="api_max_propose",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = None
+        user.telegram_id = None
+        user.max_user_id = "max-propose-candidate"
+        user.messenger_platform = "max"
+        await session.commit()
+
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter MAX", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=3),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/slots/{slot_id}/propose",
+        json={"candidate_id": candidate.candidate_id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 201
+    async with async_session() as session:
+        db_slot = await session.get(models.Slot, slot_id)
+        db_user = await session.get(User, candidate.id)
+        assignment = await session.scalar(
+            select(models.SlotAssignment).where(models.SlotAssignment.slot_id == slot_id)
+        )
+        outbox = await session.scalar(
+            select(models.OutboxNotification).where(
+                models.OutboxNotification.type == "slot_assignment_offer",
+                models.OutboxNotification.booking_id == slot_id,
+            )
+        )
+    assert db_slot is not None
+    assert db_slot.candidate_id == candidate.candidate_id
+    assert db_slot.candidate_tg_id is None
+    assert db_user is not None
+    assert db_user.candidate_status == CandidateStatus.SLOT_PENDING
+    assert assignment is not None
+    assert assignment.candidate_tg_id is None
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert (outbox.payload_json or {}).get("candidate_external_id") == "max-propose-candidate"
+
+
+@pytest.mark.asyncio
 async def test_api_schedule_slot_returns_candidate_telegram_missing_when_no_identifiers(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=777113,
@@ -1195,6 +1295,8 @@ async def test_api_schedule_slot_returns_candidate_telegram_missing_when_no_iden
         assert user is not None
         user.telegram_user_id = None
         user.telegram_id = None
+        user.max_user_id = None
+        user.messenger_platform = "telegram"
         await session.commit()
 
         city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
@@ -1229,6 +1331,274 @@ async def test_api_schedule_slot_returns_candidate_telegram_missing_when_no_iden
     payload = response.json()
     assert payload["ok"] is False
     assert payload["error"] == "candidate_telegram_missing"
+
+
+@pytest.mark.asyncio
+async def test_api_schedule_slot_allows_max_candidate_without_telegram(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=7771131,
+        fio="API MAX Schedule Candidate",
+        city="Алматы",
+        username="api_max_schedule",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = None
+        user.telegram_id = None
+        user.max_user_id = "max-schedule-candidate"
+        user.messenger_platform = "max"
+        await session.commit()
+
+        city = models.City(name="Алматы", tz="Asia/Almaty", active=True)
+        recruiter = models.Recruiter(name="Almaty Recruiter MAX Schedule", tz="Asia/Almaty", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime.now(timezone.utc) + timedelta(days=4),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+            purpose="interview",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={"slot_id": slot_id},
+        follow_redirects=False,
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+
+    async with async_session() as session:
+        db_slot = await session.get(models.Slot, slot_id)
+        db_user = await session.get(User, candidate.id)
+        assignment = await session.scalar(
+            select(models.SlotAssignment).where(models.SlotAssignment.slot_id == slot_id)
+        )
+        outbox = await session.scalar(
+            select(models.OutboxNotification).where(
+                models.OutboxNotification.type == "slot_assignment_offer",
+                models.OutboxNotification.booking_id == slot_id,
+            )
+        )
+    assert db_slot is not None
+    assert db_slot.status == models.SlotStatus.PENDING
+    assert db_slot.candidate_id == candidate.candidate_id
+    assert db_slot.candidate_tg_id is None
+    assert db_user is not None
+    assert db_user.candidate_status == CandidateStatus.SLOT_PENDING
+    assert assignment is not None
+    assert assignment.status == models.SlotAssignmentStatus.OFFERED
+    assert assignment.candidate_tg_id is None
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert (outbox.payload_json or {}).get("candidate_external_id") == "max-schedule-candidate"
+
+
+@pytest.mark.asyncio
+async def test_api_schedule_slot_manual_allows_max_candidate_without_telegram(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=7771132,
+        fio="API MAX Manual Schedule Candidate",
+        city="Севастополь",
+        username="api_max_manual_schedule",
+        initial_status=CandidateStatus.WAITING_SLOT,
+    )
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = None
+        user.telegram_id = None
+        user.max_user_id = "max-manual-schedule-candidate"
+        user.messenger_platform = "max"
+        await session.commit()
+
+        city = models.City(name="Севастополь", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Sevastopol Recruiter MAX Schedule", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        city_id = city.id
+        recruiter_id = recruiter.id
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={
+            "recruiter_id": recruiter_id,
+            "city_id": city_id,
+            "date": "2032-01-16",
+            "time": "17:00",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+
+    async with async_session() as session:
+        db_user = await session.get(User, candidate.id)
+        assignment = await session.scalar(
+            select(models.SlotAssignment)
+            .where(models.SlotAssignment.candidate_id == candidate.candidate_id)
+            .order_by(models.SlotAssignment.id.desc())
+        )
+        assert assignment is not None
+        db_slot = await session.get(models.Slot, assignment.slot_id)
+        outbox = await session.scalar(
+            select(models.OutboxNotification).where(
+                models.OutboxNotification.type == "slot_assignment_offer",
+                models.OutboxNotification.booking_id == assignment.slot_id,
+            )
+        )
+    assert db_slot is not None
+    assert db_slot.status == models.SlotStatus.PENDING
+    assert db_slot.candidate_id == candidate.candidate_id
+    assert db_slot.candidate_tg_id is None
+    assert db_user is not None
+    assert db_user.candidate_status == CandidateStatus.SLOT_PENDING
+    assert assignment.status == models.SlotAssignmentStatus.OFFERED
+    assert assignment.candidate_tg_id is None
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert (outbox.payload_json or {}).get("candidate_external_id") == "max-manual-schedule-candidate"
+    assert (outbox.payload_json or {}).get("offer_variant") == "manual_confirmation"
+    assert (outbox.payload_json or {}).get("format_label") == "видео"
+    assert (outbox.payload_json or {}).get("duration_label") == "15–20 минут"
+
+
+@pytest.mark.asyncio
+async def test_api_schedule_slot_manual_replaces_active_assignment_for_max_candidate(admin_app) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=7771133,
+        fio="API MAX Manual Replace Candidate",
+        city="Махачкала",
+        username="api_max_manual_replace",
+        initial_status=CandidateStatus.SLOT_PENDING,
+    )
+    async with async_session() as session:
+        user = await session.get(User, candidate.id)
+        assert user is not None
+        user.telegram_user_id = None
+        user.telegram_id = None
+        user.max_user_id = "max-manual-replace-candidate"
+        user.messenger_platform = "max"
+
+        city = models.City(name="Махачкала", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Makhachkala Recruiter MAX Replace", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        old_slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=datetime(2032, 1, 17, 9, 0, tzinfo=timezone.utc),
+            duration_min=60,
+            status=models.SlotStatus.FREE,
+        )
+        session.add(old_slot)
+        await session.commit()
+        await session.refresh(old_slot)
+
+        city_id = city.id
+        recruiter_id = recruiter.id
+        old_slot_id = old_slot.id
+
+    initial_offer = await create_slot_assignment(
+        slot_id=old_slot_id,
+        candidate_id=candidate.candidate_id,
+        candidate_tg_id=None,
+        candidate_tz="Europe/Moscow",
+        created_by="admin",
+    )
+    assert initial_offer.ok is True
+    old_assignment_id = int(initial_offer.payload["slot_assignment_id"])
+
+    response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/schedule-slot",
+        json={
+            "recruiter_id": recruiter_id,
+            "city_id": city_id,
+            "date": "2032-01-18",
+            "time": "17:00",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "pending_offer"
+
+    async with async_session() as session:
+        old_slot = await session.get(models.Slot, old_slot_id)
+        old_assignment = await session.get(models.SlotAssignment, old_assignment_id)
+        active_assignments = (
+            await session.execute(
+                select(models.SlotAssignment).where(
+                    models.SlotAssignment.candidate_id == candidate.candidate_id,
+                    models.SlotAssignment.status.in_(
+                        (
+                            models.SlotAssignmentStatus.OFFERED,
+                            models.SlotAssignmentStatus.CONFIRMED,
+                            models.SlotAssignmentStatus.RESCHEDULE_REQUESTED,
+                            models.SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
+                        )
+                    ),
+                )
+            )
+        ).scalars().all()
+        assert len(active_assignments) == 1
+        new_assignment = active_assignments[0]
+        new_slot = await session.get(models.Slot, new_assignment.slot_id)
+        outbox = await session.scalar(
+            select(models.OutboxNotification).where(
+                models.OutboxNotification.type == "slot_assignment_offer",
+                models.OutboxNotification.booking_id == new_assignment.slot_id,
+            )
+        )
+
+    assert old_slot is not None
+    assert old_slot.status == models.SlotStatus.FREE
+    assert old_slot.candidate_id is None
+    assert old_slot.candidate_tg_id is None
+    assert old_assignment is not None
+    assert old_assignment.status == models.SlotAssignmentStatus.CANCELLED
+    assert new_assignment.slot_id != old_slot_id
+    assert new_assignment.status == models.SlotAssignmentStatus.OFFERED
+    assert new_assignment.candidate_tg_id is None
+    assert new_slot is not None
+    assert new_slot.status == models.SlotStatus.PENDING
+    assert new_slot.candidate_id == candidate.candidate_id
+    assert new_slot.candidate_tg_id is None
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert (outbox.payload_json or {}).get("candidate_external_id") == "max-manual-replace-candidate"
+    assert (outbox.payload_json or {}).get("offer_variant") == "manual_confirmation"
 
 
 @pytest.mark.asyncio

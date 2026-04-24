@@ -1,11 +1,96 @@
 """Recruiter broadcast helpers."""
 
+from pathlib import Path
+from typing import Any
+
 from . import base as _base
 
 for _name in dir(_base):
     if _name.startswith("__") and _name.endswith("__"):
         continue
     globals()[_name] = getattr(_base, _name)
+
+FSInputFile = _base.FSInputFile
+REPORTS_DIR = _base.REPORTS_DIR
+State = _base.State
+_candidate_report_paths = _base._candidate_report_paths
+candidate_services = _base.candidate_services
+escape_html = _base.escape_html
+get_active_recruiters_for_city = _base.get_active_recruiters_for_city
+get_bot = _base.get_bot
+get_recruiter = _base.get_recruiter
+get_settings = _base.get_settings
+logger = _base.logger
+
+
+def _channel_identity_line(
+    *,
+    source_channel: str,
+    candidate_external_id: str | None,
+    candidate_tg_id: int | None,
+) -> str | None:
+    channel_label = str(source_channel or "telegram").strip().upper()
+    if candidate_external_id:
+        return f"{escape_html(channel_label)}: <code>{escape_html(str(candidate_external_id))}</code>"
+    if candidate_tg_id is not None:
+        return f"TG: <code>{candidate_tg_id}</code>"
+    return None
+
+
+async def _resolve_recruiter_recipients(
+    *,
+    city_id: int | None,
+    responsible_recruiter_id: int | None = None,
+) -> list[Any]:
+    recipients: list[Any] = []
+    seen_chats: set[Any] = set()
+
+    if responsible_recruiter_id:
+        try:
+            responsible = await get_recruiter(int(responsible_recruiter_id))
+        except Exception:
+            responsible = None
+        chat_id = getattr(responsible, "tg_chat_id", None) if responsible else None
+        if chat_id:
+            recipients.append(responsible)
+            seen_chats.add(chat_id)
+
+    if not recipients and city_id:
+        try:
+            recruiters = await get_active_recruiters_for_city(int(city_id))
+        except Exception:
+            recruiters = []
+        for rec in recruiters:
+            chat_id = getattr(rec, "tg_chat_id", None)
+            if not chat_id or chat_id in seen_chats:
+                continue
+            recipients.append(rec)
+            seen_chats.add(chat_id)
+
+    return recipients
+
+
+def _candidate_notification_markup(candidate_db_id: int | None, crm_link: str | None) -> Any:
+    if not candidate_db_id:
+        return None
+    try:
+        from ..keyboards import kb_candidate_notification
+
+        return kb_candidate_notification(int(candidate_db_id), crm_link or "")
+    except Exception:
+        logger.debug("Could not build candidate notification keyboard", exc_info=True)
+        return None
+
+
+def _candidate_crm_link(candidate_db_id: int | None) -> str | None:
+    try:
+        settings = get_settings()
+        public_base = (settings.crm_public_url or settings.bot_backend_url or "").rstrip("/")
+        if candidate_db_id and public_base:
+            return f"{public_base}/app/candidates/{int(candidate_db_id)}"
+    except Exception:
+        return None
+    return None
 
 async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Path) -> bool:
     city_id = state.get("city_id")
@@ -14,7 +99,7 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
     except Exception:
         recruiters = []
 
-    recipients: List[Any] = []
+    recipients: list[Any] = []
     seen_chats: set[Any] = set()
     for rec in recruiters:
         chat_id = getattr(rec, "tg_chat_id", None)
@@ -74,7 +159,7 @@ async def _share_test1_with_recruiters(user_id: int, state: State, form_path: Pa
     return delivered
 
 
-async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city_name: str, city_id: Optional[int]) -> bool:
+async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city_name: str, city_id: int | None) -> bool:
     """Notify recruiters when a candidate is waiting for a manual slot assignment.
 
     Args:
@@ -97,7 +182,7 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
         return False
 
     # Deduplicate recruiters by chat_id
-    recipients: List[Any] = []
+    recipients: list[Any] = []
     seen_chats: set[Any] = set()
     for rec in recruiters:
         chat_id = getattr(rec, "tg_chat_id", None)
@@ -155,16 +240,16 @@ async def notify_recruiters_waiting_slot(user_id: int, candidate_name: str, city
 
 async def notify_recruiters_manual_availability(
     *,
-    candidate_tg_id: Optional[int],
+    candidate_tg_id: int | None,
     candidate_name: str,
     city_name: str,
     city_id: int,
-    availability_window: Optional[str],
+    availability_window: str | None,
     availability_note: str,
-    candidate_db_id: Optional[int] = None,
-    responsible_recruiter_id: Optional[int] = None,
+    candidate_db_id: int | None = None,
+    responsible_recruiter_id: int | None = None,
     source_channel: str = "telegram",
-    candidate_external_id: Optional[str] = None,
+    candidate_external_id: str | None = None,
 ) -> bool:
     """Notify recruiters that a candidate provided/updated manual availability.
 
@@ -176,42 +261,15 @@ async def notify_recruiters_manual_availability(
     if not city_id:
         return False
 
-    recipients: List[Any] = []
-    seen_chats: set[Any] = set()
-
-    if responsible_recruiter_id:
-        try:
-            responsible = await get_recruiter(int(responsible_recruiter_id))
-        except Exception:
-            responsible = None
-        chat_id = getattr(responsible, "tg_chat_id", None) if responsible else None
-        if chat_id:
-            recipients = [responsible]
-            seen_chats.add(chat_id)
-
-    if not recipients:
-        try:
-            recruiters = await get_active_recruiters_for_city(int(city_id))
-        except Exception:
-            recruiters = []
-        for rec in recruiters:
-            chat_id = getattr(rec, "tg_chat_id", None)
-            if not chat_id or chat_id in seen_chats:
-                continue
-            recipients.append(rec)
-            seen_chats.add(chat_id)
+    recipients = await _resolve_recruiter_recipients(
+        city_id=int(city_id),
+        responsible_recruiter_id=responsible_recruiter_id,
+    )
 
     if not recipients:
         return False
 
-    crm_link = None
-    try:
-        settings = get_settings()
-        public_base = (settings.crm_public_url or settings.bot_backend_url or "").rstrip("/")
-        if candidate_db_id and public_base:
-            crm_link = f"{public_base}/app/candidates/{int(candidate_db_id)}"
-    except Exception:
-        crm_link = None
+    crm_link = _candidate_crm_link(candidate_db_id)
 
     lines = [
         "🕒 <b>Кандидат указал удобное время</b>",
@@ -223,21 +281,16 @@ async def notify_recruiters_manual_availability(
         lines.append(f"🗓 {escape_html(str(availability_window))}")
     if availability_note:
         lines.append(f"💬 {escape_html(str(availability_note))}")
-    channel_label = str(source_channel or "telegram").strip().upper()
-    if candidate_external_id:
-        lines.append(f"{escape_html(channel_label)}: <code>{escape_html(str(candidate_external_id))}</code>")
-    elif candidate_tg_id is not None:
-        lines.append(f"TG: <code>{candidate_tg_id}</code>")
+    identity_line = _channel_identity_line(
+        source_channel=source_channel,
+        candidate_external_id=candidate_external_id,
+        candidate_tg_id=candidate_tg_id,
+    )
+    if identity_line:
+        lines.append(identity_line)
     message = "\n".join(lines)
 
-    # Build inline keyboard with action buttons and CRM deep link
-    reply_markup = None
-    if candidate_db_id:
-        try:
-            from ..keyboards import kb_candidate_notification
-            reply_markup = kb_candidate_notification(int(candidate_db_id), crm_link or "")
-        except Exception:
-            logger.debug("Could not build manual availability keyboard", exc_info=True)
+    reply_markup = _candidate_notification_markup(candidate_db_id, crm_link)
 
     delivered = False
     bot = get_bot()
@@ -247,7 +300,7 @@ async def notify_recruiters_manual_availability(
             continue
 
         sent = False
-        report_paths: List[Path] = []
+        report_paths: list[Path] = []
         if candidate_tg_id is not None:
             try:
                 db_user = await candidate_services.get_user_by_telegram_id(candidate_tg_id)
@@ -283,8 +336,138 @@ async def notify_recruiters_manual_availability(
 
     return delivered
 
+
+async def notify_recruiters_test1_completed(
+    *,
+    candidate_name: str,
+    city_name: str,
+    city_id: int | None,
+    candidate_db_id: int | None = None,
+    responsible_recruiter_id: int | None = None,
+    source_channel: str = "telegram",
+    candidate_external_id: str | None = None,
+    candidate_tg_id: int | None = None,
+    report_path: Path | None = None,
+    screening_outcome_label: str | None = None,
+) -> bool:
+    recipients = await _resolve_recruiter_recipients(
+        city_id=city_id,
+        responsible_recruiter_id=responsible_recruiter_id,
+    )
+    if not recipients:
+        return False
+
+    crm_link = _candidate_crm_link(candidate_db_id)
+    reply_markup = _candidate_notification_markup(candidate_db_id, crm_link)
+    lines = [
+        "📋 <b>Кандидат завершил Тест 1</b>",
+        "",
+        f"👤 {escape_html(str(candidate_name))}",
+        f"📍 {escape_html(str(city_name or '—'))}",
+    ]
+    if screening_outcome_label:
+        lines.append(f"🧭 {escape_html(str(screening_outcome_label))}")
+    identity_line = _channel_identity_line(
+        source_channel=source_channel,
+        candidate_external_id=candidate_external_id,
+        candidate_tg_id=candidate_tg_id,
+    )
+    if identity_line:
+        lines.append(identity_line)
+    message = "\n".join(lines)
+
+    delivered = False
+    bot = get_bot()
+    for recruiter in recipients:
+        chat_id = getattr(recruiter, "tg_chat_id", None)
+        if not chat_id:
+            continue
+        if report_path and report_path.exists():
+            try:
+                await bot.send_document(
+                    chat_id,
+                    FSInputFile(str(report_path)),
+                    caption=message,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                )
+                delivered = True
+                continue
+            except Exception:
+                logger.exception(
+                    "Failed to deliver Test 1 attachment to recruiter %s",
+                    getattr(recruiter, "id", None),
+                )
+        try:
+            await bot.send_message(chat_id, message, parse_mode="HTML", reply_markup=reply_markup)
+            delivered = True
+        except Exception:
+            logger.exception(
+                "Failed to send Test 1 completion notification to recruiter %s",
+                getattr(recruiter, "id", None),
+            )
+    return delivered
+
+
+async def notify_recruiters_slot_selected(
+    *,
+    candidate_name: str,
+    city_name: str,
+    city_id: int | None,
+    slot_start_local: str,
+    recruiter_name: str | None,
+    candidate_db_id: int | None = None,
+    responsible_recruiter_id: int | None = None,
+    source_channel: str = "telegram",
+    candidate_external_id: str | None = None,
+    candidate_tg_id: int | None = None,
+) -> bool:
+    recipients = await _resolve_recruiter_recipients(
+        city_id=city_id,
+        responsible_recruiter_id=responsible_recruiter_id,
+    )
+    if not recipients:
+        return False
+    crm_link = _candidate_crm_link(candidate_db_id)
+    reply_markup = _candidate_notification_markup(candidate_db_id, crm_link)
+    lines = [
+        "🗓 <b>Кандидат выбрал слот собеседования</b>",
+        "",
+        f"👤 {escape_html(str(candidate_name))}",
+        f"📍 {escape_html(str(city_name or '—'))}",
+        f"⏰ {escape_html(str(slot_start_local))}",
+    ]
+    if recruiter_name:
+        lines.append(f"👔 {escape_html(str(recruiter_name))}")
+    identity_line = _channel_identity_line(
+        source_channel=source_channel,
+        candidate_external_id=candidate_external_id,
+        candidate_tg_id=candidate_tg_id,
+    )
+    if identity_line:
+        lines.append(identity_line)
+    message = "\n".join(lines)
+
+    delivered = False
+    bot = get_bot()
+    for recruiter in recipients:
+        chat_id = getattr(recruiter, "tg_chat_id", None)
+        if not chat_id:
+            continue
+        try:
+            await bot.send_message(chat_id, message, parse_mode="HTML", reply_markup=reply_markup)
+            delivered = True
+        except Exception:
+            logger.exception(
+                "Failed to send slot selected notification to recruiter %s",
+                getattr(recruiter, "id", None),
+            )
+    return delivered
+
 __all__ = [
     '_share_test1_with_recruiters',
+    'notify_recruiters_test1_completed',
+    'notify_recruiters_slot_selected',
     'notify_recruiters_manual_availability',
     'notify_recruiters_waiting_slot',
 ]

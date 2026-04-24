@@ -58,6 +58,21 @@ _ACTIVE_ASSIGNMENT_STATUSES = (
     SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
 )
 
+_RESERVATION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _reservation_lock_key(
+    *,
+    candidate_id: Optional[str],
+    candidate_tg_id: Optional[int],
+) -> Optional[str]:
+    normalized_candidate_id = str(candidate_id or "").strip()
+    if normalized_candidate_id:
+        return f"candidate:{normalized_candidate_id}"
+    if candidate_tg_id is not None:
+        return f"tg:{candidate_tg_id}"
+    return None
+
 
 def slot_status_free_clause(slot: Slot):
     """Return a SQLAlchemy expression matching free slots (shared across UI/API)."""
@@ -878,6 +893,9 @@ async def add_outbox_notification(
                     existing.payload_json = payload
                 if correlation_id:
                     existing.correlation_id = correlation_id
+                if messenger_channel:
+                    existing.messenger_channel = messenger_channel
+                    existing.last_channel_attempted = messenger_channel
                 existing.next_retry_at = None
                 existing.locked_at = None
                 if existing.attempts > 0:
@@ -1203,17 +1221,9 @@ async def _confirm_slot_by_candidate_in_session(
         return CandidateConfirmationResult(status="not_found", slot=None)
 
     status_value = (slot.status or "").lower()
-    if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
-        slot.start_utc = _to_aware_utc(slot.start_utc)
-        return CandidateConfirmationResult(status="already_confirmed", slot=slot)
-
-    if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
-        slot.start_utc = _to_aware_utc(slot.start_utc)
-        return CandidateConfirmationResult(status="invalid_status", slot=slot)
-
     candidate_tg_id = slot.candidate_tg_id
 
-    async def _sync_matching_slot_assignment() -> None:
+    async def _sync_matching_slot_assignment() -> bool:
         assignment_filters = [
             SlotAssignment.slot_id == slot.id,
             SlotAssignment.status.in_(_ACTIVE_ASSIGNMENT_STATUSES),
@@ -1224,7 +1234,7 @@ async def _confirm_slot_by_candidate_in_session(
         if candidate_tg_id is not None:
             candidate_clauses.append(SlotAssignment.candidate_tg_id == candidate_tg_id)
         if not candidate_clauses:
-            return
+            return False
         matching_assignments = (
             await session.execute(
                 select(SlotAssignment)
@@ -1234,16 +1244,27 @@ async def _confirm_slot_by_candidate_in_session(
             )
         ).scalars().all()
         if len(matching_assignments) != 1:
-            return
+            return False
         assignment = matching_assignments[0]
         if assignment.status == SlotAssignmentStatus.OFFERED:
             assignment.status = SlotAssignmentStatus.CONFIRMED
             assignment.confirmed_at = datetime.now(timezone.utc)
-        elif assignment.status in {
+            return True
+        if assignment.status in {
             SlotAssignmentStatus.CONFIRMED,
             SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
         }:
             assignment.confirmed_at = assignment.confirmed_at or datetime.now(timezone.utc)
+        return False
+
+    if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
+        await _sync_matching_slot_assignment()
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        return CandidateConfirmationResult(status="already_confirmed", slot=slot)
+
+    if status_value not in {SlotStatus.BOOKED, SlotStatus.PENDING}:
+        slot.start_utc = _to_aware_utc(slot.start_utc)
+        return CandidateConfirmationResult(status="invalid_status", slot=slot)
 
     existing_log = await session.scalar(
         select(NotificationLog.id)
@@ -1254,9 +1275,18 @@ async def _confirm_slot_by_candidate_in_session(
         )
         .with_for_update()
     )
+    confirmed_from_pending_offer = False
     if existing_log:
         slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
-        await _sync_matching_slot_assignment()
+        confirmed_from_pending_offer = (
+            status_value
+            in {
+                SlotStatus.PENDING,
+                SlotStatus.BOOKED,
+                SlotStatus.CONFIRMED_BY_CANDIDATE,
+            }
+            and await _sync_matching_slot_assignment()
+        )
         if update_candidate_status:
             status_update_candidate_tg_id = candidate_tg_id
             status_update_candidate_id = slot.candidate_id
@@ -1265,7 +1295,15 @@ async def _confirm_slot_by_candidate_in_session(
         result = CandidateConfirmationResult(status="already_confirmed", slot=slot)
     else:
         slot.status = SlotStatus.CONFIRMED_BY_CANDIDATE
-        await _sync_matching_slot_assignment()
+        confirmed_from_pending_offer = (
+            status_value
+            in {
+                SlotStatus.PENDING,
+                SlotStatus.BOOKED,
+                SlotStatus.CONFIRMED_BY_CANDIDATE,
+            }
+            and await _sync_matching_slot_assignment()
+        )
         if update_candidate_status:
             status_update_candidate_tg_id = candidate_tg_id
             status_update_candidate_id = slot.candidate_id
@@ -1295,6 +1333,41 @@ async def _confirm_slot_by_candidate_in_session(
             },
             session=session,
         )
+        if confirmed_from_pending_offer:
+            from backend.apps.bot.services import base as bot_base_module
+            from backend.apps.bot.services.slot_flow import capture_slot_snapshot
+
+            candidate = None
+            if slot.candidate_id:
+                candidate = await session.scalar(
+                    select(User).where(User.candidate_id == slot.candidate_id)
+                )
+            elif candidate_tg_id is not None:
+                candidate = await session.scalar(
+                    select(User).where(User.telegram_id == candidate_tg_id)
+                )
+            candidate_external_id = (
+                str(getattr(candidate, "max_user_id", "") or "").strip()
+                if candidate is not None and str(getattr(candidate, "messenger_platform", "") or "").strip().lower() == "max"
+                else ""
+            )
+            snapshot = await capture_slot_snapshot(slot)
+            details_payload = {
+                "event": "candidate_confirmed",
+                "snapshot": bot_base_module._snapshot_payload(snapshot),
+            }
+            if slot.candidate_id:
+                details_payload["candidate_id"] = slot.candidate_id
+            if candidate_external_id:
+                details_payload["candidate_external_id"] = candidate_external_id
+            await add_outbox_notification(
+                notification_type="interview_confirmed_candidate",
+                booking_id=slot.id,
+                candidate_tg_id=candidate_tg_id,
+                payload=details_payload,
+                messenger_channel="max" if candidate_external_id else "telegram",
+                session=session,
+            )
 
         result = CandidateConfirmationResult(status="confirmed", slot=slot)
 
@@ -1461,6 +1534,56 @@ async def confirm_slot_by_candidate(
 
 
 async def reserve_slot(
+    slot_id: int,
+    candidate_tg_id: Optional[int],
+    candidate_fio: str,
+    candidate_tz: str,
+    *,
+    candidate_id: Optional[str] = None,
+    candidate_city_id: Optional[int] = None,
+    candidate_username: Optional[str] = None,
+    purpose: str = "interview",
+    expected_recruiter_id: Optional[int] = None,
+    expected_city_id: Optional[int] = None,
+    allow_candidate_replace: bool = False,
+) -> ReservationResult:
+    lock_key = _reservation_lock_key(
+        candidate_id=candidate_id,
+        candidate_tg_id=candidate_tg_id,
+    )
+    if lock_key is None:
+        return await _reserve_slot_impl(
+            slot_id,
+            candidate_tg_id,
+            candidate_fio,
+            candidate_tz,
+            candidate_id=candidate_id,
+            candidate_city_id=candidate_city_id,
+            candidate_username=candidate_username,
+            purpose=purpose,
+            expected_recruiter_id=expected_recruiter_id,
+            expected_city_id=expected_city_id,
+            allow_candidate_replace=allow_candidate_replace,
+        )
+
+    lock = _RESERVATION_LOCKS.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        return await _reserve_slot_impl(
+            slot_id,
+            candidate_tg_id,
+            candidate_fio,
+            candidate_tz,
+            candidate_id=candidate_id,
+            candidate_city_id=candidate_city_id,
+            candidate_username=candidate_username,
+            purpose=purpose,
+            expected_recruiter_id=expected_recruiter_id,
+            expected_city_id=expected_city_id,
+            allow_candidate_replace=allow_candidate_replace,
+        )
+
+
+async def _reserve_slot_impl(
     slot_id: int,
     candidate_tg_id: Optional[int],
     candidate_fio: str,

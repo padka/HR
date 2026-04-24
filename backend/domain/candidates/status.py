@@ -80,7 +80,7 @@ STATUS_LABELS: Dict[CandidateStatus, str] = {
     CandidateStatus.STALLED_WAITING_SLOT: "Долго ждет слота (>24ч)",
     CandidateStatus.SLOT_PENDING: "На согласовании",
     CandidateStatus.INTERVIEW_SCHEDULED: "Назначено собеседование",
-    CandidateStatus.INTERVIEW_CONFIRMED: "Подтвердил собеседование",
+    CandidateStatus.INTERVIEW_CONFIRMED: "Предварительно подтвердился на собеседование",
     CandidateStatus.INTERVIEW_DECLINED: "Отказ на этапе собеседования",
     CandidateStatus.TEST2_SENT: "Прошел собес (Тест 2)",
     CandidateStatus.TEST2_COMPLETED: "Прошел Тест 2 (ожидает ОД)",

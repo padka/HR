@@ -18,6 +18,7 @@ from backend.core.db import async_session
 from backend.core.settings import get_settings
 from backend.domain.models import Slot
 from backend.domain.repositories import reject_slot
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import set_status_interview_scheduled
 
 try:  # pragma: no cover - optional dependency during tests
@@ -105,7 +106,16 @@ async def set_slot_outcome(
             return False, "Слот не найден.", None, None
         if principal and principal.type == "recruiter" and slot.recruiter_id != principal.id:
             return False, "Слот не найден.", None, None
-        if not getattr(slot, "candidate_tg_id", None):
+        has_candidate_chat_binding = bool(getattr(slot, "candidate_tg_id", None))
+        has_candidate_identity = has_candidate_chat_binding or bool(getattr(slot, "candidate_id", None))
+        if normalized == "success" and not has_candidate_identity:
+            return (
+                False,
+                "Слот не привязан к кандидату, отправить сообщение нельзя.",
+                None,
+                None,
+            )
+        if normalized == "reject" and not has_candidate_chat_binding:
             return (
                 False,
                 "Слот не привязан к кандидату, отправить сообщение нельзя.",
@@ -164,7 +174,7 @@ def _plan_test2_dispatch(slot: Slot, service: Optional[BotService]) -> BotDispat
         candidate_city_id=getattr(slot, "candidate_city_id", None),
         candidate_name=getattr(slot, "candidate_fio", "") or "",
         scheduled_at=scheduled_at,
-        required=get_settings().test2_required,
+        required=True,
     )
     return BotDispatch(status="sent_test2", plan=plan)
 
@@ -373,7 +383,7 @@ async def reschedule_slot_booking(slot_id: int) -> tuple[bool, str, bool]:
 
     if not slot:
         return False, "Слот не найден.", False
-    if slot.candidate_tg_id is None:
+    if slot.candidate_tg_id is None and not getattr(slot, "candidate_id", None):
         return False, "Слот не привязан к кандидату.", False
 
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
@@ -418,7 +428,7 @@ async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = No
 
         if not slot:
             return False, "Слот не найден.", False
-        if slot.candidate_tg_id is None:
+        if slot.candidate_tg_id is None and not getattr(slot, "candidate_id", None):
             return False, "Слот не привязан к кандидату.", False
         if slot.status == SlotStatus.BOOKED:
             return True, "Слот уже подтверждён.", False
@@ -428,10 +438,8 @@ async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = No
         slot.status = SlotStatus.BOOKED
         await session.commit()
 
-    # Notify candidate
+    # Update candidate status/chat state even if notification delivery is unavailable.
     try:
-        notification_service = get_notification_service()
-        snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
         if slot.candidate_tg_id is not None:
             try:
                 await set_status_interview_scheduled(slot.candidate_tg_id)
@@ -447,6 +455,31 @@ async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = No
                     "Failed to clear candidate chat state after approval",
                     extra={"slot_id": slot_id, "candidate_tg_id": slot.candidate_tg_id},
                 )
+        elif getattr(slot, "candidate_id", None):
+            try:
+                from backend.domain.candidates.status_service import (
+                    update_candidate_status_by_candidate_id,
+                )
+
+                await update_candidate_status_by_candidate_id(
+                    str(slot.candidate_id),
+                    CandidateStatus.INTERVIEW_SCHEDULED,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to update candidate status to INTERVIEW_SCHEDULED",
+                    extra={"slot_id": slot_id, "candidate_id": slot.candidate_id},
+                )
+    except Exception:
+        logger.exception("Failed to update approval side effects", extra={"slot_id": slot_id})
+
+    # Notify candidate
+    try:
+        try:
+            notification_service = get_notification_service()
+        except RuntimeError:
+            notification_service = NotificationService()
+        snapshot: SlotSnapshot = await capture_slot_snapshot(slot)
         result = await notification_service.on_booking_status_changed(
             slot_id,
             BookingNotificationStatus.APPROVED,
@@ -454,6 +487,8 @@ async def approve_slot_booking(slot_id: int, principal: Optional[Principal] = No
         )
         if result.status == "sent":
             return True, "Слот подтверждён. Кандидату отправлено уведомление.", True
+        if result.status == "queued":
+            return True, "Слот подтверждён. Уведомление поставлено в очередь на отправку.", True
         return True, "Слот подтверждён. Уведомление не отправлено.", False
     except Exception as exc:
         logger.exception("Failed to notify candidate about approval", extra={"slot_id": slot_id})
@@ -470,7 +505,7 @@ async def reject_slot_booking(slot_id: int, principal: Optional[Principal] = Non
 
     if not slot:
         return False, "Слот не найден.", False
-    if slot.candidate_tg_id is None:
+    if slot.candidate_tg_id is None and not getattr(slot, "candidate_id", None):
         return False, "Слот не привязан к кандидату.", False
 
     snapshot: SlotSnapshot = await capture_slot_snapshot(slot)

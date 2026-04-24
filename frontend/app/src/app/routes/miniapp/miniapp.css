@@ -1,9 +1,9 @@
 .max-miniapp {
-  --max-shell-padding-top: clamp(18px, 4vw, 28px);
-  --max-shell-padding-bottom: clamp(32px, 6vw, 56px);
+  --max-shell-padding-top: clamp(6px, 1.8vw, 14px);
+  --max-shell-padding-bottom: clamp(18px, 3.6vw, 34px);
   position: relative;
   min-height: 100vh;
-  padding: 0 14px;
+  padding: 0 12px;
   color: var(--max-text);
   font-family: var(--max-font-body);
   background: var(--max-shell-bg);
@@ -27,16 +27,16 @@
   margin: 0 auto;
   padding: var(--max-shell-padding-top) 0 var(--max-shell-padding-bottom);
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
-.max-hero,
 .max-card,
 .max-select-card,
 .max-option,
 .max-slot-card,
 .max-booking-card,
 .max-empty-state {
+  min-width: 0;
   border: 1px solid var(--max-border);
   border-radius: var(--max-radius-card);
   background: color-mix(in srgb, var(--max-surface-1) 97%, transparent);
@@ -45,28 +45,6 @@
   -webkit-backdrop-filter: blur(var(--max-blur-card));
 }
 
-.max-hero {
-  position: relative;
-  overflow: hidden;
-  padding: clamp(24px, 5vw, 38px);
-  border-color: var(--max-border-strong);
-  background:
-    linear-gradient(140deg, rgba(255, 255, 255, 0.05), transparent 62%),
-    color-mix(in srgb, var(--max-surface-1) 95%, rgba(6, 10, 18, 0.14));
-}
-
-.max-hero::after {
-  content: '';
-  position: absolute;
-  inset: auto -16% -38% 36%;
-  height: 140px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(134, 181, 255, 0.12), rgba(133, 230, 200, 0.05));
-  filter: blur(28px);
-  opacity: 0.62;
-}
-
-.max-hero__badge,
 .max-pill {
   display: inline-flex;
   align-items: center;
@@ -84,7 +62,6 @@
   text-transform: uppercase;
 }
 
-.max-hero h1,
 .max-card h2,
 .max-card h3,
 .max-empty-state h3 {
@@ -93,16 +70,6 @@
   letter-spacing: -0.035em;
 }
 
-.max-hero h1 {
-  position: relative;
-  z-index: 1;
-  margin-top: 16px;
-  font-size: clamp(32px, 6vw, 52px);
-  line-height: 0.98;
-  color: var(--max-text);
-}
-
-.max-hero p,
 .max-card p,
 .max-empty-state p,
 .max-option span,
@@ -112,19 +79,16 @@
   margin: 0;
   color: var(--max-text-muted);
   line-height: 1.6;
-}
-
-.max-hero p {
-  max-width: 58ch;
+  overflow-wrap: anywhere;
 }
 
 .max-card {
-  padding: 22px;
+  padding: 18px;
 }
 
 .max-card--compact,
 .max-inline-card {
-  padding: 18px;
+  padding: 16px;
 }
 
 .max-stack {
@@ -154,6 +118,7 @@
 
 .max-section-head > div,
 .max-state-card__copy {
+  min-width: 0;
   display: grid;
   gap: 4px;
 }
@@ -276,7 +241,7 @@
 .max-booking-card strong {
   display: block;
   color: var(--max-text);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
   letter-spacing: -0.02em;
 }
@@ -334,7 +299,7 @@
 .max-banner {
   display: grid;
   gap: 4px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: var(--max-radius-control);
   border: 1px solid color-mix(in srgb, var(--max-border) 84%, rgba(255, 255, 255, 0.06));
   background: color-mix(in srgb, var(--max-surface-2) 96%, transparent);
@@ -374,8 +339,8 @@
 .max-field input,
 .max-field textarea {
   width: 100%;
-  min-height: 50px;
-  padding: 0 16px;
+  min-height: 48px;
+  padding: 0 14px;
   border-radius: var(--max-radius-control);
   border: 1px solid color-mix(in srgb, var(--max-border) 88%, rgba(255, 255, 255, 0.08));
   background: color-mix(in srgb, var(--max-surface-2) 96%, transparent);
@@ -385,8 +350,8 @@
 }
 
 .max-field textarea {
-  min-height: 128px;
-  padding: 14px 16px;
+  min-height: 112px;
+  padding: 12px 14px;
   resize: vertical;
 }
 
@@ -403,7 +368,7 @@
 .max-step {
   display: grid;
   gap: 8px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: calc(var(--max-radius-control) + 2px);
   border: 1px solid color-mix(in srgb, var(--max-border) 76%, rgba(255, 255, 255, 0.04));
   background: color-mix(in srgb, var(--max-surface-2) 96%, transparent);
@@ -469,7 +434,7 @@
   display: grid;
   gap: 6px;
   width: 100%;
-  padding: 16px;
+  padding: 14px;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -494,7 +459,7 @@
 .max-empty-state {
   display: grid;
   gap: 8px;
-  padding: 16px;
+  padding: 14px;
   background: color-mix(in srgb, var(--max-surface-2) 96%, transparent);
 }
 
@@ -550,12 +515,31 @@
   border-color: color-mix(in srgb, var(--max-border) 84%, rgba(255, 255, 255, 0.08));
 }
 
+.max-question-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--max-border) 84%, rgba(255, 255, 255, 0.06));
+  border-radius: calc(var(--max-radius-control) + 4px);
+  background:
+    linear-gradient(150deg, rgba(103, 144, 212, 0.12), rgba(9, 16, 28, 0.92)),
+    color-mix(in srgb, var(--max-surface-2) 94%, transparent);
+}
+
+.max-question-card h3 {
+  font-size: clamp(24px, 4vw, 30px);
+  line-height: 1.18;
+}
+
+.max-question-card p {
+  max-width: 56ch;
+}
+
 .max-muted {
   color: var(--max-text-muted);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .max-hero,
   .max-card,
   .max-select-card,
   .max-option,
@@ -575,17 +559,14 @@
 
 @media (max-width: 768px) {
   .max-miniapp {
-    padding: 0 10px;
+    --max-shell-padding-top: 4px;
+    --max-shell-padding-bottom: 16px;
+    padding: 0 6px;
   }
 
-  .max-card,
-  .max-hero {
-    padding: 18px;
-    border-radius: 24px;
-  }
-
-  .max-state-card__head {
-    align-items: stretch;
+  .max-card {
+    padding: 14px;
+    border-radius: 18px;
   }
 
   .max-grid {
@@ -597,7 +578,60 @@
     align-items: stretch;
   }
 
+  .max-btn,
+  .max-option,
+  .max-select-card,
+  .max-day-pill {
+    min-height: 40px;
+  }
+
   .max-btn {
     width: 100%;
+  }
+
+  .max-option,
+  .max-select-card,
+  .max-slot-card,
+  .max-booking-card {
+    padding: 12px;
+  }
+
+  .max-question-card {
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .max-question-card h3 {
+    font-size: clamp(18px, 5vw, 22px);
+    line-height: 1.22;
+  }
+
+  .max-card__eyebrow,
+  .max-banner__eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+  }
+
+  .max-next-step__body strong,
+  .max-step__meta strong,
+  .max-select-card strong,
+  .max-slot-card strong,
+  .max-booking-card strong {
+    font-size: 15px;
+  }
+
+  .max-banner {
+    padding: 10px 12px;
+  }
+
+  .max-field input,
+  .max-field textarea {
+    min-height: 44px;
+    padding-inline: 12px;
+  }
+
+  .max-field textarea {
+    min-height: 96px;
+    padding-block: 10px;
   }
 }

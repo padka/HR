@@ -6,6 +6,7 @@ import hmac
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
@@ -13,6 +14,7 @@ import backend.apps.admin_ui.services.candidates.lifecycle_use_cases as lifecycl
 import pytest
 from backend.apps.bot.config import TEST2_QUESTIONS, refresh_questions_bank
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain.candidates.models import (
     CandidateAccessAuthMethod,
     CandidateAccessSession,
@@ -30,6 +32,7 @@ from backend.domain.models import (
     Application,
     ApplicationEvent,
     City,
+    OutboxNotification,
     Recruiter,
     Slot,
     SlotAssignment,
@@ -49,17 +52,22 @@ def _generate_max_init_data(
     start_param: str | None = "max_launch_ref",
     query_id: str = "query-1",
     auth_date: int | None = None,
+    first_name: str = "Max",
+    last_name: str | None = None,
 ) -> str:
+    user_payload = {
+        "id": user_id,
+        "username": "max_candidate",
+        "first_name": first_name,
+        "language_code": "ru",
+    }
+    if last_name is not None:
+        user_payload["last_name"] = last_name
     payload = {
         "auth_date": str(auth_date or int(time.time())),
         "query_id": query_id,
         "user": json.dumps(
-            {
-                "id": user_id,
-                "username": "max_candidate",
-                "first_name": "Max",
-                "language_code": "ru",
-            },
+            user_payload,
             ensure_ascii=False,
             separators=(",", ":"),
         ),
@@ -123,7 +131,12 @@ async def _seed_candidate_access_scenario(
             or 1
         )
         city = City(name="Москва", tz="Europe/Moscow", active=True)
-        recruiter = Recruiter(name="MAX Recruiter", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(
+            name="MAX Recruiter",
+            tz="Europe/Moscow",
+            active=True,
+            telemost_url="https://telemost.example/max-room",
+        )
         recruiter.cities.append(city)
         session.add_all([city, recruiter])
         await session.flush()
@@ -392,6 +405,8 @@ async def _seed_assignment_owned_candidate_scheduling(
     candidate_id: int,
     recruiter_id: int,
     city_id: int,
+    slot_status: str = SlotStatus.PENDING,
+    assignment_status: str = SlotAssignmentStatus.OFFERED,
 ) -> int:
     async with async_session() as session:
         candidate = await session.get(User, candidate_id)
@@ -403,7 +418,7 @@ async def _seed_assignment_owned_candidate_scheduling(
             candidate_city_id=city_id,
             start_utc=datetime.now(UTC) + timedelta(days=1, hours=3),
             duration_min=60,
-            status=SlotStatus.PENDING,
+            status=slot_status,
             purpose="interview",
             tz_name="Europe/Moscow",
             candidate_id=candidate.candidate_id,
@@ -422,7 +437,7 @@ async def _seed_assignment_owned_candidate_scheduling(
                 candidate_tg_id=None,
                 candidate_tz="Europe/Moscow",
                 origin="candidate_access_test",
-                status=SlotAssignmentStatus.OFFERED,
+                status=assignment_status,
             )
         )
         await session.commit()
@@ -435,11 +450,15 @@ def _launch_headers(
     user_id: int,
     start_param: str,
     query_id: str = "query-1",
+    first_name: str = "Max",
+    last_name: str | None = None,
 ) -> tuple[dict[str, str], dict]:
     init_data = _generate_max_init_data(
         user_id=user_id,
         start_param=start_param,
         query_id=query_id,
+        first_name=first_name,
+        last_name=last_name,
     )
     launch_response = client.post("/api/max/launch", json={"init_data": init_data})
     assert launch_response.status_code == 200
@@ -556,6 +575,36 @@ def test_candidate_access_test1_returns_questionnaire(candidate_access_client):
     assert payload["is_completed"] is False
 
 
+async def _set_candidate_fio(candidate_id: int, fio: str) -> None:
+    async with async_session() as session:
+        candidate = await session.get(User, int(candidate_id))
+        assert candidate is not None
+        candidate.fio = fio
+        await session.commit()
+
+
+def test_candidate_access_test1_prefills_fio_from_max_full_name(candidate_access_client):
+    seeded = asyncio.run(_seed_candidate_access_scenario(start_param="test1_prefill_name_ref", user_id=710121))
+    asyncio.run(_set_candidate_fio(int(seeded["candidate_id"]), "Max"))
+    headers, _ = _launch_headers(
+        candidate_access_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+        query_id="prefill-name-query",
+        first_name="Max",
+        last_name="Petrov",
+    )
+
+    response = candidate_access_client.get("/api/candidate-access/test1", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft_answers"]["fio"] == "Max Petrov"
+    candidate = asyncio.run(_load_candidate(int(seeded["candidate_id"])))
+    assert candidate is not None
+    assert candidate.fio == "Max Petrov"
+
+
 def test_candidate_access_test1_answers_persist_draft(candidate_access_client):
     seeded = asyncio.run(_seed_candidate_access_scenario(start_param="test1_answers_ref", user_id=710021))
     headers, _ = _launch_headers(
@@ -606,6 +655,34 @@ def test_candidate_access_test1_complete_returns_screening_decision_and_offer(ca
     assert payload["interview_offer"] is not None
     assert payload["interview_offer"]["candidate_id"] == seeded["candidate_id"]
     assert payload["interview_offer"]["application_id"] is None
+
+
+def test_candidate_access_test1_complete_persists_report_and_notifies_recruiters(
+    candidate_access_client,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    seeded = asyncio.run(_seed_candidate_access_scenario(start_param="test1_notify_ref", user_id=710222))
+    headers, _ = _launch_headers(
+        candidate_access_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+    )
+    notify_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "backend.apps.admin_api.candidate_access.services.notify_recruiters_test1_completed",
+        notify_mock,
+    )
+
+    payload = _complete_candidate_test1(candidate_access_client, headers=headers)
+
+    assert payload["is_completed"] is True
+    assert notify_mock.await_count == 1
+    candidate = asyncio.run(_load_candidate(int(seeded["candidate_id"])))
+    assert candidate is not None
+    assert candidate.test1_report_url == f"reports/{seeded['candidate_id']}/test1.txt"
+    report_path = Path(get_settings().data_dir) / candidate.test1_report_url
+    assert report_path.is_file()
+    assert "Отчёт по Тесту 1" in report_path.read_text(encoding="utf-8")
 
 
 def test_candidate_access_test1_complete_is_idempotent(candidate_access_client):
@@ -901,7 +978,8 @@ def test_candidate_access_manual_availability_activates_draft_and_updates_journe
     assert journey.status_code == 200
     journey_payload = journey.json()
     assert journey_payload["status_card"]["title"] == "Пожелания по времени отправлены"
-    assert journey_payload["primary_action"]["kind"] == "chat"
+    assert journey_payload["primary_action"]["kind"] == "help"
+    assert journey_payload["primary_action"]["label"] == "Проверить статус"
 
 
 def test_candidate_access_me_exposes_test1_completed_status(candidate_access_client):
@@ -958,6 +1036,33 @@ def test_candidate_access_booking_creates_pending_booking(candidate_access_clien
     assert candidate.responsible_recruiter_id == secondary["recruiter_id"]
 
 
+def test_candidate_access_booking_notifies_recruiter_when_slot_selected(
+    candidate_access_client,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    seeded = asyncio.run(_seed_candidate_access_scenario(start_param="booking_notify_ref", user_id=710304))
+    headers, _ = _launch_headers(
+        candidate_access_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+    )
+    _complete_candidate_test1(candidate_access_client, headers=headers)
+    notify_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "backend.apps.admin_api.candidate_access.services.notify_recruiters_slot_selected",
+        notify_mock,
+    )
+
+    response = candidate_access_client.post(
+        "/api/candidate-access/bookings",
+        headers=headers,
+        json={"slot_id": seeded["slot_id"]},
+    )
+
+    assert response.status_code == 201
+    assert notify_mock.await_count == 1
+
+
 def test_candidate_access_journey_returns_active_booking_after_booking_created(candidate_access_client):
     seeded = asyncio.run(_seed_candidate_access_scenario(start_param="journey_booking_ref", user_id=710104))
     headers, _ = _launch_headers(
@@ -982,6 +1087,10 @@ def test_candidate_access_journey_returns_active_booking_after_booking_created(c
     assert payload["active_booking"] is not None
     assert payload["active_booking"]["booking_id"] == seeded["slot_id"]
     assert payload["active_booking"]["status"] == SlotStatus.PENDING
+    assert payload["active_booking"]["candidate_can_confirm_pending"] is False
+    assert payload["status_card"]["title"] == "Слот отправлен на согласование"
+    assert payload["primary_action"]["key"] == "review_pending_booking"
+    assert "просматриваем ваше резюме" in payload["status_card"]["body"].lower()
 
 
 def test_candidate_access_booking_blocks_assignment_owned_scheduling(candidate_access_client):
@@ -1037,13 +1146,14 @@ def test_candidate_access_confirm_confirms_owned_booking(candidate_access_client
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == SlotStatus.CONFIRMED_BY_CANDIDATE
+    assert payload["meet_link"] == "https://telemost.example/max-room"
 
     slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
     assert slot is not None
     assert slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
 
 
-def test_candidate_access_confirm_blocks_assignment_owned_scheduling(candidate_access_client):
+def test_candidate_access_confirm_allows_pending_manual_offer(candidate_access_client):
     seeded = asyncio.run(_seed_candidate_access_scenario(start_param="assignment_confirm_ref", user_id=710106))
     headers, _ = _launch_headers(
         candidate_access_client,
@@ -1065,17 +1175,75 @@ def test_candidate_access_confirm_blocks_assignment_owned_scheduling(candidate_a
         )
     )
 
+    journey = candidate_access_client.get("/api/candidate-access/journey", headers=headers)
+    assert journey.status_code == 200
+    journey_payload = journey.json()
+    assert journey_payload["active_booking"]["candidate_can_confirm_pending"] is True
+    assert journey_payload["status_card"]["title"] == "Мы предлагаем время собеседования"
+    assert journey_payload["primary_action"]["key"] == "confirm_pending_offer"
+
     response = candidate_access_client.post(
         f"/api/candidate-access/bookings/{seeded['slot_id']}/confirm",
         headers=headers,
     )
 
-    assert response.status_code == 409
-    assert "slotassignment" in response.json()["detail"].lower()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == SlotStatus.CONFIRMED_BY_CANDIDATE
+    assert payload["meet_link"] == "https://telemost.example/max-room"
 
     slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
     assert slot is not None
-    assert slot.status == SlotStatus.PENDING
+    assert slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
+
+    async def _load_latest_confirmation_outbox() -> OutboxNotification | None:
+        async with async_session() as session:
+            return await session.scalar(
+                select(OutboxNotification)
+                .where(
+                    OutboxNotification.booking_id == int(seeded["slot_id"]),
+                    OutboxNotification.type == "interview_confirmed_candidate",
+                )
+                .order_by(OutboxNotification.id.desc())
+            )
+
+    outbox = asyncio.run(_load_latest_confirmation_outbox())
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert (outbox.payload_json or {}).get("candidate_external_id") == str(seeded["user_id"])
+
+
+def test_candidate_access_confirm_allows_booked_assignment_owned_booking(candidate_access_client):
+    seeded = asyncio.run(_seed_candidate_access_scenario(start_param="booked_assignment_confirm_ref", user_id=710107))
+    headers, _ = _launch_headers(
+        candidate_access_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+    )
+    _complete_candidate_test1(candidate_access_client, headers=headers)
+    slot_id = asyncio.run(
+        _seed_assignment_owned_candidate_scheduling(
+            candidate_id=int(seeded["candidate_id"]),
+            recruiter_id=int(seeded["recruiter_id"]),
+            city_id=int(seeded["city_id"]),
+            slot_status=SlotStatus.BOOKED,
+            assignment_status=SlotAssignmentStatus.CONFIRMED,
+        )
+    )
+
+    response = candidate_access_client.post(
+        f"/api/candidate-access/bookings/{slot_id}/confirm",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == SlotStatus.CONFIRMED_BY_CANDIDATE
+    assert payload["meet_link"] == "https://telemost.example/max-room"
+
+    slot = asyncio.run(_load_slot(int(slot_id)))
+    assert slot is not None
+    assert slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
 
 
 def test_candidate_access_reschedule_moves_owned_booking(candidate_access_client):

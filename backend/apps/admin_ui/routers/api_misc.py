@@ -232,6 +232,29 @@ list_known_template_keys = content_api.list_known_template_keys
 known_template_presets = content_api.known_template_presets
 
 
+def _candidate_max_user_id(candidate: User) -> Optional[str]:
+    return str(getattr(candidate, "max_user_id", "") or "").strip() or None
+
+
+async def _set_slot_pending_for_candidate(candidate: User, *, context: dict[str, object]) -> None:
+    from backend.domain.candidates.status_service import (
+        set_status_slot_pending,
+        update_candidate_status_by_candidate_id,
+    )
+
+    candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
+    if candidate_tg_id is not None:
+        await set_status_slot_pending(candidate_tg_id)
+        return
+    if candidate.candidate_id:
+        await update_candidate_status_by_candidate_id(
+            candidate.candidate_id,
+            CandidateStatus.SLOT_PENDING,
+        )
+        return
+    logger.warning("slot_assignment_route.missing_candidate_identifier", extra=context)
+
+
 @lru_cache(maxsize=1)
 def _max_rollout_runtime() -> SimpleNamespace:
     from backend.apps.admin_ui.services.max_rollout import (
@@ -436,6 +459,7 @@ async def api_dashboard_incoming(
     search: Optional[str] = Query(default=None),
     city_id: Optional[int] = Query(default=None, ge=1),
     status: str = Query(default="all"),
+    channel: str = Query(default="all"),
     owner: str = Query(default="all"),
     waiting: str = Query(default="all"),
     ai_level: str = Query(default="all"),
@@ -458,6 +482,7 @@ async def api_dashboard_incoming(
             page_size=normalized_page_size,
             city_id=city_id,
             status=status,
+            channel=channel,
             owner=owner,
             waiting=waiting,
             ai_level=ai_level,
@@ -488,6 +513,7 @@ async def api_dashboard_incoming(
         search=search,
         city_id=city_id,
         status=status,
+        channel=channel,
         owner=owner,
         waiting=waiting,
         ai_level=ai_level,
@@ -1169,7 +1195,6 @@ async def _assign_existing_slot_for_candidate(
     route_label: str,
     created_by: str,
 ) -> JSONResponse:
-    from backend.domain.candidates.status_service import set_status_slot_pending
     from backend.domain.slot_assignment_service import create_slot_assignment
 
     async with async_session() as session:
@@ -1204,7 +1229,7 @@ async def _assign_existing_slot_for_candidate(
         )
 
     candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
-    if candidate_tg_id is None:
+    if candidate_tg_id is None and _candidate_max_user_id(candidate) is None:
         return JSONResponse(
             {
                 "ok": False,
@@ -1246,7 +1271,10 @@ async def _assign_existing_slot_for_candidate(
         )
 
     try:
-        await set_status_slot_pending(candidate_tg_id)
+        await _set_slot_pending_for_candidate(
+            candidate,
+            context={"candidate_id": candidate.id, "slot_id": slot_id},
+        )
     except Exception:
         logger.exception(
             "Failed to set SLOT_PENDING after assigning existing slot",
@@ -3082,7 +3110,6 @@ async def api_schedule_slot(
     )
     from backend.apps.admin_ui.timezones import DEFAULT_TZ
     from backend.core.time_utils import ensure_aware_utc, parse_form_datetime
-    from backend.domain.candidates.status_service import set_status_slot_pending
     from backend.domain.repositories import find_city_by_plain_name
     from backend.domain.slot_assignment_service import propose_alternative
 
@@ -3139,7 +3166,7 @@ async def api_schedule_slot(
                 )
 
     candidate_tg_id = user.telegram_user_id or user.telegram_id
-    if mode != "manual_silent" and not candidate_tg_id:
+    if mode != "manual_silent" and not candidate_tg_id and _candidate_max_user_id(user) is None:
         return JSONResponse(
             {
                 "ok": False,
@@ -3309,7 +3336,10 @@ async def api_schedule_slot(
                         status_code=result.status_code or 409,
                     )
                 try:
-                    await set_status_slot_pending(candidate_tg_id)
+                    await _set_slot_pending_for_candidate(
+                        user,
+                        context={"candidate_id": candidate_id},
+                    )
                 except Exception:
                     logger.exception(
                         "Failed to set SLOT_PENDING after reschedule propose",
@@ -3392,6 +3422,10 @@ async def api_schedule_slot(
                 user_agent=user_agent,
                 custom_message_sent=custom_message_sent,
                 custom_message_text=custom_message_text,
+                allow_replace_active_assignment=bool(
+                    str(getattr(user, "max_user_id", "") or "").strip()
+                    and not (user.telegram_user_id or user.telegram_id)
+                ),
                 principal=principal,
             )
     except ManualSlotError as exc:

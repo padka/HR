@@ -37,6 +37,11 @@ from backend.domain.candidates.models import (
     CandidateLaunchChannel,
     User,
 )
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.workflow import (
+    WorkflowStatus,
+    workflow_status_from_raw_value,
+)
 from backend.domain.models import ApplicationEvent
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,23 @@ router = APIRouter(tags=["max"])
 
 MAX_START_PARAM_RE = re.compile(r"^[A-Za-z0-9_-]{1,512}$")
 MAX_ACCESS_SESSION_IDLE_TTL = timedelta(hours=8)
+_ACTIVE_REPEAT_BLOCKING_CANDIDATE_STATUSES = {
+    CandidateStatus.SLOT_PENDING,
+    CandidateStatus.INTERVIEW_SCHEDULED,
+    CandidateStatus.INTERVIEW_CONFIRMED,
+    CandidateStatus.TEST2_SENT,
+    CandidateStatus.TEST2_COMPLETED,
+    CandidateStatus.INTRO_DAY_SCHEDULED,
+    CandidateStatus.INTRO_DAY_CONFIRMED_PRELIMINARY,
+    CandidateStatus.INTRO_DAY_CONFIRMED_DAY_OF,
+}
+_ACTIVE_REPEAT_BLOCKING_WORKFLOW_STATUSES = {
+    WorkflowStatus.INTERVIEW_SCHEDULED,
+    WorkflowStatus.INTERVIEW_CONFIRMED,
+    WorkflowStatus.TEST_SENT,
+    WorkflowStatus.ONBOARDING_DAY_SCHEDULED,
+    WorkflowStatus.ONBOARDING_DAY_CONFIRMED,
+}
 
 
 class MaxLaunchRequest(BaseModel):
@@ -381,6 +403,29 @@ def _chat_url(
     return f"https://max.ru/{public_bot_name}"
 
 
+def _candidate_blocks_test1_restart(candidate: User) -> bool:
+    candidate_status = getattr(candidate, "candidate_status", None)
+    if candidate_status in _ACTIVE_REPEAT_BLOCKING_CANDIDATE_STATUSES:
+        return True
+
+    workflow_status = workflow_status_from_raw_value(getattr(candidate, "workflow_status", None))
+    if workflow_status in _ACTIVE_REPEAT_BLOCKING_WORKFLOW_STATUSES:
+        return True
+
+    return False
+
+
+def _should_restart_bound_candidate_test1(candidate: User) -> bool:
+    lifecycle_state = str(getattr(candidate, "lifecycle_state", "") or "").strip().lower()
+    has_candidate_status = getattr(candidate, "candidate_status", None) is not None
+    has_workflow_status = workflow_status_from_raw_value(getattr(candidate, "workflow_status", None)) is not None
+    return (
+        lifecycle_state != LIFECYCLE_DRAFT
+        and (has_candidate_status or has_workflow_status)
+        and not _candidate_blocks_test1_restart(candidate)
+    )
+
+
 def _normalized_max_candidate_name(
     *,
     display_name: str | None,
@@ -390,6 +435,33 @@ def _normalized_max_candidate_name(
     if full_name:
         return full_name
     return f"MAX {provider_user_id}"
+
+
+def _should_refresh_candidate_name(
+    *,
+    existing_name: str | None,
+    candidate_name: str | None,
+    provider_user_id: str,
+) -> bool:
+    normalized_existing = str(existing_name or "").strip()
+    normalized_candidate = str(candidate_name or "").strip()
+    if not normalized_candidate:
+        return False
+    candidate_parts = [part for part in normalized_candidate.split() if part]
+    if len(candidate_parts) < 2:
+        return False
+    if not normalized_existing:
+        return True
+    if normalized_existing.casefold() in {
+        f"MAX {provider_user_id}".casefold(),
+        "MAX Candidate".casefold(),
+        "MAX User".casefold(),
+    }:
+        return True
+    existing_parts = [part for part in normalized_existing.split() if part]
+    if len(candidate_parts) > len(existing_parts) and normalized_candidate.casefold().startswith(normalized_existing.casefold()):
+        return True
+    return False
 
 
 async def _load_bound_candidate(
@@ -486,8 +558,9 @@ async def _ensure_max_intake_journey_session(
     candidate: User,
     application_id: int | None,
     now: datetime,
+    force_new: bool = False,
 ) -> CandidateJourneySession:
-    journey_session = await _load_latest_journey_session(session, candidate_id=int(candidate.id))
+    journey_session = None if force_new else await _load_latest_journey_session(session, candidate_id=int(candidate.id))
     if journey_session is not None:
         if journey_session.application_id is None and application_id is not None:
             journey_session.application_id = application_id
@@ -523,12 +596,15 @@ async def _issue_max_intake_launch_token(
     candidate: User,
     provider_user_id: str,
     now: datetime,
+    force_new_journey: bool = False,
+    rotate_active: bool = False,
 ) -> CandidateAccessToken:
     journey_session = await _ensure_max_intake_journey_session(
         session,
         candidate=candidate,
         application_id=None,
         now=now,
+        force_new=force_new_journey,
     )
     preview = await create_max_launch_invite(
         int(candidate.id),
@@ -536,6 +612,7 @@ async def _issue_max_intake_launch_token(
         session=session,
         issued_by_type="candidate_self_serve",
         issued_by_id=provider_user_id,
+        rotate_active=rotate_active,
     )
     token = await session.scalar(
         select(CandidateAccessToken)
@@ -564,6 +641,7 @@ async def _resolve_or_create_global_intake_token(
     username: str | None,
     provider_user_id: str,
     now: datetime,
+    restart_test1: bool = False,
 ) -> CandidateAccessToken:
     candidate = await _load_bound_candidate(
         session,
@@ -581,12 +659,20 @@ async def _resolve_or_create_global_intake_token(
         candidate.messenger_platform = "max"
         candidate.max_user_id = provider_user_id
         candidate.source = candidate.source or "max"
+        if _should_refresh_candidate_name(
+            existing_name=getattr(candidate, "fio", None),
+            candidate_name=candidate_name,
+            provider_user_id=provider_user_id,
+        ):
+            candidate.fio = str(candidate_name or "").strip()
         candidate.last_activity = now
     return await _issue_max_intake_launch_token(
         session,
         candidate=candidate,
         provider_user_id=provider_user_id,
         now=now,
+        force_new_journey=restart_test1,
+        rotate_active=restart_test1,
     )
 
 
@@ -621,17 +707,30 @@ async def bootstrap_max_global_intake_token(
         session,
         provider_user_id=provider_user_id,
     )
-    token = await _load_bound_launch_token(
-        session,
-        provider_user_id=provider_user_id,
-        now=current_time,
-    )
-    if token is not None:
-        return token
     candidate = await _load_bound_candidate(
         session,
         provider_user_id=provider_user_id,
     )
+    restart_test1 = candidate is not None and _should_restart_bound_candidate_test1(candidate)
+    if not restart_test1:
+        token = await _load_bound_launch_token(
+            session,
+            provider_user_id=provider_user_id,
+            now=current_time,
+        )
+        if token is not None:
+            if candidate is not None:
+                candidate.messenger_platform = "max"
+                candidate.max_user_id = provider_user_id
+                candidate.source = candidate.source or "max"
+                if _should_refresh_candidate_name(
+                    existing_name=getattr(candidate, "fio", None),
+                    candidate_name=candidate_name,
+                    provider_user_id=provider_user_id,
+                ):
+                    candidate.fio = str(candidate_name or "").strip()
+                candidate.last_activity = current_time
+            return token
     if candidate is not None:
         is_draft = str(getattr(candidate, "lifecycle_state", "") or "").strip().lower() == LIFECYCLE_DRAFT
         if not is_draft and not await _has_self_serve_max_history(
@@ -655,6 +754,7 @@ async def bootstrap_max_global_intake_token(
         username=username,
         provider_user_id=provider_user_id,
         now=current_time,
+        restart_test1=restart_test1,
     )
 
 
@@ -737,7 +837,12 @@ async def bootstrap_max_launch(
         token = await _load_launch_token(session, start_param=effective_start_param, now=now)
     else:
         try:
-            token = await _load_bound_launch_token(
+            bound_candidate = await _load_bound_candidate(
+                session,
+                provider_user_id=provider_user_id,
+            )
+            restart_test1 = bound_candidate is not None and _should_restart_bound_candidate_test1(bound_candidate)
+            token = None if restart_test1 else await _load_bound_launch_token(
                 session,
                 provider_user_id=provider_user_id,
                 now=now,
@@ -777,6 +882,16 @@ async def bootstrap_max_launch(
         token=token,
         provider_user_id=provider_user_id,
     )
+    if _should_refresh_candidate_name(
+        existing_name=getattr(candidate, "fio", None),
+        candidate_name=init_data.user.full_name,
+        provider_user_id=provider_user_id,
+    ):
+        candidate.fio = str(init_data.user.full_name or "").strip()
+    candidate.messenger_platform = "max"
+    candidate.max_user_id = provider_user_id
+    candidate.source = candidate.source or "max"
+    candidate.last_activity = now
 
     journey_session = await _ensure_journey_session(session, token=token, now=now)
     access_session = await _load_existing_access_session(
@@ -826,6 +941,9 @@ async def bootstrap_max_launch(
         access_session.last_seen_at = now
         access_session.refreshed_at = now
         access_session.expires_at = expires_at
+        access_session.journey_session_id = journey_session.id
+        access_session.application_id = token.application_id
+        access_session.session_version_snapshot = max(1, int(journey_session.session_version or 1))
         if access_session.origin_token_id is None:
             access_session.origin_token_id = token.id
         access_session.metadata_json = {

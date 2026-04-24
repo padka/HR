@@ -19,6 +19,7 @@ from backend.core.messenger.protocol import (
 )
 from backend.domain.candidates.models import (
     CandidateAccessAuthMethod,
+    CandidateAccessSession,
     CandidateAccessToken,
     CandidateAccessTokenKind,
     CandidateJourneySession,
@@ -29,6 +30,7 @@ from backend.domain.candidates.models import (
 )
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import City, Recruiter, Slot, SlotStatus
+from backend.domain.repositories import approve_slot
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -296,6 +298,11 @@ async def _load_journey(candidate_id: int) -> CandidateJourneySession | None:
         return result.scalar_one_or_none()
 
 
+async def _load_candidate(candidate_id: int) -> User | None:
+    async with async_session() as session:
+        return await session.get(User, candidate_id)
+
+
 async def _load_slot(slot_id: int) -> Slot | None:
     async with async_session() as session:
         return await session.get(Slot, slot_id)
@@ -350,6 +357,142 @@ async def _candidate_chat_messages(candidate_id: int) -> list[ChatMessage]:
         return list(result.scalars().all())
 
 
+async def _seed_inactive_duplicate_max_candidate(*, user_id: int) -> int:
+    async with async_session() as session:
+        candidate = User(
+            fio="MAX Duplicate Candidate",
+            username="max_duplicate",
+            city="Москва",
+            messenger_platform="max",
+            source="max",
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            max_user_id=str(user_id),
+            is_active=False,
+            last_activity=datetime.now(UTC) - timedelta(days=2),
+        )
+        session.add(candidate)
+        await session.commit()
+        await session.refresh(candidate)
+        return int(candidate.id)
+
+
+async def _seed_recovery_gap_duplicate_max_candidate(*, user_id: int) -> dict[str, int]:
+    now = datetime.now(UTC)
+    async with async_session() as session:
+        next_access_session_id = int(
+            await session.scalar(select(func.coalesce(func.max(CandidateAccessSession.id), 0) + 1))
+            or 1
+        )
+        stale_candidate = User(
+            fio="MAX Stale Candidate",
+            username="max_stale",
+            city="Москва",
+            messenger_platform="max",
+            source="max",
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            max_user_id=str(user_id),
+            is_active=False,
+            last_activity=now - timedelta(days=2),
+        )
+        session.add(stale_candidate)
+        await session.flush()
+
+        stale_journey = CandidateJourneySession(
+            candidate_id=int(stale_candidate.id),
+            journey_key="candidate_portal",
+            journey_version="v1",
+            entry_channel=CandidateLaunchChannel.MAX.value,
+            current_step_key="booking",
+            last_surface=CandidateJourneySurface.MAX_CHAT.value,
+            last_auth_method=CandidateAccessAuthMethod.ADMIN_INVITE.value,
+            status="active",
+            session_version=1,
+            last_activity_at=now - timedelta(hours=1),
+            payload_json={
+                "candidate_access": {
+                    "active_surface": "max_chat",
+                    "chat_cursor": {
+                        "version": 1,
+                        "surface": "max_chat",
+                        "state": "manual_time_input",
+                        "booking_id": None,
+                        "updated_at": (now - timedelta(hours=1)).isoformat(),
+                    },
+                }
+            },
+        )
+        session.add(stale_journey)
+        await session.flush()
+
+        session.add(
+            CandidateAccessSession(
+                id=next_access_session_id,
+                candidate_id=int(stale_candidate.id),
+                application_id=None,
+                journey_session_id=int(stale_journey.id),
+                journey_surface=CandidateJourneySurface.MAX_CHAT.value,
+                auth_method=CandidateAccessAuthMethod.ADMIN_INVITE.value,
+                launch_channel=CandidateLaunchChannel.MAX.value,
+                provider_session_id=f"stale-gap:{user_id}",
+                provider_user_id=str(user_id),
+                session_version_snapshot=1,
+                status="active",
+                issued_at=now - timedelta(hours=1),
+                last_seen_at=now - timedelta(hours=1),
+                refreshed_at=now - timedelta(hours=1),
+                expires_at=now + timedelta(hours=6),
+                correlation_id=f"stale-gap-{user_id}",
+                metadata_json={"seeded": "stale_gap_duplicate"},
+            )
+        )
+
+        active_candidate = User(
+            fio="MAX Active Candidate",
+            username="max_active",
+            city="Москва",
+            messenger_platform="max",
+            source="max",
+            candidate_status=None,
+            max_user_id=str(user_id),
+            is_active=True,
+            last_activity=now,
+        )
+        session.add(active_candidate)
+        await session.flush()
+
+        active_journey = CandidateJourneySession(
+            candidate_id=int(active_candidate.id),
+            journey_key="candidate_portal",
+            journey_version="v1",
+            entry_channel=CandidateLaunchChannel.MAX.value,
+            current_step_key="test1",
+            last_surface=CandidateJourneySurface.MAX_CHAT.value,
+            last_auth_method=CandidateAccessAuthMethod.ADMIN_INVITE.value,
+            status="active",
+            session_version=1,
+            last_activity_at=now,
+            payload_json={
+                "candidate_access": {
+                    "active_surface": "max_chat",
+                    "chat_cursor": {
+                        "version": 1,
+                        "surface": "max_chat",
+                        "state": "test1_answering",
+                        "booking_id": None,
+                        "updated_at": now.isoformat(),
+                    },
+                }
+            },
+        )
+        session.add(active_journey)
+        await session.commit()
+        return {
+            "active_candidate_id": int(active_candidate.id),
+            "active_journey_id": int(active_journey.id),
+            "stale_candidate_id": int(stale_candidate.id),
+        }
+
+
 def _complete_chat_test1(client: TestClient, *, headers: dict[str, str]) -> None:
     save = client.post(
         "/api/candidate-access/test1/answers",
@@ -374,6 +517,10 @@ def _callback_payloads(message: dict[str, object]) -> list[str]:
 def _last_prompt(adapter: _FakeMaxAdapter) -> dict[str, object]:
     assert adapter.messages
     return adapter.messages[-1]
+
+
+async def _approve_slot_for_test(slot_id: int) -> Slot | None:
+    return await approve_slot(int(slot_id))
 
 
 def _post_max_callback(
@@ -473,6 +620,85 @@ def test_max_webhook_message_created_advances_test1_in_chat_mode(
     assert any(message.direction == "outbound" for message in history)
 
 
+def test_max_webhook_message_created_advances_test1_with_duplicate_max_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    max_chat_client: TestClient,
+):
+    seeded = asyncio.run(_seed_chat_candidate(start_param="webhook-chat-dup", user_id=730012))
+    asyncio.run(_seed_inactive_duplicate_max_candidate(user_id=int(seeded["user_id"])))
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr("backend.apps.admin_api.max_candidate_chat.ensure_max_adapter", _fake_adapter)
+
+    headers, _ = _launch_headers(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+        query_id="launch-query-dup",
+    )
+    handoff = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
+    assert handoff.status_code == 200
+    adapter.messages.clear()
+
+    response = max_chat_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_created",
+            "timestamp": 12,
+            "message": {
+                "sender": {"user_id": str(seeded["user_id"]), "username": "candidate_max"},
+                "body": {"mid": "mid-chat-dup-1", "text": "Иванов Иван Иванович"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert adapter.messages
+    assert "Шаг 2 из" in str(adapter.messages[0]["text"])
+    history = asyncio.run(_candidate_chat_messages(int(seeded["candidate_id"])))
+    assert any(message.direction == "inbound" for message in history)
+    assert any(message.direction == "outbound" and message.channel == "max" for message in history)
+
+
+def test_max_webhook_message_created_recovers_when_latest_access_session_belongs_to_stale_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+    max_chat_client: TestClient,
+):
+    seeded = asyncio.run(_seed_recovery_gap_duplicate_max_candidate(user_id=730013))
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr("backend.apps.admin_api.max_candidate_chat.ensure_max_adapter", _fake_adapter)
+
+    response = max_chat_client.post(
+        "/api/max/webhook",
+        headers={"X-Max-Bot-Api-Secret": "test-max-secret"},
+        json={
+            "update_type": "message_created",
+            "timestamp": 13,
+            "message": {
+                "sender": {"user_id": "730013", "username": "candidate_max"},
+                "body": {"mid": "mid-chat-gap-1", "text": "Иванов Иван Иванович"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert adapter.messages
+    assert "Шаг 2 из" in str(adapter.messages[0]["text"])
+    history = asyncio.run(_candidate_chat_messages(int(seeded["active_candidate_id"])))
+    assert any(message.direction == "inbound" for message in history)
+    assert any(message.direction == "outbound" and message.channel == "max" for message in history)
+    journey = asyncio.run(_load_journey(int(seeded["active_candidate_id"])))
+    assert journey is not None
+    assert journey.last_access_session_id is not None
+
 def test_max_webhook_message_created_auto_handoff_bootstraps_prompt_without_callback(
     monkeypatch: pytest.MonkeyPatch,
     max_chat_client: TestClient,
@@ -510,11 +736,11 @@ def test_max_webhook_message_created_auto_handoff_bootstraps_prompt_without_call
     assert response.status_code == 200
     prompt = _last_prompt(adapter)
     assert "Продолжим здесь." in str(prompt["text"])
-    assert "Сейчас выбран город: Москва." in str(prompt["text"])
+    assert "Выберите рекрутёра" in str(prompt["text"])
     journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
     assert journey is not None
     assert journey.last_surface == CandidateJourneySurface.MAX_CHAT.value
-    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_city"
+    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_recruiter"
     history = asyncio.run(_candidate_chat_messages(int(seeded["candidate_id"])))
     assert any(message.direction == "inbound" for message in history)
     assert any(message.direction == "outbound" and message.channel == "max" for message in history)
@@ -541,28 +767,15 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     _complete_chat_test1(max_chat_client, headers=headers)
     handoff = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
     assert handoff.status_code == 200
-    city_prompt = _last_prompt(adapter)
-    assert "Сейчас выбран город: Москва." in str(city_prompt["text"])
-    assert f"city:pick:{seeded['city_id']}" in _callback_payloads(city_prompt)
+    recruiter_prompt = _last_prompt(adapter)
+    assert "Выберите рекрутёра" in str(recruiter_prompt["text"])
+    recruiter_payloads = _callback_payloads(recruiter_prompt)
+    assert f"recruiter:pick:{seeded['recruiter_id']}" in recruiter_payloads
+    assert "booking:change_city" not in recruiter_payloads
+    assert "booking:manual_time" not in recruiter_payloads
     journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
     assert journey is not None
     assert journey.last_surface == CandidateJourneySurface.MAX_CHAT.value
-    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_city"
-
-    adapter.messages.clear()
-    city_pick = _post_max_callback(
-        max_chat_client,
-        user_id=int(seeded["user_id"]),
-        callback_id="cb-city",
-        payload=f"city:pick:{seeded['city_id']}",
-    )
-    assert city_pick.status_code == 200
-    assert adapter.answers[-1] == "cb-city"
-    recruiter_prompt = _last_prompt(adapter)
-    assert "Выберите рекрутёра" in str(recruiter_prompt["text"])
-    assert f"recruiter:pick:{seeded['recruiter_id']}" in _callback_payloads(recruiter_prompt)
-    journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
-    assert journey is not None
     assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_recruiter"
 
     adapter.messages.clear()
@@ -579,6 +792,12 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     slot_payloads = _callback_payloads(slot_prompt)
     assert f"slot:book:{seeded['slot_id']}" in slot_payloads
     assert f"slot:book:{seeded['next_slot_id']}" in slot_payloads
+    button_texts = [str(getattr(button, "text", "") or "") for row in list(slot_prompt.get("buttons") or []) for button in row]
+    assert any(text.startswith("Выбрать ") and ":" in text for text in button_texts)
+    assert not any(text.endswith("07:20") or text.endswith("08:20") for text in button_texts)
+    assert "booking:change_recruiter" not in slot_payloads
+    assert "booking:change_city" not in slot_payloads
+    assert "booking:manual_time" not in slot_payloads
     journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
     assert journey is not None
     assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_selecting"
@@ -593,8 +812,8 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     assert book.status_code == 200
     assert adapter.answers[-1] == "cb-book"
     booking_prompt = _last_prompt(adapter)
-    assert "Запись готова." in str(booking_prompt["text"])
-    assert f"slot:confirm:{seeded['slot_id']}" in _callback_payloads(booking_prompt)
+    assert "отправлен рекрутёру на согласование" in str(booking_prompt["text"]).lower()
+    assert _callback_payloads(booking_prompt) == []
     slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
     assert slot is not None
     assert slot.status == SlotStatus.PENDING
@@ -602,6 +821,8 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     assert journey is not None
     assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_pending"
     assert journey.payload_json["candidate_access"]["chat_cursor"]["booking_id"] == int(seeded["slot_id"])
+
+    asyncio.run(_approve_slot_for_test(int(seeded["slot_id"])))
 
     adapter.messages.clear()
     confirm = _post_max_callback(
@@ -612,7 +833,10 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     )
     assert confirm.status_code == 200
     assert adapter.answers[-1] == "cb-confirm"
-    assert "встречу подтвердили" in str(_last_prompt(adapter)["text"]).lower()
+    confirmed_prompt = _last_prompt(adapter)
+    assert "встречу подтвердили" in str(confirmed_prompt["text"]).lower()
+    assert "mini app внутри MAX" in str(confirmed_prompt["text"])
+    assert _callback_payloads(confirmed_prompt) == []
     slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
     assert slot is not None
     assert slot.status == SlotStatus.CONFIRMED_BY_CANDIDATE
@@ -645,7 +869,7 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
         payload=f"slot:reschedule_pick:{seeded['slot_id']}:{seeded['next_slot_id']}",
     )
     assert pick.status_code == 200
-    assert "Запись готова." in str(_last_prompt(adapter)["text"])
+    assert "отправлен рекрутёру на согласование" in str(_last_prompt(adapter)["text"]).lower()
     slot = asyncio.run(_load_slot(int(seeded["slot_id"])))
     next_slot = asyncio.run(_load_slot(int(seeded["next_slot_id"])))
     assert slot is not None and next_slot is not None
@@ -673,7 +897,7 @@ def test_max_chat_booking_callbacks_cover_city_recruiter_slot_confirm_reschedule
     assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "completed"
 
 
-def test_max_chat_city_pick_without_recruiters_offers_change_city_and_manual_time(
+def test_max_chat_city_pick_without_recruiters_switches_to_manual_time_input(
     monkeypatch: pytest.MonkeyPatch,
     max_chat_client: TestClient,
 ):
@@ -700,6 +924,15 @@ def test_max_chat_city_pick_without_recruiters_offers_change_city_and_manual_tim
     _complete_chat_test1(max_chat_client, headers=headers)
     handoff = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
     assert handoff.status_code == 200
+
+    adapter.messages.clear()
+    change_city = _post_max_callback(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        callback_id="cb-change-city",
+        payload="booking:change_city",
+    )
+    assert change_city.status_code == 200
     city_prompt = _last_prompt(adapter)
     assert f"city:pick:{empty_city['city_id']}" in _callback_payloads(city_prompt)
 
@@ -713,14 +946,15 @@ def test_max_chat_city_pick_without_recruiters_offers_change_city_and_manual_tim
     assert empty_city_pick.status_code == 200
     assert adapter.answers[-1] == "cb-empty-city"
     fallback_prompt = _last_prompt(adapter)
-    assert "пока нет свободных слотов у рекрутёров" in str(fallback_prompt["text"]).lower()
-    assert empty_city["city_name"] in str(fallback_prompt["text"])
-    fallback_payloads = _callback_payloads(fallback_prompt)
-    assert "booking:change_city" in fallback_payloads
-    assert "booking:manual_time" in fallback_payloads
+    assert "напишите, пожалуйста, когда вам удобно пройти интервью" in str(fallback_prompt["text"]).lower()
+    assert "другой город" not in str(fallback_prompt["text"]).lower()
+    assert _callback_payloads(fallback_prompt) == []
     journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
     assert journey is not None
-    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_recruiter"
+    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "manual_time_input"
+    candidate = asyncio.run(_load_candidate(int(seeded["candidate_id"])))
+    assert candidate is not None
+    assert candidate.manual_slot_requested_at is not None
 
 
 def test_max_chat_reschedule_without_free_slots_offers_change_recruiter_and_manual_time(
@@ -751,6 +985,17 @@ def test_max_chat_reschedule_without_free_slots_offers_change_recruiter_and_manu
     _complete_chat_test1(max_chat_client, headers=headers)
     handoff = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
     assert handoff.status_code == 200
+
+    adapter.messages.clear()
+    change_city = _post_max_callback(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        callback_id="cb-single-change-city",
+        payload="booking:change_city",
+    )
+    assert change_city.status_code == 200
+    city_prompt = _last_prompt(adapter)
+    assert f"city:pick:{single_option['city_id']}" in _callback_payloads(city_prompt)
 
     adapter.messages.clear()
     city_pick = _post_max_callback(
@@ -796,16 +1041,12 @@ def test_max_chat_reschedule_without_free_slots_offers_change_recruiter_and_manu
     assert reschedule.status_code == 200
     assert adapter.answers[-1] == "cb-no-slots"
     fallback_prompt = _last_prompt(adapter)
-    assert "пока нет свободных слотов" in str(fallback_prompt["text"]).lower()
+    assert "когда вам удобно пройти интервью" in str(fallback_prompt["text"]).lower()
     assert single_option["city_name"] in str(fallback_prompt["text"])
-    assert single_option["recruiter_name"] in str(fallback_prompt["text"])
-    fallback_payloads = _callback_payloads(fallback_prompt)
-    assert "booking:change_recruiter" in fallback_payloads
-    assert "booking:change_city" in fallback_payloads
-    assert "booking:manual_time" in fallback_payloads
+    assert _callback_payloads(fallback_prompt) == []
     journey = asyncio.run(_load_journey(int(seeded["candidate_id"])))
     assert journey is not None
-    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "booking_selecting"
+    assert journey.payload_json["candidate_access"]["chat_cursor"]["state"] == "manual_time_input"
 
 
 @pytest.mark.asyncio
@@ -834,12 +1075,6 @@ async def test_max_chat_booking_confirm_is_visible_in_admin_operator_views(
     _post_max_callback(
         max_chat_client,
         user_id=int(seeded["user_id"]),
-        callback_id="cb-admin-city",
-        payload=f"city:pick:{seeded['city_id']}",
-    )
-    _post_max_callback(
-        max_chat_client,
-        user_id=int(seeded["user_id"]),
         callback_id="cb-admin-recruiter",
         payload=f"recruiter:pick:{seeded['recruiter_id']}",
     )
@@ -849,6 +1084,7 @@ async def test_max_chat_booking_confirm_is_visible_in_admin_operator_views(
         callback_id="cb-admin-book",
         payload=f"slot:book:{seeded['slot_id']}",
     )
+    await _approve_slot_for_test(int(seeded["slot_id"]))
     confirm = _post_max_callback(
         max_chat_client,
         user_id=int(seeded["user_id"]),
@@ -869,6 +1105,66 @@ async def test_max_chat_booking_confirm_is_visible_in_admin_operator_views(
         "awaiting_recruiter",
         "incoming",
     }
+
+
+@pytest.mark.asyncio
+async def test_max_chat_handoff_for_confirmed_booking_hides_confirm_action(
+    monkeypatch: pytest.MonkeyPatch,
+    max_chat_client: TestClient,
+):
+    seeded = await _seed_chat_candidate(start_param="booking-confirmed-chat", user_id=730014)
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr("backend.apps.admin_api.max_candidate_chat.ensure_max_adapter", _fake_adapter)
+    monkeypatch.setattr("backend.apps.admin_api.max_webhook.ensure_max_adapter", _fake_adapter)
+
+    headers, _ = _launch_headers(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        start_param=str(seeded["start_param"]),
+    )
+    _complete_chat_test1(max_chat_client, headers=headers)
+    handoff = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
+    assert handoff.status_code == 200
+
+    adapter.messages.clear()
+    recruiter_pick = _post_max_callback(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        callback_id="cb-confirmed-recruiter",
+        payload=f"recruiter:pick:{seeded['recruiter_id']}",
+    )
+    assert recruiter_pick.status_code == 200
+
+    adapter.messages.clear()
+    book = _post_max_callback(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        callback_id="cb-confirmed-book",
+        payload=f"slot:book:{seeded['slot_id']}",
+    )
+    assert book.status_code == 200
+    await _approve_slot_for_test(int(seeded["slot_id"]))
+
+    adapter.messages.clear()
+    confirm = _post_max_callback(
+        max_chat_client,
+        user_id=int(seeded["user_id"]),
+        callback_id="cb-confirmed-slot",
+        payload=f"slot:confirm:{seeded['slot_id']}",
+    )
+    assert confirm.status_code == 200
+
+    adapter.messages.clear()
+    handoff_again = max_chat_client.post("/api/candidate-access/chat-handoff", headers=headers)
+    assert handoff_again.status_code == 200
+    prompt = _last_prompt(adapter)
+    assert "встречу подтвердили" in str(prompt["text"]).lower()
+    assert "mini app внутри MAX" in str(prompt["text"])
+    assert _callback_payloads(prompt) == []
 
 
 @pytest.mark.asyncio

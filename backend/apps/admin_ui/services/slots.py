@@ -118,6 +118,10 @@ class ManualSlotError(Exception):
     """Raised when manual slot scheduling cannot be completed."""
 
 
+def _candidate_max_user_id(candidate: "User") -> Optional[str]:
+    return str(getattr(candidate, "max_user_id", "") or "").strip() or None
+
+
 def _ensure_recruiter_city_link(recruiter: Recruiter, city: City) -> bool:
     if city in recruiter.cities:
         return False
@@ -794,10 +798,11 @@ async def schedule_manual_candidate_slot(
     user_agent: Optional[str] = None,
     custom_message_sent: bool = False,
     custom_message_text: Optional[str] = None,
+    allow_replace_active_assignment: bool = False,
     principal: Optional[Principal] = None,
 ) -> SlotApprovalResult:
     candidate_tg_id = candidate.telegram_user_id or candidate.telegram_id
-    if candidate_tg_id is None:
+    if candidate_tg_id is None and _candidate_max_user_id(candidate) is None:
         raise ManualSlotError("Для кандидата не указан Telegram ID.")
 
     principal = principal or principal_ctx.get()
@@ -887,13 +892,34 @@ async def schedule_manual_candidate_slot(
             candidate_tg_id=candidate_tg_id,
             candidate_tz=slot_tz,
             created_by=admin_username,
-            # Manual initial scheduling must not silently replace an active assignment.
-            # Explicit reschedule flow handles replacements via propose_alternative().
-            allow_replace_active_assignment=False,
+            # Avoid silent double-booking; explicit reschedule flows should replace
+            # an active candidate assignment.
+            allow_replace_active_assignment=allow_replace_active_assignment,
+            offer_payload={
+                "offer_variant": "manual_confirmation",
+                "meeting_link": getattr(recruiter, "telemost_url", None),
+                "format_label": "видео",
+                "duration_label": "15–20 минут",
+            },
         )
     except Exception as exc:
         # Slot was created but we failed to create the assignment/outbox.
         # Best effort cleanup to avoid leaving an orphaned slot in the schedule.
+        logger = logging.getLogger(__name__)
+        logger.exception(
+            "schedule_manual_candidate_slot.create_slot_assignment_failed",
+            extra={
+                "candidate_id": getattr(candidate, "id", None),
+                "candidate_uuid": getattr(candidate, "candidate_id", None),
+                "candidate_tg_id": candidate_tg_id,
+                "candidate_max_user_id": _candidate_max_user_id(candidate),
+                "slot_id": slot_id,
+                "recruiter_id": getattr(recruiter, "id", None),
+                "city_id": getattr(city, "id", None),
+                "slot_datetime_utc": normalized_dt.isoformat(),
+                "slot_tz": slot_tz,
+            },
+        )
         try:
             await delete_slot(slot_id, force=True)
         except Exception:
@@ -906,14 +932,23 @@ async def schedule_manual_candidate_slot(
         )
 
     try:
-        from backend.domain.candidates.status_service import set_status_slot_pending
+        from backend.domain.candidates.status_service import (
+            set_status_slot_pending,
+            update_candidate_status_by_candidate_id,
+        )
 
-        await set_status_slot_pending(candidate_tg_id)
+        if candidate_tg_id is not None:
+            await set_status_slot_pending(candidate_tg_id)
+        elif candidate.candidate_id:
+            await update_candidate_status_by_candidate_id(
+                candidate.candidate_id,
+                CandidateStatus.SLOT_PENDING,
+            )
     except Exception:
         logger = logging.getLogger(__name__)
         logger.exception(
             "Failed to update candidate status to SLOT_PENDING for %s",
-            candidate_tg_id,
+            candidate_tg_id or candidate.candidate_id,
         )
 
     await _log_manual_slot_assignment(

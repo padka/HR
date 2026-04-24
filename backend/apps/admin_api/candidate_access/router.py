@@ -42,8 +42,8 @@ from backend.apps.admin_api.candidate_access.services import (
     save_candidate_booking_context,
     save_candidate_manual_availability,
     save_candidate_test1_answers,
-    submit_candidate_test2_answer,
     slot_duration_minutes,
+    submit_candidate_test2_answer,
 )
 from backend.apps.admin_api.max_auth import validate_max_init_data
 from backend.apps.admin_api.max_candidate_chat import (
@@ -87,6 +87,7 @@ class BookingInfo(BaseModel):
     start_utc: datetime
     end_utc: datetime
     status: str
+    candidate_can_confirm_pending: bool = False
     meet_link: str | None = None
     address: str | None = None
 
@@ -347,11 +348,23 @@ def _candidate_info(candidate, *, city_id: int | None, city_name: str | None, us
     )
 
 
-def _booking_info(slot, candidate_id: int) -> BookingInfo:
+def _booking_info(
+    slot,
+    candidate_id: int,
+    *,
+    candidate_can_confirm_pending: bool = False,
+) -> BookingInfo:
     duration_minutes = slot_duration_minutes(slot)
     start_utc = slot.start_utc
     end_utc = start_utc + timedelta(minutes=duration_minutes)
     recruiter_name = getattr(getattr(slot, "recruiter", None), "name", None) or ""
+    booking_status = str(getattr(slot, "status", "") or "").strip().lower()
+    raw_meeting_link = getattr(getattr(slot, "recruiter", None), "telemost_url", None)
+    meeting_link = (
+        raw_meeting_link.strip()
+        if booking_status in {"confirmed", "confirmed_by_candidate"} and isinstance(raw_meeting_link, str)
+        else None
+    )
     return BookingInfo(
         booking_id=slot.id,
         slot_id=slot.id,
@@ -360,7 +373,8 @@ def _booking_info(slot, candidate_id: int) -> BookingInfo:
         start_utc=start_utc,
         end_utc=end_utc,
         status=slot.status,
-        meet_link=None,
+        candidate_can_confirm_pending=candidate_can_confirm_pending,
+        meet_link=meeting_link or None,
         address=None,
     )
 
@@ -518,10 +532,11 @@ def _status_card(
     active_booking = journey.active_booking if journey is not None else None
     status_slug = str(candidate_status or "").strip().lower()
     decision = test1.screening_decision
+    booking_status = str(getattr(active_booking, "status", "") or "").strip().lower()
     if intro_day_available:
         return CandidateJourneyStatusCard(
             title="Ознакомительный день назначен",
-            body="Проверьте детали встречи и подтвердите участие. Если что-то нужно уточнить, откройте чат MAX.",
+            body="Проверьте детали встречи и подтвердите участие. Все обновления по этому шагу останутся здесь и в сообщениях RecruitSmart.",
             tone="success",
         )
     if status_slug in {"test2_sent"}:
@@ -537,6 +552,18 @@ def _status_card(
             tone="success",
         )
     if active_booking is not None:
+        if booking_status == "pending" and bool(getattr(active_booking, "candidate_can_confirm_pending", False)):
+            return CandidateJourneyStatusCard(
+                title="Мы предлагаем время собеседования",
+                body="Если этот слот вам подходит, подтвердите встречу в mini app. Сразу после подтверждения пришлём детали и ссылку в чат MAX.",
+                tone="progress",
+            )
+        if booking_status == "pending":
+            return CandidateJourneyStatusCard(
+                title="Слот отправлен на согласование",
+                body="Мы просматриваем ваше резюме и результаты Test1. Совсем скоро сообщим решение и, если слот согласуют, покажем детали встречи здесь и в чате MAX.",
+                tone="progress",
+            )
         return CandidateJourneyStatusCard(
             title="Собеседование уже назначено",
             body="Проверьте время встречи, памятку и при необходимости подтвердите запись.",
@@ -612,13 +639,27 @@ def _primary_action(
         )
     if manual_slot_requested:
         return CandidateJourneyPrimaryAction(
-            key="chat_fallback",
-            label="Открыть чат MAX",
-            kind="chat",
-            detail="Пожелания по времени уже отправлены. Если хотите уточнить детали, продолжим в чате MAX.",
+            key="review_manual_request",
+            label="Проверить статус",
+            kind="help",
+            detail="Пожелания по времени уже отправлены. Следующее обновление появится здесь автоматически.",
         )
     if active_booking is not None:
         booking_status = str(active_booking.status or "").lower()
+        if booking_status == "pending" and bool(getattr(active_booking, "candidate_can_confirm_pending", False)):
+            return CandidateJourneyPrimaryAction(
+                key="confirm_pending_offer",
+                label="Подтвердить предложенное время",
+                kind="booking",
+                detail="Если время подходит, подтвердите встречу. Сразу после подтверждения пришлём детали и ссылку в чат MAX.",
+            )
+        if booking_status == "pending":
+            return CandidateJourneyPrimaryAction(
+                key="review_pending_booking",
+                label="Проверить статус заявки",
+                kind="booking",
+                detail="Слот уже выбран. Сейчас мы проверяем резюме и результаты Test1, после чего покажем решение здесь.",
+            )
         if booking_status in {"confirmed", "confirmed_by_candidate"}:
             return CandidateJourneyPrimaryAction(
                 key="review_booking",
@@ -640,10 +681,10 @@ def _primary_action(
             detail="Откройте доступные слоты и выберите удобный вариант.",
         )
     return CandidateJourneyPrimaryAction(
-        key="chat_fallback",
-        label="Открыть чат MAX",
-        kind="chat",
-        detail="Если что-то пошло не так, продолжим в чате.",
+        key="review_status",
+        label="Что дальше",
+        kind="help",
+        detail="Следующий шаг появится здесь автоматически, как только система обновит статус.",
     )
 
 
@@ -659,6 +700,10 @@ def _timeline(
     screening_done = test1.is_completed
     can_book = str(test1.required_next_action or "").strip() == "select_interview_slot"
     booking_done = active_booking is not None
+    booking_pending_offer = booking_done and str(active_booking.status or "").lower() == "pending" and bool(
+        getattr(active_booking, "candidate_can_confirm_pending", False)
+    )
+    booking_pending_review = booking_done and str(active_booking.status or "").lower() == "pending" and not booking_pending_offer
     booking_confirmed = booking_done and str(active_booking.status or "").lower() in {"confirmed", "confirmed_by_candidate"}
     steps = [
         CandidateJourneyTimelineStep(
@@ -708,9 +753,25 @@ def _timeline(
         CandidateJourneyTimelineStep(
             key="confirm",
             label="Подтверждение и памятка",
-            state="done" if booking_confirmed else ("current" if booking_done else "pending"),
-            state_label=_status_state_label("done" if booking_confirmed else ("current" if booking_done else "pending")),
-            detail="Памятка к встрече уже доступна." if booking_done else "После записи покажем время встречи и что взять с собой.",
+            state=(
+                "done"
+                if booking_confirmed
+                else ("current" if booking_pending_offer else ("review" if booking_pending_review else ("current" if booking_done else "pending")))
+            ),
+            state_label=_status_state_label(
+                "done"
+                if booking_confirmed
+                else ("current" if booking_pending_offer else ("review" if booking_pending_review else ("current" if booking_done else "pending")))
+            ),
+            detail=(
+                "Рекрутер предложил время. Если слот подходит, подтвердите встречу в mini app — сразу после этого пришлём детали и ссылку в чат MAX."
+                if booking_pending_offer
+                else (
+                    "Рекрутер согласовывает выбранный слот. После решения покажем детали встречи."
+                    if booking_pending_review
+                    else ("Памятка к встрече уже доступна." if booking_done else "После записи покажем время встречи и что взять с собой.")
+                )
+            ),
         ),
         CandidateJourneyTimelineStep(
             key="test2",
@@ -842,6 +903,7 @@ async def get_candidate_access_journey(
         envelope.active_booking is None
         and getattr(envelope.profile.candidate, "manual_slot_response_at", None) is not None
     )
+    active_booking_is_pending = str(getattr(envelope.active_booking, "status", "") or "").strip().lower() == "pending"
     response = CandidateJourneyResponse(
         candidate=_candidate_info(
             envelope.profile.candidate,
@@ -860,7 +922,11 @@ async def get_candidate_access_journey(
             session_version=envelope.journey_session.session_version,
         ),
         active_booking=(
-            _booking_info(envelope.active_booking, envelope.profile.candidate.id)
+            _booking_info(
+                envelope.active_booking,
+                envelope.profile.candidate.id,
+                candidate_can_confirm_pending=envelope.active_booking_candidate_can_confirm_pending,
+            )
             if envelope.active_booking is not None
             else None
         ),
@@ -887,25 +953,22 @@ async def get_candidate_access_journey(
         candidate_status=candidate_status,
         intro_day_available=intro_day is not None,
     )
+    prep_card_body = "После анкеты мы сразу покажем следующий шаг и доступное время для собеседования."
+    if manual_slot_requested:
+        prep_card_body = "Мы уже получили пожелания по времени. Как только подберём слот, обновим статус здесь и в сообщениях RecruitSmart."
+    elif str(candidate_status or "").strip().lower() == "test2_sent":
+        prep_card_body = "Пройдите Тест 2 в mini app. После результата сразу покажем следующий шаг."
+    elif intro_day is not None:
+        prep_card_body = "Сохраните адрес, контакт и время ознакомительного дня. Подтверждение можно сделать здесь или в чате MAX."
+    elif response.active_booking is not None and active_booking_is_pending and bool(getattr(response.active_booking, "candidate_can_confirm_pending", False)):
+        prep_card_body = "Если время подходит, подтвердите встречу в mini app. Сразу после подтверждения пришлём детали и ссылку в чат MAX."
+    elif response.active_booking is not None and active_booking_is_pending:
+        prep_card_body = "Мы просматриваем ваше резюме и результаты Test1. Как только решение будет готово, обновим этот экран и чат MAX."
+    elif response.active_booking is not None:
+        prep_card_body = "После записи проверьте время собеседования, зарядите телефон и подготовьте тихое место для разговора."
     response.prep_card = _content_card(
         "Что дальше",
-        (
-            "После записи проверьте время собеседования, зарядите телефон и подготовьте тихое место для разговора."
-            if intro_day is None and response.active_booking is not None
-            else (
-                "Сохраните адрес, контакт и время ознакомительного дня. Подтверждение можно сделать здесь или в чате MAX."
-                if intro_day is not None
-                else (
-                    "Пройдите Тест 2 в mini app. После результата сразу покажем следующий шаг."
-                    if str(candidate_status or "").strip().lower() == "test2_sent"
-                    else (
-                        "Мы уже получили пожелания по времени. Как только подберём слот, обновим статус здесь и в чате MAX."
-                        if manual_slot_requested
-                        else "После анкеты мы сразу покажем следующий шаг и доступное время для собеседования."
-                    )
-                )
-            )
-        ),
+        prep_card_body,
         tone="accent",
     )
     response.company_card = _content_card(
@@ -915,9 +978,9 @@ async def get_candidate_access_journey(
     response.help_card = _content_card(
         "Нужна помощь",
         (
-            "Если хотите уточнить город, время или детали анкеты, откройте чат MAX и продолжите с рекрутером."
+            "Если нужно уточнить город, время или детали анкеты, дождитесь следующего сообщения RecruitSmart или обновления этого экрана."
             if manual_slot_requested
-            else "Если что-то не загрузилось или нужен другой слот, откройте чат MAX и продолжите с рекрутером."
+            else "Если что-то не загрузилось или нужен другой слот, обновите этот экран. Все служебные сообщения RecruitSmart придут в чат автоматически."
         ),
     )
     return response

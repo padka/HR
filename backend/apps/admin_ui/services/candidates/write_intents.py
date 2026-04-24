@@ -6,7 +6,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy import func, or_, select
 
-from backend.apps.admin_ui.security import Principal
+from backend.apps.admin_ui.security import Principal, principal_ctx
 from backend.apps.admin_ui.services.candidates.helpers import (
     get_candidate_detail,
     update_candidate_status,
@@ -34,6 +34,7 @@ from backend.domain.candidates.write_contract import (
     resolve_kanban_target_status,
 )
 from backend.domain.models import Slot, SlotStatus
+from backend.domain.scheduling_repair_service import repair_candidate_confirmed_offer_if_safe
 
 BLOCKING_STATE_META: dict[str, dict[str, Any]] = {
     "scheduling_conflict": {
@@ -218,6 +219,45 @@ def _has_scheduling_conflict(detail: Mapping[str, Any]) -> bool:
         str(issue.get("code") or "").strip().lower().startswith("scheduling_")
         for issue in issues
     )
+
+
+def _is_legacy_candidate_confirmed_offer(detail: Mapping[str, Any]) -> bool:
+    scheduling_summary = detail.get("scheduling_summary") or {}
+    issue_codes = {
+        str(issue.get("code") or "").strip().lower()
+        for issue in scheduling_summary.get("issues") or []
+        if isinstance(issue, Mapping)
+    }
+    return (
+        issue_codes == {"scheduling_status_conflict"}
+        and str(scheduling_summary.get("slot_assignment_status") or "").strip().lower() == "offered"
+        and str(scheduling_summary.get("slot_status") or "").strip().lower()
+        in {"confirmed", "confirmed_by_candidate"}
+        and bool(scheduling_summary.get("slot_id"))
+        and bool(scheduling_summary.get("slot_assignment_id"))
+    )
+
+
+async def _repair_legacy_candidate_confirmed_offer_detail(
+    candidate_id: int,
+    detail: Mapping[str, Any],
+    *,
+    principal: Optional[Principal],
+    note: str,
+) -> tuple[Mapping[str, Any], bool]:
+    if not _has_scheduling_conflict(detail) or not _is_legacy_candidate_confirmed_offer(detail):
+        return detail, False
+    actor = principal or principal_ctx.get()
+    result = await repair_candidate_confirmed_offer_if_safe(
+        candidate_id,
+        performed_by_type=getattr(actor, "type", "admin") if actor else "admin",
+        performed_by_id=getattr(actor, "id", None) if actor else None,
+        note=note,
+    )
+    if not result.ok or result.status != "repaired":
+        return detail, False
+    refreshed = await get_candidate_detail(candidate_id, principal=principal)
+    return refreshed or detail, True
 
 
 def _has_active_scheduling(detail: Mapping[str, Any], stage: str) -> bool:
@@ -473,6 +513,16 @@ async def execute_candidate_action_intent(
             blocking_state=_blocking_state_payload("action_not_allowed", candidate_state),
         )
 
+    scheduling_repair_applied = False
+    if action_key in SCHEDULING_SENSITIVE_ACTION_KEYS and _has_scheduling_conflict(detail):
+        detail, scheduling_repair_applied = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"candidate_action:{action_key}",
+        )
+        candidate_state = _candidate_state_payload(detail)
+
     if action_key in SCHEDULING_SENSITIVE_ACTION_KEYS and _has_scheduling_conflict(detail):
         return RecruiterWriteIntentResult(
             ok=False,
@@ -487,6 +537,7 @@ async def execute_candidate_action_intent(
                 "action_key": action_key,
                 "intent_key": intent_key,
                 "resolution": "blocked_by_reconciliation",
+                "scheduling_repair_applied": scheduling_repair_applied,
             },
             blocking_state=_blocking_state_payload("scheduling_conflict", candidate_state),
         )
@@ -698,6 +749,16 @@ async def execute_kanban_move_intent(
             },
         )
 
+    scheduling_repair_applied = False
+    if _has_scheduling_conflict(detail):
+        detail, scheduling_repair_applied = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"kanban_move:{normalized_column}",
+        )
+        candidate_state = _candidate_state_payload(detail)
+
     if _has_scheduling_conflict(detail):
         return RecruiterWriteIntentResult(
             ok=False,
@@ -713,6 +774,7 @@ async def execute_kanban_move_intent(
                 "resolved_status": resolved_status,
                 "resolution": "blocked_by_reconciliation",
                 "compatibility_source": compatibility_source,
+                "scheduling_repair_applied": scheduling_repair_applied,
             },
             blocking_state=_blocking_state_payload("scheduling_conflict", candidate_state),
         )

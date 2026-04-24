@@ -566,7 +566,7 @@ STATUS_DEFINITIONS: "OrderedDict[str, Dict[str, str]]" = OrderedDict(
         ("stalled_waiting_slot", {"label": "Долго ждет слота (>24ч)", "icon": "⚠️", "tone": "danger"}),
         ("slot_pending", {"label": "На согласовании", "icon": "🕐", "tone": "info"}),
         ("interview_scheduled", {"label": "Назначено собеседование", "icon": "📅", "tone": "primary"}),
-        ("interview_confirmed", {"label": "Подтвердил собеседование", "icon": "✅", "tone": "success"}),
+        ("interview_confirmed", {"label": "Предварительно подтвердился на собеседование", "icon": "✅", "tone": "success"}),
         ("test2_sent", {"label": "Прошел собес (Тест 2)", "icon": "📨", "tone": "primary"}),
         ("test2_completed", {"label": "Прошел Тест 2 (ожидает ОД)", "icon": "✅", "tone": "info"}),
         ("intro_day_scheduled", {"label": "Назначен ознакомительный день", "icon": "📆", "tone": "primary"}),

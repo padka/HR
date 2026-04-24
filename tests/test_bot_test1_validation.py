@@ -698,7 +698,13 @@ async def test_begin_interview_blocks_existing_candidate_with_active_stage(bot_c
     monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.candidate_services.set_conversation_mode", AsyncMock())
     monkeypatch.setattr(
         "backend.apps.bot.services.onboarding_flow.candidate_services.get_user_by_telegram_id",
-        AsyncMock(return_value=SimpleNamespace(id=1)),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                id=1,
+                candidate_status=None,
+                workflow_status="INTERVIEW_SCHEDULED",
+            )
+        ),
     )
     monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.async_session", lambda: _FakeSession())
     monkeypatch.setattr("backend.apps.bot.services.onboarding_flow._send_active_candidate_summary", summary_mock)
@@ -708,3 +714,54 @@ async def test_begin_interview_blocks_existing_candidate_with_active_stage(bot_c
     assert await manager.get(USER_ID) is None
     summary_mock.assert_awaited_once()
     dummy_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_begin_interview_allows_existing_candidate_with_inactive_stage(bot_context, monkeypatch):
+    manager, dummy_bot = bot_context
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        async def get(self, _model, _pk):
+            return SimpleNamespace(id=1)
+
+    summary_mock = AsyncMock()
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.get_recruiter_by_chat_id",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.candidate_services.set_conversation_mode",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "backend.apps.bot.services.onboarding_flow.candidate_services.get_user_by_telegram_id",
+        AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    id=1,
+                    candidate_status=None,
+                    workflow_status="REJECTED",
+                ),
+                SimpleNamespace(id=1),
+            ]
+        ),
+    )
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow.async_session", lambda: _FakeSession())
+    monkeypatch.setattr("backend.apps.bot.services.onboarding_flow._send_active_candidate_summary", summary_mock)
+
+    await begin_interview(USER_ID)
+
+    state = await manager.get(USER_ID)
+    assert state is not None
+    assert state["flow"] == "interview"
+    summary_mock.assert_not_awaited()
+    dummy_bot.send_message.assert_awaited()

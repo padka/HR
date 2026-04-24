@@ -1,13 +1,17 @@
-import pytest
 from types import SimpleNamespace
-from sqlalchemy import select
 
+import pytest
+from backend.apps.admin_ui.services import chat as chat_service
 from backend.core.db import async_session
-from backend.core.messenger.protocol import MessengerPlatform, MessengerProtocol, SendResult
+from backend.core.messenger.protocol import (
+    MessengerPlatform,
+    MessengerProtocol,
+    SendResult,
+)
 from backend.core.messenger.registry import MessengerRegistry
 from backend.domain.candidates import services as candidate_services
 from backend.domain.candidates.models import ChatMessage
-from backend.apps.admin_ui.services import chat as chat_service
+from sqlalchemy import select
 
 
 class _DummyBotService:
@@ -284,5 +288,56 @@ async def test_send_chat_message_prefers_max_channel_when_candidate_is_max_linke
         assert result["status"] == "sent"
         assert result["message"]["channel"] == "max"
         assert result["message"]["provider_message_id"] == "max-msg-1"
+    finally:
+        registry_module._registry = previous_registry
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_bootstraps_max_adapter_when_registry_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import backend.core.messenger.registry as registry_module
+
+    previous_registry = registry_module._registry
+    registry_module._registry = MessengerRegistry()
+    adapter = _DummyMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        del settings
+        registry_module._registry.register(adapter)
+        return adapter
+
+    monkeypatch.setattr(chat_service, "ensure_max_adapter", _fake_ensure_max_adapter)
+
+    try:
+        async with async_session() as session:
+            candidate = await candidate_services.create_or_update_user(
+                telegram_id=700002,
+                fio="MAX Bootstrapped Candidate",
+                city="Москва",
+            )
+            db_candidate = await session.get(type(candidate), candidate.id)
+            if db_candidate is not None:
+                db_candidate.max_user_id = "max-user-43"
+                db_candidate.messenger_platform = "max"
+                await session.commit()
+
+        candidate = await candidate_services.get_user_by_candidate_id(candidate.candidate_id)
+        assert candidate is not None
+
+        bot = _DummyBotService(ok=True)
+        result = await chat_service.send_chat_message(
+            candidate.id,
+            text="Сообщение в MAX после lazy bootstrap",
+            client_request_id="req-max-lazy-1",
+            author_label="admin",
+            bot_service=bot,
+        )
+
+        assert bot.calls == []
+        assert adapter.calls
+        assert adapter.calls[0][0] == "max-user-43"
+        assert result["status"] == "sent"
+        assert result["message"]["channel"] == "max"
     finally:
         registry_module._registry = previous_registry

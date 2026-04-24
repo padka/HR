@@ -176,7 +176,7 @@ class UnifiedStatus:
 WORKFLOW_STATUS_LABELS: Dict[WorkflowStatus, str] = {
     WorkflowStatus.WAITING_FOR_SLOT: "Ожидает слот",
     WorkflowStatus.INTERVIEW_SCHEDULED: "Интервью назначено",
-    WorkflowStatus.INTERVIEW_CONFIRMED: "Интервью подтверждено",
+    WorkflowStatus.INTERVIEW_CONFIRMED: "Интервью предварительно подтверждено",
     WorkflowStatus.INTERVIEW_COMPLETED: "Интервью завершено",
     WorkflowStatus.TEST_SENT: "Тест отправлен",
     WorkflowStatus.ONBOARDING_DAY_SCHEDULED: "ОД назначен",

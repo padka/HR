@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -15,16 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.apps.bot.config import (
-    MAX_ATTEMPTS,
     PASS_THRESHOLD,
     TEST2_QUESTIONS,
     TIME_LIMIT,
     get_questions_bank_version,
     refresh_questions_bank,
 )
-from backend.apps.bot.services.base import REPORTS_DIR, calculate_score
+from backend.apps.bot.services.base import calculate_score
+from backend.apps.bot.services.broadcast import (
+    notify_recruiters_manual_availability,
+    notify_recruiters_slot_selected,
+    notify_recruiters_test1_completed,
+)
 from backend.apps.bot.services.test2_flow import get_rating
-from backend.apps.bot.services.broadcast import notify_recruiters_manual_availability
+from backend.core.settings import get_settings
+from backend.domain import analytics
 from backend.domain.candidates.journey import LIFECYCLE_DRAFT
 from backend.domain.candidates.max_launch_invites import create_max_launch_invite
 from backend.domain.candidates.models import (
@@ -35,13 +40,18 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.phones import normalize_candidate_phone
-from backend.domain.candidates.services import save_test_result, update_candidate_reports
 from backend.domain.candidates.scheduling_integrity import (
     WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR,
     load_candidate_scheduling_integrity,
 )
-from backend.domain.candidates.services import save_manual_slot_response_for_user
-from backend.domain import analytics
+from backend.domain.candidates.services import (
+    save_manual_slot_response_for_user,
+    save_test_result,
+)
+from backend.domain.candidates.status import CandidateStatus
+from backend.domain.candidates.status_service import (
+    update_candidate_status_by_candidate_id,
+)
 from backend.domain.candidates.test1_shared import (
     BOOKING_STEP_KEY,
     NEXT_ACTION_SELECT_INTERVIEW_SLOT,
@@ -51,14 +61,14 @@ from backend.domain.candidates.test1_shared import (
     merge_test1_answers,
     serialize_step_payload,
 )
-from backend.domain.candidates.status import CandidateStatus
-from backend.domain.candidates.status_service import update_candidate_status_by_candidate_id
 from backend.domain.models import (
     DEFAULT_INTERVIEW_DURATION_MIN,
     Application,
     City,
     Recruiter,
     Slot,
+    SlotAssignment,
+    SlotAssignmentStatus,
     SlotStatus,
     SlotStatusTransitionError,
     enforce_slot_transition,
@@ -92,6 +102,43 @@ TEST2_STEP_KEY = "test2"
 INTRO_DAY_STEP_KEY = "intro_day"
 
 
+def _screening_outcome_label(payload: dict[str, Any] | None) -> str | None:
+    outcome = str(dict(payload or {}).get("outcome") or "").strip()
+    if outcome == "invite_to_interview":
+        return "Готов к выбору слота"
+    if outcome == "manual_review":
+        return "Нужна ручная проверка"
+    if outcome == "decline":
+        return "Требуется решение рекрутера"
+    return None
+
+
+def _candidate_reports_dir(candidate_id: int) -> Path:
+    return Path(get_settings().data_dir) / "reports" / str(candidate_id)
+
+
+def _render_test1_report_text(
+    *,
+    candidate: User,
+    questions: list[dict[str, Any]],
+    answers: dict[str, str],
+    city_name: str | None,
+) -> str:
+    lines = [
+        "Отчёт по Тесту 1",
+        f"Кандидат: {candidate.fio or '—'}",
+        f"Город: {city_name or candidate.city or '—'}",
+        f"MAX: {getattr(candidate, 'max_user_id', None) or '—'}",
+        "",
+        "Ответы:",
+    ]
+    for index, question in enumerate(questions, start=1):
+        qid = str(question.get("id") or question.get("key") or index - 1)
+        prompt = str(question.get("prompt") or question.get("text") or f"Вопрос {index}")
+        lines.append(f"- {prompt}\n  {answers.get(qid, '—')}")
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class CandidateProfile:
     candidate: User
@@ -106,6 +153,7 @@ class CandidateJourneyEnvelope:
     profile: CandidateProfile
     journey_session: CandidateJourneySession
     active_booking: Slot | None
+    active_booking_candidate_can_confirm_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -707,6 +755,30 @@ async def load_active_interview_booking(
     return slot
 
 
+async def candidate_can_confirm_pending_booking(
+    session: AsyncSession,
+    candidate: User,
+    slot: Slot | None,
+) -> bool:
+    if slot is None:
+        return False
+    if str(getattr(slot, "status", "") or "").strip().lower() != SlotStatus.PENDING:
+        return False
+    candidate_public_id = str(getattr(candidate, "candidate_id", "") or "").strip()
+    if not candidate_public_id:
+        return False
+    assignment = await session.scalar(
+        select(SlotAssignment.id)
+        .where(
+            SlotAssignment.slot_id == int(slot.id),
+            SlotAssignment.candidate_id == candidate_public_id,
+            func.lower(func.coalesce(SlotAssignment.status, "")) == SlotAssignmentStatus.OFFERED,
+        )
+        .limit(1)
+    )
+    return assignment is not None
+
+
 async def load_candidate_journey(
     session: AsyncSession,
     principal: CandidateAccessPrincipal,
@@ -717,10 +789,16 @@ async def load_candidate_journey(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Journey session not found")
 
     active_booking = await load_active_interview_booking(session, profile.candidate)
+    active_booking_candidate_can_confirm_pending = await candidate_can_confirm_pending_booking(
+        session,
+        profile.candidate,
+        active_booking,
+    )
     return CandidateJourneyEnvelope(
         profile=profile,
         journey_session=journey_session,
         active_booking=active_booking,
+        active_booking_candidate_can_confirm_pending=active_booking_candidate_can_confirm_pending,
     )
 
 
@@ -1014,14 +1092,11 @@ async def _finalize_candidate_test2(
         question_data=question_data,
         source="max",
     )
-    report_dir = Path(REPORTS_DIR) / str(profile.candidate.id)
+    report_dir = _candidate_reports_dir(int(profile.candidate.id))
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "test2.txt"
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
-    await update_candidate_reports(
-        int(profile.candidate.id),
-        test2_path=str(Path("reports") / str(profile.candidate.id) / "test2.txt"),
-    )
+    profile.candidate.test2_report_url = str(Path("reports") / str(profile.candidate.id) / "test2.txt")
 
     payload = _test2_payload(step_state)
     payload["attempts"] = attempts
@@ -1160,6 +1235,38 @@ async def _append_candidate_journey_event(
 def _clean_text(value: str | None) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _candidate_fio_prefill(candidate: User) -> str | None:
+    fio = _clean_text(getattr(candidate, "fio", None))
+    max_user_id = _clean_text(getattr(candidate, "max_user_id", None))
+    if not fio:
+        return None
+    if fio.casefold() in {
+        "max candidate".casefold(),
+        "max user".casefold(),
+        f"max {max_user_id}".casefold() if max_user_id else "",
+    }:
+        return None
+    if " " not in fio:
+        return None
+    return fio
+
+
+def _prefill_test1_draft_from_candidate(
+    candidate: User,
+    *,
+    answers: dict[str, str],
+    payload_data: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, Any]]:
+    prefill_fio = _candidate_fio_prefill(candidate)
+    if not prefill_fio or _clean_text(answers.get("fio")):
+        return answers, payload_data
+    next_answers = dict(answers)
+    next_payload = dict(payload_data)
+    next_answers["fio"] = prefill_fio
+    next_payload.setdefault("fio", prefill_fio)
+    return next_answers, next_payload
 
 
 def _format_manual_availability_window(
@@ -1380,14 +1487,19 @@ async def load_candidate_test1_state(
     step_state = await _load_test1_step_state(session, journey_session.id, for_update=False)
     payload = dict(step_state.payload_json or {}) if step_state is not None else {}
     draft = dict(payload.get("draft") or {})
+    draft_answers, draft_payload = _prefill_test1_draft_from_candidate(
+        profile.candidate,
+        answers={str(key): str(value) for key, value in dict(draft.get("answers") or {}).items()},
+        payload_data=dict(draft.get("payload") or {}),
+    )
     completion = _extract_completion_payload(step_state)
-    questions = await materialize_test1_questions(draft.get("answers") or {})
+    questions = await materialize_test1_questions(draft_answers)
 
     return CandidateTest1Envelope(
         profile=profile,
         journey_session=journey_session,
         questions=questions,
-        draft_answers={str(key): str(value) for key, value in dict(draft.get("answers") or {}).items()},
+        draft_answers=draft_answers,
         is_completed=bool(completion),
         screening_decision=completion.get("screening_decision") if completion else None,
         interview_offer=completion.get("interview_offer") if completion else None,
@@ -1415,10 +1527,15 @@ async def save_candidate_test1_answers(
 
     payload = dict(step_state.payload_json or {})
     draft = dict(payload.get("draft") or {})
+    existing_answers, existing_payload = _prefill_test1_draft_from_candidate(
+        profile.candidate,
+        answers={str(key): str(value) for key, value in dict(draft.get("answers") or {}).items()},
+        payload_data=dict(draft.get("payload") or {}),
+    )
     try:
         merged_state = await merge_test1_answers(
-            existing_answers=draft.get("answers") or {},
-            existing_payload=draft.get("payload") or {},
+            existing_answers=existing_answers,
+            existing_payload=existing_payload,
             existing_city_id=draft.get("city_id") or profile.city_id,
             existing_city_name=draft.get("city_name") or profile.city_name,
             existing_candidate_tz=draft.get("candidate_tz") or profile.timezone_name,
@@ -1475,9 +1592,20 @@ async def complete_candidate_test1(
 
     draft_payload = dict(step_state.payload_json or {})
     draft_state = dict(draft_payload.get("draft") or {})
-    _sync_candidate_profile_from_test1_state(
+    draft_answers, draft_state_payload = _prefill_test1_draft_from_candidate(
         candidate,
         answers={str(key): str(value) for key, value in dict(draft_state.get("answers") or {}).items()},
+        payload_data=dict(draft_state.get("payload") or {}),
+    )
+    draft_state["answers"] = draft_answers
+    draft_state["payload"] = draft_state_payload
+    step_state.payload_json = {
+        **draft_payload,
+        "draft": draft_state,
+    }
+    _sync_candidate_profile_from_test1_state(
+        candidate,
+        answers=draft_answers,
         city_name=_clean_text(draft_state.get("city_name")),
     )
     try:
@@ -1510,7 +1638,38 @@ async def complete_candidate_test1(
     payload = dict(step_state.payload_json or {})
     draft = dict(payload.get("draft") or {})
     questions = await materialize_test1_questions(draft.get("answers") or {})
+    report_dir = _candidate_reports_dir(int(candidate.id))
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "test1.txt"
+    report_path.write_text(
+        _render_test1_report_text(
+            candidate=candidate,
+            questions=questions,
+            answers={str(key): str(value) for key, value in dict(draft.get("answers") or {}).items()},
+            city_name=_clean_text(draft.get("city_name")) or profile.city_name or candidate.city,
+        ),
+        encoding="utf-8",
+    )
+    candidate.test1_report_url = str(Path("reports") / str(candidate.id) / "test1.txt")
     refreshed_profile = await load_candidate_profile(session, principal)
+    try:
+        await notify_recruiters_test1_completed(
+            candidate_name=candidate.fio or f"Кандидат {candidate.id}",
+            city_name=refreshed_profile.city_name or candidate.city or "—",
+            city_id=refreshed_profile.city_id,
+            candidate_db_id=int(candidate.id),
+            responsible_recruiter_id=candidate.responsible_recruiter_id,
+            source_channel="max",
+            candidate_external_id=_clean_text(candidate.max_user_id),
+            candidate_tg_id=candidate.telegram_id,
+            report_path=report_path,
+            screening_outcome_label=_screening_outcome_label(completion.screening_decision),
+        )
+    except Exception:
+        logger.exception(
+            "candidate_access.test1_recruiter_notify_failed",
+            extra={"candidate_id": int(candidate.id)},
+        )
 
     return CandidateTest1Envelope(
         profile=refreshed_profile,
@@ -1840,6 +1999,32 @@ async def create_candidate_booking(
         },
     )
     await session.flush()
+    try:
+        candidate_zone = ZoneInfo(profile.timezone_name or "Europe/Moscow")
+    except Exception:
+        candidate_zone = ZoneInfo("Europe/Moscow")
+    try:
+        slot_start_local = slot.start_utc.astimezone(candidate_zone).strftime("%d.%m %H:%M")
+    except Exception:
+        slot_start_local = slot.start_utc.strftime("%d.%m %H:%M")
+    try:
+        await notify_recruiters_slot_selected(
+            candidate_name=profile.candidate.fio or f"Кандидат {profile.candidate.id}",
+            city_name=city_name or profile.candidate.city or "—",
+            city_id=int(slot.city_id) if slot.city_id is not None else booking_context.city_id,
+            slot_start_local=f"{slot_start_local} ({candidate_zone.key})",
+            recruiter_name=getattr(getattr(slot, "recruiter", None), "name", None),
+            candidate_db_id=int(profile.candidate.id),
+            responsible_recruiter_id=profile.candidate.responsible_recruiter_id,
+            source_channel="max",
+            candidate_external_id=_clean_text(profile.candidate.max_user_id),
+            candidate_tg_id=profile.candidate.telegram_id,
+        )
+    except Exception:
+        logger.exception(
+            "candidate_access.slot_selected_recruiter_notify_failed",
+            extra={"candidate_id": int(profile.candidate.id), "slot_id": int(slot.id)},
+        )
     return profile.candidate, slot
 
 
@@ -1878,7 +2063,18 @@ async def confirm_candidate_booking(
     booking_id: int,
 ) -> Slot:
     profile, slot = await load_owned_booking_for_update(session, principal, booking_id)
-    await ensure_candidate_slot_write_allowed(session, profile.candidate)
+    slot_status = str(slot.status or "").strip().lower()
+    pending_candidate_confirmation_allowed = await candidate_can_confirm_pending_booking(
+        session,
+        profile.candidate,
+        slot,
+    )
+    booked_candidate_confirmation_allowed = slot_status in {
+        SlotStatus.BOOKED,
+        SlotStatus.CONFIRMED_BY_CANDIDATE,
+    }
+    if not (pending_candidate_confirmation_allowed or booked_candidate_confirmation_allowed):
+        await ensure_candidate_slot_write_allowed(session, profile.candidate)
     result = await confirm_slot_by_candidate(
         booking_id,
         session=session,

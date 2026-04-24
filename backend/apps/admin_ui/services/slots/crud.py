@@ -34,6 +34,35 @@ except Exception:  # pragma: no cover - safe fallback when bot package unavailab
     get_reminder_service = None  # type: ignore[assignment]
 
 
+def _candidate_channel_payload(
+    *,
+    messenger_platform: object | None,
+    max_user_id: object | None,
+    telegram_id: object | None,
+    telegram_user_id: object | None,
+) -> dict[str, object | None]:
+    platform = str(messenger_platform or "").strip().lower()
+    max_identity = str(max_user_id or "").strip()
+    telegram_identity = telegram_user_id or telegram_id
+    if platform == "max" or max_identity:
+        return {
+            "candidate_channel": "max",
+            "candidate_channel_id": max_identity or None,
+            "candidate_identity_label": "MAX",
+        }
+    if telegram_identity is not None:
+        return {
+            "candidate_channel": "telegram",
+            "candidate_channel_id": int(telegram_identity),
+            "candidate_identity_label": f"tg_id: {int(telegram_identity)}",
+        }
+    return {
+        "candidate_channel": None,
+        "candidate_channel_id": None,
+        "candidate_identity_label": None,
+    }
+
+
 async def list_slots(
     recruiter_id: Optional[int],
     status: Optional[str],
@@ -309,6 +338,8 @@ async def api_slots_payload(
                         User.fio,
                         User.telegram_id,
                         User.telegram_user_id,
+                        User.messenger_platform,
+                        User.max_user_id,
                     )
                     .outerjoin(User, User.candidate_id == SlotAssignment.candidate_id)
                     .where(
@@ -328,6 +359,8 @@ async def api_slots_payload(
                 user_fio,
                 telegram_id,
                 telegram_user_id,
+                messenger_platform,
+                max_user_id,
             ) in assignment_rows:
                 key = int(slot_id)
                 if key in assignment_fallback:
@@ -341,6 +374,8 @@ async def api_slots_payload(
                     "candidate_fio": user_fio,
                     "telegram_id": telegram_id,
                     "telegram_user_id": telegram_user_id,
+                    "messenger_platform": messenger_platform,
+                    "max_user_id": max_user_id,
                 }
 
         candidate_ids = {str(sl.candidate_id) for sl in slots if getattr(sl, "candidate_id", None)}
@@ -363,26 +398,53 @@ async def api_slots_payload(
         candidate_tg_map: Dict[int, int] = {}
         candidate_name_map: Dict[str, str] = {}
         candidate_tg_name_map: Dict[int, str] = {}
+        candidate_channel_map: Dict[str, dict[str, object | None]] = {}
+        candidate_tg_channel_map: Dict[int, dict[str, object | None]] = {}
 
         if candidate_ids or candidate_tg_ids:
-            users_query = select(User.id, User.candidate_id, User.telegram_id, User.telegram_user_id, User.fio).where(
+            users_query = select(
+                User.id,
+                User.candidate_id,
+                User.telegram_id,
+                User.telegram_user_id,
+                User.fio,
+                User.messenger_platform,
+                User.max_user_id,
+            ).where(
                 or_(
                     User.candidate_id.in_(candidate_ids) if candidate_ids else literal(False),
                     User.telegram_id.in_(candidate_tg_ids) if candidate_tg_ids else literal(False),
                     User.telegram_user_id.in_(candidate_tg_ids) if candidate_tg_ids else literal(False),
                 )
             )
-            for user_id, candidate_uuid, telegram_id, telegram_user_id, fio in (await session.execute(users_query)).all():
+            for (
+                user_id,
+                candidate_uuid,
+                telegram_id,
+                telegram_user_id,
+                fio,
+                messenger_platform,
+                max_user_id,
+            ) in (await session.execute(users_query)).all():
+                channel_payload = _candidate_channel_payload(
+                    messenger_platform=messenger_platform,
+                    max_user_id=max_user_id,
+                    telegram_id=telegram_id,
+                    telegram_user_id=telegram_user_id,
+                )
                 if candidate_uuid:
                     candidate_id_map[str(candidate_uuid)] = int(user_id)
+                    candidate_channel_map[str(candidate_uuid)] = channel_payload
                     if fio:
                         candidate_name_map[str(candidate_uuid)] = str(fio)
                 if telegram_id:
                     candidate_tg_map[int(telegram_id)] = int(user_id)
+                    candidate_tg_channel_map[int(telegram_id)] = channel_payload
                     if fio:
                         candidate_tg_name_map[int(telegram_id)] = str(fio)
                 if telegram_user_id:
                     candidate_tg_map[int(telegram_user_id)] = int(user_id)
+                    candidate_tg_channel_map[int(telegram_user_id)] = channel_payload
                     if fio:
                         candidate_tg_name_map[int(telegram_user_id)] = str(fio)
     payload: List[Dict[str, object]] = []
@@ -451,6 +513,36 @@ async def api_slots_payload(
         elif candidate_tg_id is not None:
             candidate_key = f"tg:{int(candidate_tg_id)}"
 
+        candidate_channel = (
+            candidate_channel_map.get(str(sl.candidate_id))
+            if getattr(sl, "candidate_id", None)
+            else None
+        ) or (
+            candidate_tg_channel_map.get(int(sl.candidate_tg_id))
+            if getattr(sl, "candidate_tg_id", None)
+            else None
+        ) or (
+            candidate_channel_map.get(str(fallback.get("candidate_id")))
+            if fallback.get("candidate_id")
+            else None
+        ) or (
+            candidate_tg_channel_map.get(int(fallback.get("candidate_tg_id")))
+            if fallback.get("candidate_tg_id") is not None
+            else None
+        )
+        if candidate_channel is None and (
+            fallback.get("messenger_platform")
+            or fallback.get("max_user_id")
+            or fallback.get("telegram_id")
+            or fallback.get("telegram_user_id")
+        ):
+            candidate_channel = _candidate_channel_payload(
+                messenger_platform=fallback.get("messenger_platform"),
+                max_user_id=fallback.get("max_user_id"),
+                telegram_id=fallback.get("telegram_id"),
+                telegram_user_id=fallback.get("telegram_user_id"),
+            )
+
         candidate_row_keys[int(sl.id)] = candidate_key
         payload.append(
             {
@@ -485,6 +577,9 @@ async def api_slots_payload(
                 ),
                 "candidate_tg_id": candidate_tg_id,
                 "candidate_id": candidate_user_id,
+                "candidate_channel": (candidate_channel or {}).get("candidate_channel"),
+                "candidate_channel_id": (candidate_channel or {}).get("candidate_channel_id"),
+                "candidate_identity_label": (candidate_channel or {}).get("candidate_identity_label"),
                 "tz_name": getattr(sl, "tz_name", None)
                 or (sl.city.tz if getattr(sl, "city", None) else None),
                 "local_time": _slot_local_time(sl),

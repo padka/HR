@@ -19,6 +19,7 @@ import {
   statusLabel,
   matchesStatusFilter,
   normalizeSlotStatus,
+  slotCandidateIdentityLabel,
   slotDateForFilter,
   slotHasCandidate,
   slotPurpose,
@@ -189,6 +190,9 @@ export function SlotsPage() {
         String(item.id),
         item.candidate_fio || '',
         String(item.candidate_tg_id || ''),
+        item.candidate_channel || '',
+        String(item.candidate_channel_id || ''),
+        item.candidate_identity_label || '',
         item.city_name || '',
         item.recruiter_name || '',
         item.status || '',
@@ -852,7 +856,7 @@ export function SlotsPage() {
                             <div className="text-muted text-xs">Кандидат</div>
                             <div className="font-semibold">{row.candidate_fio || 'Свободный слот'}</div>
                             <div className="text-muted text-sm">
-                              {row.candidate_tg_id ? `tg_id: ${row.candidate_tg_id}` : (hasCandidate ? 'Без tg_id' : 'Назначьте кандидата')}
+                              {slotCandidateIdentityLabel(row)}
                             </div>
                           </div>
                           <div>
@@ -995,7 +999,7 @@ export function SlotsPage() {
                               {row.candidate_fio || 'Свободный слот'}
                             </div>
                             <div className="slot-candidate__meta">
-                              {row.candidate_tg_id ? `tg_id: ${row.candidate_tg_id}` : (hasCandidate ? 'Без tg_id' : 'Назначьте кандидата')}
+                              {slotCandidateIdentityLabel(row)}
                             </div>
                           </div>
                         </td>
@@ -1116,7 +1120,9 @@ export function SlotsPage() {
                   <div className="modal__row">
                     <strong>Время региона/кандидата:</strong> {slotRegionTimeLabel(sheetSlot)} · {slotRegionTz(sheetSlot) || '—'}
                   </div>
-                  <div className="modal__row"><strong>Кандидат:</strong> {sheetSlot.candidate_fio || 'Нет брони'} · tg_id: {sheetSlot.candidate_tg_id || '—'}</div>
+                  <div className="modal__row">
+                    <strong>Кандидат:</strong> {sheetSlot.candidate_fio || 'Нет брони'} · {slotCandidateIdentityLabel(sheetSlot)}
+                  </div>
                   <div className="modal__row"><strong>Статус:</strong> {statusLabel(sheetSlot.status || undefined)}</div>
                 </div>
                 <div className="modal__footer">

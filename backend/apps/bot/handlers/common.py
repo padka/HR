@@ -8,16 +8,32 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from .. import services
-from .. import slot_assignment_flow
-from ..services import show_recruiter_dashboard
 from backend.core.db import async_session
 from backend.domain import analytics
-from backend.domain.candidates import bind_telegram_to_candidate, get_user_by_telegram_id
+from backend.domain.candidates import (
+    bind_telegram_to_candidate,
+    get_user_by_telegram_id,
+)
+from backend.domain.candidates.status import get_status_label
+
+from .. import services, slot_assignment_flow
+from ..services import show_recruiter_dashboard
 
 router = Router()
 
 logger = logging.getLogger(__name__)
+
+
+def _candidate_status_text(candidate, *, fallback: str) -> str:
+    candidate_status = getattr(candidate, "candidate_status", None)
+    if candidate_status is not None:
+        return get_status_label(candidate_status)
+
+    workflow_status = str(getattr(candidate, "workflow_status", "") or "").strip()
+    if workflow_status:
+        return workflow_status
+
+    return fallback
 
 
 async def _send_candidate_cabinet_entry(message: Message, *, candidate) -> None:
@@ -30,7 +46,7 @@ async def _send_candidate_cabinet_entry(message: Message, *, candidate) -> None:
 
     lines = [
         "Telegram привязан к вашему профилю кандидата.",
-        f"Статус: {stored_candidate.status or 'В обработке'}",
+        f"Статус: {_candidate_status_text(stored_candidate, fallback='В обработке')}",
         "Дальнейшие шаги придут прямо в этот чат.",
     ]
     await message.answer("\n".join(lines))

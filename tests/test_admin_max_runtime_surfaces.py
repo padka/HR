@@ -12,6 +12,8 @@ import pytest
 from backend.apps.admin_ui.app import create_app
 from backend.core import settings as settings_module
 from backend.core.db import async_session
+from backend.core.messenger.protocol import MessengerPlatform
+from backend.core.messenger.registry import unregister_adapter
 from backend.domain.candidates.max_launch_invites import create_max_launch_invite
 from backend.domain.candidates.models import (
     CandidateAccessToken,
@@ -71,7 +73,9 @@ class _FakeFailingMaxAdapter(_FakeMaxAdapter):
 @pytest.fixture(autouse=True)
 def _clear_settings_cache():
     settings_module.get_settings.cache_clear()
+    unregister_adapter(MessengerPlatform.MAX)
     yield
+    unregister_adapter(MessengerPlatform.MAX)
     settings_module.get_settings.cache_clear()
 
 

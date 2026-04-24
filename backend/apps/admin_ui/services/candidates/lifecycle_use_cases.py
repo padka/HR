@@ -19,7 +19,6 @@ from backend.apps.admin_ui.services.candidates.helpers import (
     _recruiter_can_access_candidate,
     _release_intro_day_slots_for_candidate,
     get_candidate_detail,
-    update_candidate_status,
 )
 from backend.apps.admin_ui.services.slots import (
     BotDispatch,
@@ -51,6 +50,7 @@ from backend.domain.candidates.test1_shared import (
     reset_test1_progress,
 )
 from backend.domain.models import Slot
+from backend.domain.scheduling_repair_service import repair_candidate_confirmed_offer_if_safe
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,45 @@ def _has_scheduling_conflict(detail: Mapping[str, Any]) -> bool:
     if operational_summary.get("has_scheduling_conflict"):
         return True
     return any(code.startswith("scheduling_") for code in _issue_codes(detail))
+
+
+def _is_legacy_candidate_confirmed_offer(detail: Mapping[str, Any]) -> bool:
+    scheduling_summary = detail.get("scheduling_summary") or {}
+    issue_codes = {
+        str(issue.get("code") or "").strip().lower()
+        for issue in scheduling_summary.get("issues") or []
+        if isinstance(issue, Mapping)
+    }
+    return (
+        issue_codes == {"scheduling_status_conflict"}
+        and str(scheduling_summary.get("slot_assignment_status") or "").strip().lower() == "offered"
+        and str(scheduling_summary.get("slot_status") or "").strip().lower()
+        in {"confirmed", "confirmed_by_candidate"}
+        and bool(scheduling_summary.get("slot_id"))
+        and bool(scheduling_summary.get("slot_assignment_id"))
+    )
+
+
+async def _repair_legacy_candidate_confirmed_offer_detail(
+    candidate_id: int,
+    detail: Mapping[str, Any],
+    *,
+    principal: Optional[Principal],
+    note: str,
+) -> tuple[Mapping[str, Any], bool]:
+    if not _has_scheduling_conflict(detail) or not _is_legacy_candidate_confirmed_offer(detail):
+        return detail, False
+    actor = principal or principal_ctx.get()
+    result = await repair_candidate_confirmed_offer_if_safe(
+        candidate_id,
+        performed_by_type=getattr(actor, "type", "admin") if actor else "admin",
+        performed_by_id=getattr(actor, "id", None) if actor else None,
+        note=note,
+    )
+    if not result.ok or result.status != "repaired":
+        return detail, False
+    refreshed = await get_candidate_detail(candidate_id, principal=principal)
+    return refreshed or detail, True
 
 
 def _has_any_active_scheduling(detail: Mapping[str, Any]) -> bool:
@@ -418,6 +457,20 @@ async def _log_test1_restarted(
     )
 
 
+async def _persist_slot_interview_outcome(
+    slot_id: int,
+    *,
+    outcome: str,
+) -> bool:
+    async with async_session() as session:
+        slot = await session.get(Slot, slot_id)
+        if slot is None:
+            return False
+        slot.interview_outcome = outcome
+        await session.commit()
+        return True
+
+
 def _build_not_hired_dispatch(
     user: User,
     *,
@@ -537,6 +590,14 @@ async def execute_send_to_test2(
         )
 
     if _has_scheduling_conflict(detail):
+        detail, _ = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"lifecycle_action:{action_key or 'send_to_test2'}",
+        )
+
+    if _has_scheduling_conflict(detail):
         return _result(
             ok=False,
             message="Нельзя выполнить действие: Slot и SlotAssignment расходятся. Сначала проверьте scheduling.",
@@ -561,6 +622,59 @@ async def execute_send_to_test2(
             error=error,
             detail=detail,
             status=current_status,
+        )
+
+    candidate = detail.get("user")
+    telegram_id = None
+    max_user_id = None
+    if isinstance(candidate, User):
+        telegram_id = getattr(candidate, "telegram_user_id", None) or getattr(candidate, "telegram_id", None)
+        max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
+    if max_user_id and not telegram_id:
+        outcome_saved = await _persist_slot_interview_outcome(slot_id, outcome="success")
+        if not outcome_saved:
+            refreshed = await _refresh_detail(candidate_id, principal)
+            return _result(
+                ok=False,
+                message="Не удалось сохранить исход интервью.",
+                status_code=404,
+                error="missing_interview_slot",
+                detail=refreshed,
+                status=_detail_status_slug(refreshed or detail),
+            )
+
+        strict_result = await execute_resend_test2(
+            candidate_id,
+            principal=principal,
+            bot_service=bot_service,
+            action_key=None,
+            source_ref="lifecycle:send_to_test2",
+            status_reason="admin send test2 after interview",
+        )
+        if not strict_result.ok:
+            suffix = str(strict_result.message or "").strip()
+            message = "Исход «Прошёл» сохранён, но Тест 2 не отправлен."
+            if suffix:
+                message = f"{message} {suffix}"
+            return _result(
+                ok=False,
+                message=message,
+                status_code=strict_result.status_code,
+                error=strict_result.error,
+                detail=strict_result.detail,
+                status=strict_result.status,
+            )
+
+        success_suffix = str(strict_result.message or "").strip()
+        success_message = "Исход «Прошёл» сохранён. Кандидату отправлен Тест 2."
+        if success_suffix and success_suffix != "Тест 2 отправлен":
+            success_message = f"{success_message} {success_suffix}"
+        return _result(
+            ok=True,
+            message=success_message,
+            status_code=200,
+            status=strict_result.status,
+            detail=strict_result.detail,
         )
 
     ok, message, _stored, dispatch = await set_slot_outcome(
@@ -693,6 +807,8 @@ async def execute_resend_test2(
     principal: Optional[Principal],
     bot_service: Optional[object],
     action_key: Optional[str] = None,
+    source_ref: str = "lifecycle:resend_test2",
+    status_reason: str = "admin resend test2",
 ) -> LifecycleUseCaseResult:
     principal = principal or principal_ctx.get()
     detail = await get_candidate_detail(candidate_id, principal=principal)
@@ -744,18 +860,17 @@ async def execute_resend_test2(
     if candidate.candidate_id is not None:
         slot_filters.append(Slot.candidate_id == candidate.candidate_id)
 
-    async with async_session() as session:
-        slot = await session.scalar(
-            select(Slot)
-            .where(
-                or_(*slot_filters)
+    slot = None
+    if slot_filters:
+        async with async_session() as session:
+            slot = await session.scalar(
+                select(Slot)
+                .where(
+                    or_(*slot_filters)
+                )
+                .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                .limit(1)
             )
-            .order_by(Slot.start_utc.desc(), Slot.id.desc())
-            .limit(1)
-        )
-        if slot is not None:
-            slot.test2_sent_at = datetime.now(timezone.utc)
-            await session.commit()
 
     candidate_city_id = (
         getattr(slot, "candidate_city_id", None)
@@ -774,7 +889,7 @@ async def execute_resend_test2(
         candidate_city_id,
         candidate.fio or getattr(candidate, "name", "") or "Кандидат",
         bot_service=bot_service,
-        required=get_settings().test2_required,
+        required=True,
         slot_id=getattr(slot, "id", None),
         candidate_public_id=str(candidate.candidate_id or "") or None,
         max_user_id=max_user_id,
@@ -782,21 +897,109 @@ async def execute_resend_test2(
 
     stored_status = current_status
     if result.ok:
-        ok, message, stored_status, _dispatch = await update_candidate_status(
-            candidate_id,
-            "test2_sent",
-            bot_service=bot_service,
-            principal=principal,
-        )
-        if not ok:
-            return _result(
-                ok=False,
-                message=message or "Не удалось обновить статус кандидата.",
-                status_code=400,
-                error="status_update_failed",
-                detail=detail,
-                status=current_status,
+        actor_type, actor_id = _resolve_actor(principal)
+        async with async_session() as session:
+            user = await _load_candidate_for_write(session, candidate_id, principal)
+            if not user:
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Candidate not found",
+                    status_code=404,
+                    error="candidate_not_found",
+                    detail=refreshed,
+                )
+            previous_status = getattr(getattr(user, "candidate_status", None), "value", None)
+            dual_write_request = None
+            dual_write_claim = None
+            if get_settings().candidate_status_dual_write_enabled and previous_status != CandidateStatus.TEST2_SENT.value:
+                dual_write_request = _build_lifecycle_dual_write_request(
+                    candidate_id=candidate_id,
+                    status_from=previous_status,
+                    status_to=CandidateStatus.TEST2_SENT,
+                    reason=None,
+                    comment=None,
+                    principal=principal,
+                    previous_status_changed_at=getattr(user, "status_changed_at", None),
+                    source_ref=source_ref,
+                )
+                try:
+                    dual_write_runtime = _candidate_dual_write_runtime()
+                    dual_write_claim = await dual_write_runtime.claim_candidate_status_transition(
+                        session,
+                        dual_write_request,
+                    )
+                except PersistentIdempotencyConflictError:
+                    await session.rollback()
+                    refreshed = await _refresh_detail(candidate_id, principal)
+                    return _result(
+                        ok=False,
+                        message="Конфликт идемпотентности для перехода кандидата в Тест 2",
+                        status_code=409,
+                        error="idempotency_conflict",
+                        detail=refreshed,
+                        status=_detail_status_slug(refreshed or {}),
+                    )
+                if dual_write_claim.reused:
+                    await session.rollback()
+                    refreshed = await _refresh_detail(candidate_id, principal)
+                    return _result(
+                        ok=True,
+                        message="Тест 2 уже был отправлен для этого перехода",
+                        status_code=200,
+                        status=CandidateStatus.TEST2_SENT.value,
+                        detail=refreshed,
+                    )
+            try:
+                await apply_candidate_status(
+                    user,
+                    CandidateStatus.TEST2_SENT,
+                    session=session,
+                    force=True,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    reason=status_reason,
+                )
+            except StatusTransitionError:
+                await session.rollback()
+                refreshed = await _refresh_detail(candidate_id, principal)
+                return _result(
+                    ok=False,
+                    message="Тест 2 отправлен, но статус кандидата не обновился. Нужна ручная проверка.",
+                    status_code=409,
+                    error="status_update_failed",
+                    detail=refreshed,
+                    status=_detail_status_slug(refreshed or {}),
+                )
+            await _dispatch_hh_status_sync_if_enabled(
+                user,
+                CandidateStatus.TEST2_SENT,
+                session=session,
             )
+            if dual_write_request is not None and dual_write_claim is not None:
+                await dual_write_runtime.finalize_candidate_status_dual_write(
+                    session,
+                    candidate_id=candidate_id,
+                    status_from=previous_status,
+                    status_to=CandidateStatus.TEST2_SENT.value,
+                    reason=None,
+                    comment=None,
+                    request=dual_write_request,
+                )
+            await session.commit()
+            stored_status = CandidateStatus.TEST2_SENT.value
+        if slot is not None:
+            async with async_session() as session:
+                persisted_slot = await session.get(Slot, slot.id)
+                if persisted_slot is not None:
+                    persisted_slot.test2_sent_at = datetime.now(timezone.utc)
+                    await session.commit()
+        await _log_candidate_status_updated(
+            candidate_id,
+            previous_status=current_status,
+            target_status=CandidateStatus.TEST2_SENT.value,
+            slot_id=getattr(slot, "id", None),
+        )
 
     refreshed_detail = await get_candidate_detail(candidate_id, principal=principal)
     return _result(
@@ -1003,6 +1206,14 @@ async def execute_restart_test1(
             error="action_not_allowed",
             detail=detail,
             status=current_status,
+        )
+
+    if _has_scheduling_conflict(detail):
+        detail, _ = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"lifecycle_action:{action_key or 'restart_test1'}",
         )
 
     if _has_scheduling_conflict(detail):
@@ -1237,6 +1448,14 @@ async def execute_finalize_hired(
         )
 
     if _has_scheduling_conflict(detail):
+        detail, _ = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"lifecycle_action:{action_key or 'finalize_hired'}",
+        )
+
+    if _has_scheduling_conflict(detail):
         return _result(
             ok=False,
             message="Нельзя завершить кандидата: scheduling contract содержит конфликт.",
@@ -1388,6 +1607,14 @@ async def execute_finalize_not_hired(
             error="action_not_allowed",
             detail=detail,
             status=current_status,
+        )
+
+    if _has_scheduling_conflict(detail):
+        detail, _ = await _repair_legacy_candidate_confirmed_offer_detail(
+            candidate_id,
+            detail,
+            principal=principal,
+            note=f"lifecycle_action:{action_key or 'finalize_not_hired'}",
         )
 
     if _has_scheduling_conflict(detail):

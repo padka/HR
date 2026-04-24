@@ -7,6 +7,9 @@ export type SlotApiItem = {
   candidate_fio?: string | null
   candidate_tg_id?: string | null
   candidate_id?: number | null
+  candidate_channel?: string | null
+  candidate_channel_id?: string | number | null
+  candidate_identity_label?: string | null
   tz_name?: string | null
   local_time?: string | null
   recruiter_tz?: string | null
@@ -66,7 +69,21 @@ export function slotPurpose(row: SlotApiItem): string {
 }
 
 export function slotHasCandidate(row: SlotApiItem): boolean {
-  return Boolean(row.candidate_fio || row.candidate_tg_id || row.candidate_id)
+  return Boolean(row.candidate_fio || row.candidate_tg_id || row.candidate_id || row.candidate_channel_id)
+}
+
+export function slotCandidateIdentityLabel(row: SlotApiItem): string {
+  if (row.candidate_identity_label) return row.candidate_identity_label
+
+  const channel = String(row.candidate_channel || '')
+    .trim()
+    .toLowerCase()
+  if (channel === 'max') return 'MAX'
+  if (row.candidate_tg_id) return `tg_id: ${row.candidate_tg_id}`
+  if (row.candidate_channel_id) {
+    return channel ? `${channel}: ${row.candidate_channel_id}` : `id: ${row.candidate_channel_id}`
+  }
+  return slotHasCandidate(row) ? 'Канал не привязан' : 'Назначьте кандидата'
 }
 
 export function slotRecruiterTz(row: SlotApiItem): string {

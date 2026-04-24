@@ -744,3 +744,65 @@ async def test_legacy_confirm_slot_by_candidate_syncs_matching_assignment():
         assert assignment is not None
         assert assignment.status == models.SlotAssignmentStatus.CONFIRMED
         assert assignment.confirmed_at is not None
+
+
+async def test_repeated_candidate_confirm_syncs_legacy_confirmed_slot_assignment():
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as session:
+        city = models.City(name="Repeated Confirm City", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Repeated Confirm Recruiter", tz="Europe/Moscow", active=True)
+        candidate = User(
+            fio="Repeated Confirm Candidate",
+            city="Repeated Confirm City",
+            telegram_id=730004,
+            telegram_user_id=730004,
+            username="repeated_confirm_candidate",
+        )
+        session.add_all([city, recruiter, candidate])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+        await session.refresh(candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(days=1),
+            duration_min=30,
+            status=models.SlotStatus.CONFIRMED_BY_CANDIDATE,
+            purpose="interview",
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+            candidate_city_id=city.id,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.OFFERED,
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+
+        slot_id = slot.id
+        assignment_id = assignment.id
+
+    result = await confirm_slot_by_candidate(slot_id)
+    assert result.status == "already_confirmed"
+
+    async with async_session() as session:
+        assignment = await session.get(models.SlotAssignment, assignment_id)
+        assert assignment is not None
+        assert assignment.status == models.SlotAssignmentStatus.CONFIRMED
+        assert assignment.confirmed_at is not None

@@ -467,13 +467,9 @@ def get_candidate_actions(
 
         filtered_actions.append(action)
 
-    # Keep Test 2 dispatch available on every candidate stage.
-    has_test2_action = any(
-        ("test2" in (action.key or "").lower())
-        or (action.target_status == CandidateStatus.TEST2_SENT.value)
-        for action in filtered_actions
-    )
-    if not has_test2_action:
+    # Keep explicit Test 2 resend available on every candidate stage.
+    has_universal_test2_action = any(action.key == UNIVERSAL_TEST2_ACTION.key for action in filtered_actions)
+    if not has_universal_test2_action:
         filtered_actions.append(UNIVERSAL_TEST2_ACTION)
 
     return filtered_actions

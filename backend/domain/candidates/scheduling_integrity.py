@@ -54,6 +54,7 @@ _ALLOWED_SLOT_STATUSES_BY_ASSIGNMENT = {
     SlotAssignmentStatus.OFFERED: {SlotStatus.PENDING},
     SlotAssignmentStatus.CONFIRMED: {
         SlotStatus.BOOKED,
+        SlotStatus.CONFIRMED,
         SlotStatus.CONFIRMED_BY_CANDIDATE,
     },
     SlotAssignmentStatus.RESCHEDULE_REQUESTED: {
@@ -63,6 +64,7 @@ _ALLOWED_SLOT_STATUSES_BY_ASSIGNMENT = {
     },
     SlotAssignmentStatus.RESCHEDULE_CONFIRMED: {
         SlotStatus.BOOKED,
+        SlotStatus.CONFIRMED,
         SlotStatus.CONFIRMED_BY_CANDIDATE,
     },
 }

@@ -663,11 +663,11 @@ async def test_waiting_candidates_payload_supports_server_side_paging_and_filter
         page_size=1,
         sort="name_asc",
     )
-    assert name_sorted_payload["queue_total"] == 3
-    assert name_sorted_payload["total"] == 3
+    assert name_sorted_payload["queue_total"] == 2
+    assert name_sorted_payload["total"] == 2
     assert name_sorted_payload["returned_count"] == 1
     assert name_sorted_payload["has_prev"] is True
-    assert name_sorted_payload["has_next"] is True
+    assert name_sorted_payload["has_next"] is False
     assert name_sorted_payload["items"][0]["name"] == "Boris Incoming"
 
     filtered_payload = await get_waiting_candidates_payload(
@@ -675,9 +675,124 @@ async def test_waiting_candidates_payload_supports_server_side_paging_and_filter
         page_size=10,
         waiting="24h",
     )
-    assert filtered_payload["queue_total"] == 3
+    assert filtered_payload["queue_total"] == 2
     assert filtered_payload["total"] == 1
     assert filtered_payload["items"][0]["name"] == "Boris Incoming"
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_excludes_slot_pending_without_reschedule_request(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming City Pending Exclusion", tz="Europe/Moscow", active=True)
+        recruiter = models.Recruiter(name="Pending Exclusion Recruiter", tz="Europe/Moscow", active=True)
+        recruiter.cities.append(city)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        waiting_candidate = User(
+            fio="Waiting Slot Candidate",
+            city=city.name,
+            telegram_id=960101,
+            candidate_status=CandidateStatus.WAITING_SLOT,
+            status_changed_at=now - timedelta(hours=5),
+            last_activity=now - timedelta(hours=5),
+            is_active=True,
+        )
+        pending_candidate = User(
+            fio="Selected Slot Candidate",
+            city=city.name,
+            telegram_id=960102,
+            candidate_id="selected-slot-candidate",
+            candidate_status=CandidateStatus.SLOT_PENDING,
+            status_changed_at=now - timedelta(hours=3),
+            last_activity=now - timedelta(hours=3),
+            is_active=True,
+        )
+        session.add_all([waiting_candidate, pending_candidate])
+        await session.commit()
+        await session.refresh(pending_candidate)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            tz_name=city.tz,
+            start_utc=now + timedelta(days=1),
+            duration_min=30,
+            status=models.SlotStatus.PENDING,
+            candidate_id=pending_candidate.candidate_id,
+            candidate_tg_id=pending_candidate.telegram_id,
+            candidate_fio=pending_candidate.fio,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+        assignment = models.SlotAssignment(
+            slot_id=slot.id,
+            recruiter_id=recruiter.id,
+            candidate_id=pending_candidate.candidate_id,
+            candidate_tg_id=pending_candidate.telegram_id,
+            candidate_tz="Europe/Moscow",
+            status=models.SlotAssignmentStatus.OFFERED,
+            offered_at=now - timedelta(hours=2),
+        )
+        session.add(assignment)
+        await session.commit()
+
+    payload = await get_waiting_candidates_payload(page=1, page_size=20)
+    names = {item["name"] for item in payload["items"]}
+    assert names == {"Waiting Slot Candidate"}
+    assert payload["queue_total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_waiting_candidates_can_filter_by_messenger_channel(monkeypatch):
+    monkeypatch.setenv("PERF_CACHE_BYPASS", "1")
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        city = models.City(name="Incoming Channel City", tz="Europe/Moscow", active=True)
+        session.add(city)
+        await session.commit()
+
+        session.add_all(
+            [
+                User(
+                    fio="Telegram Incoming",
+                    city=city.name,
+                    telegram_id=980001,
+                    messenger_platform="telegram",
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=4),
+                    last_activity=now - timedelta(hours=4),
+                    is_active=True,
+                ),
+                User(
+                    fio="MAX Incoming",
+                    city=city.name,
+                    messenger_platform="max",
+                    max_user_id="max-980002",
+                    candidate_status=CandidateStatus.WAITING_SLOT,
+                    status_changed_at=now - timedelta(hours=3),
+                    last_activity=now - timedelta(hours=3),
+                    is_active=True,
+                ),
+            ]
+        )
+        await session.commit()
+
+    telegram_payload = await get_waiting_candidates_payload(page=1, page_size=10, channel="telegram")
+    assert {item["name"] for item in telegram_payload["items"]} == {"Telegram Incoming"}
+    assert {item["messenger_channel"] for item in telegram_payload["items"]} == {"telegram"}
+
+    max_payload = await get_waiting_candidates_payload(page=1, page_size=10, channel="max")
+    assert {item["name"] for item in max_payload["items"]} == {"MAX Incoming"}
+    assert {item["messenger_channel"] for item in max_payload["items"]} == {"max"}
 
 
 @pytest.mark.asyncio

@@ -255,6 +255,191 @@ def _issue_codes(report: dict[str, Any]) -> list[str]:
     ]
 
 
+def _candidate_filters(candidate: User) -> list[Any]:
+    filters: list[Any] = []
+    if candidate.candidate_id:
+        filters.append(Slot.candidate_id == candidate.candidate_id)
+    telegram_ids: set[int] = set()
+    for raw in (candidate.telegram_id, candidate.telegram_user_id):
+        if raw is None:
+            continue
+        try:
+            telegram_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if telegram_ids:
+        filters.append(Slot.candidate_tg_id.in_(sorted(telegram_ids)))
+    return filters
+
+
+def _candidate_assignment_filters(candidate: User) -> list[Any]:
+    filters: list[Any] = []
+    if candidate.candidate_id:
+        filters.append(SlotAssignment.candidate_id == candidate.candidate_id)
+    telegram_ids: set[int] = set()
+    for raw in (candidate.telegram_id, candidate.telegram_user_id):
+        if raw is None:
+            continue
+        try:
+            telegram_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if telegram_ids:
+        filters.append(SlotAssignment.candidate_tg_id.in_(sorted(telegram_ids)))
+    return filters
+
+
+async def repair_candidate_confirmed_offer_if_safe(
+    candidate_id: int,
+    *,
+    performed_by_type: str,
+    performed_by_id: Optional[int],
+    note: Optional[str] = None,
+) -> ServiceResult:
+    """Promote legacy offered assignment after the candidate already confirmed.
+
+    This is intentionally narrow: it only repairs the historical state where the
+    Slot is already candidate-confirmed but the single active SlotAssignment was
+    left in OFFERED. No slot ownership or time is changed.
+    """
+
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                candidate = await session.get(User, int(candidate_id), with_for_update=True)
+                if candidate is None:
+                    return ServiceResult(False, "candidate_not_found", 404, "Кандидат не найден.")
+
+                slot_filters = _candidate_filters(candidate)
+                assignment_filters = _candidate_assignment_filters(candidate)
+                if not slot_filters or not assignment_filters:
+                    return ServiceResult(
+                        True,
+                        "not_applicable",
+                        200,
+                        "Для кандидата нет scheduling identity для legacy repair.",
+                    )
+
+                slots = (
+                    await session.execute(
+                        select(Slot)
+                        .options(selectinload(Slot.recruiter), selectinload(Slot.city))
+                        .where(or_(*slot_filters))
+                        .order_by(Slot.start_utc.desc(), Slot.id.desc())
+                        .with_for_update()
+                    )
+                ).scalars().all()
+                assignments = (
+                    await session.execute(
+                        select(SlotAssignment)
+                        .options(selectinload(SlotAssignment.slot))
+                        .where(or_(*assignment_filters))
+                        .order_by(SlotAssignment.updated_at.desc(), SlotAssignment.id.desc())
+                        .with_for_update()
+                    )
+                ).scalars().all()
+
+                integrity = build_scheduling_integrity_report(
+                    slots=slots,
+                    slot_assignments=assignments,
+                )
+                issue_codes = _issue_codes(integrity)
+                if issue_codes != ["scheduling_status_conflict"]:
+                    return ServiceResult(
+                        True,
+                        "not_applicable",
+                        200,
+                        "Legacy repair не применим к текущему scheduling state.",
+                        payload={"issue_codes": issue_codes},
+                    )
+
+                assignment = integrity.get("active_assignment")
+                slot = integrity.get("active_slot")
+                slot_by_id = _slot_by_id(slots)
+                if assignment is None or slot is None:
+                    return ServiceResult(True, "not_applicable", 200, "Нет активной пары Slot/SlotAssignment.")
+                assignment_slot = _slot_for_assignment(assignment, slot_by_id=slot_by_id)
+                if assignment_slot is None or getattr(assignment_slot, "id", None) != getattr(slot, "id", None):
+                    return ServiceResult(
+                        True,
+                        "not_applicable",
+                        200,
+                        "Legacy repair не меняет split-brain между разными слотами.",
+                    )
+                if _normalize_assignment_status(getattr(assignment, "status", None)) != SlotAssignmentStatus.OFFERED:
+                    return ServiceResult(True, "not_applicable", 200, "Assignment уже не в offered.")
+                if _normalize_slot_status(getattr(slot, "status", None)) not in {
+                    SlotStatus.CONFIRMED,
+                    SlotStatus.CONFIRMED_BY_CANDIDATE,
+                }:
+                    return ServiceResult(True, "not_applicable", 200, "Slot ещё не подтверждён кандидатом.")
+
+                assignment.status = SlotAssignmentStatus.CONFIRMED
+                assignment.confirmed_at = assignment.confirmed_at or _now()
+                await session.flush()
+
+                post_integrity = build_scheduling_integrity_report(
+                    slots=slots,
+                    slot_assignments=assignments,
+                )
+                if post_integrity.get("write_behavior") == WRITE_BEHAVIOR_NEEDS_MANUAL_REPAIR:
+                    raise _RepairAbort(
+                        ServiceResult(
+                            False,
+                            "repair_failed",
+                            409,
+                            "Legacy repair не снял scheduling conflict.",
+                            payload={"issue_codes_before": issue_codes, "issue_codes_after": _issue_codes(post_integrity)},
+                        )
+                    )
+
+                session.add(
+                    AuditLog(
+                        username=f"{performed_by_type}:{performed_by_id if performed_by_id is not None else 0}",
+                        action="scheduling_repair.legacy_candidate_confirmed_offer",
+                        entity_type="slot_assignment",
+                        entity_id=str(assignment.id),
+                        created_at=_now(),
+                        changes={
+                            "performed_by_type": performed_by_type,
+                            "performed_by_id": performed_by_id,
+                            "candidate_row_id": int(candidate.id),
+                            "slot_id": int(slot.id),
+                            "slot_status": _normalize_slot_status(getattr(slot, "status", None)),
+                            "assignment_status_before": SlotAssignmentStatus.OFFERED,
+                            "assignment_status_after": SlotAssignmentStatus.CONFIRMED,
+                            "issue_codes_before": issue_codes,
+                            "issue_codes_after": _issue_codes(post_integrity),
+                            "note": str(note or "").strip() or None,
+                        },
+                    )
+                )
+                return ServiceResult(
+                    True,
+                    "repaired",
+                    200,
+                    "Legacy scheduling state repaired.",
+                    payload={
+                        "slot_id": int(slot.id),
+                        "slot_assignment_id": int(assignment.id),
+                        "integrity_state": post_integrity.get("integrity_state"),
+                    },
+                )
+    except _RepairAbort as exc:
+        return exc.result
+    except Exception:  # noqa: BLE001 - repair path must fail closed with context
+        logger.exception(
+            "legacy_candidate_confirmed_offer_repair_failed",
+            extra={"candidate_id": candidate_id},
+        )
+        return ServiceResult(
+            False,
+            "repair_failed",
+            500,
+            "Не удалось выполнить legacy scheduling repair.",
+        )
+
+
 def _workflow(integrity: dict[str, Any]) -> dict[str, Any]:
     return dict(integrity.get("repair_workflow") or {})
 
@@ -1010,4 +1195,7 @@ async def repair_slot_assignment_scheduling_conflict(
         )
 
 
-__all__ = ["repair_slot_assignment_scheduling_conflict"]
+__all__ = [
+    "repair_candidate_confirmed_offer_if_safe",
+    "repair_slot_assignment_scheduling_conflict",
+]

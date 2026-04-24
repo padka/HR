@@ -6,7 +6,6 @@ import {
   bridgeInitData,
   bridgeStartParam,
   openExternalLink,
-  openMaxDeepLink,
   prepareMaxBridge,
   requestMaxContact,
   setClosingConfirmation,
@@ -29,7 +28,6 @@ type MiniAppPanel =
   | 'manual-availability'
   | 'booked'
   | 'intro-day'
-  | 'chat-ready'
   | 'help'
 
 type LaunchResponse = {
@@ -200,16 +198,14 @@ type Booking = {
   start_utc: string
   end_utc: string
   status: string
+  candidate_can_confirm_pending?: boolean
+  meet_link?: string | null
 }
 
 type ContactBindResponse = {
   status: string
   message: string
   start_param?: string | null
-}
-
-type ChatHandoffResponse = {
-  handoff_sent: boolean
 }
 
 type ManualAvailabilityResponse = {
@@ -229,12 +225,6 @@ type BookingNotice = {
   title: string
   body: string
   tone: 'success' | 'progress' | 'warn'
-}
-
-type ChatReadyState = {
-  handoffSent: boolean
-  title: string
-  body: string
 }
 
 type SurfaceTone = 'success' | 'progress' | 'warn' | 'neutral' | 'accent'
@@ -330,8 +320,8 @@ function actionBadge(action?: JourneyPrimaryAction | null) {
       return 'Запись'
     case 'intro_day':
       return 'Ознакомительный день'
-    case 'chat':
-      return 'Поддержка'
+    case 'help':
+      return 'Статус'
     default:
       return 'Дальше'
   }
@@ -350,7 +340,7 @@ function nextStepDescription({
     return 'Ответьте на оставшиеся вопросы. После этого покажем следующий шаг здесь, без смены сценария.'
   }
   if (journey?.active_booking) {
-    return 'Проверьте время встречи и памятку. Если нужно что-то уточнить, продолжите в чате MAX.'
+    return 'Проверьте время встречи, памятку и дальнейшие действия по текущему шагу.'
   }
   if (test1?.required_next_action === 'select_interview_slot') {
     return 'Выберите удобное время собеседования. Если подходящего слота нет, можно отправить пожелания.'
@@ -394,7 +384,6 @@ function busyMessage(panel: MiniAppPanel, hasSession: boolean) {
   if (panel === 'manual-availability') return 'Передаём пожелания по времени рекрутеру.'
   if (panel === 'booked') return 'Обновляем детали встречи и памятку.'
   if (panel === 'intro-day') return 'Проверяем детали ознакомительного дня и синхронизируем подтверждение.'
-  if (panel === 'chat-ready') return 'Готовим переход в чат MAX.'
   return 'Синхронизируем шаг кандидата.'
 }
 
@@ -486,22 +475,53 @@ async function maxApi<T>(
   return response.json() as Promise<T>
 }
 
-function formatDate(value?: string | null) {
+function formatDate(value?: string | null, timeZone = 'Europe/Moscow') {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('ru-RU', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  try {
+    return new Intl.DateTimeFormat('ru-RU', {
+      timeZone,
+      weekday: 'short',
+      day: '2-digit',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
+  } catch {
+    return date.toLocaleString('ru-RU', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+}
+
+function dateKeyInTimeZone(date: Date, timeZone: string) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    const parts = formatter.formatToParts(date)
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+    const year = values.year || '0000'
+    const month = values.month || '00'
+    const day = values.day || '00'
+    return `${year}-${month}-${day}`
+  } catch {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  }
 }
 
 function formatBookingStatus(value?: string | null) {
   const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'pending' || normalized === 'booked') return 'Нужно подтвердить'
+  if (normalized === 'pending') return 'На согласовании'
+  if (normalized === 'booked') return 'Нужно подтвердить'
   if (normalized === 'confirmed' || normalized === 'confirmed_by_candidate') return 'Подтверждено'
   if (normalized === 'rescheduled') return 'Перенесено'
   if (normalized === 'cancelled' || normalized === 'canceled') return 'Отменено'
@@ -509,17 +529,24 @@ function formatBookingStatus(value?: string | null) {
   return normalized.replaceAll('_', ' ')
 }
 
-function groupSlotsByDay(slots: SlotInfo[]) {
+function minutesUntilStart(value?: string | null) {
+  if (!value) return null
+  const timestamp = new Date(value).getTime()
+  if (Number.isNaN(timestamp)) return null
+  return Math.round((timestamp - Date.now()) / 60000)
+}
+
+function groupSlotsByDay(slots: SlotInfo[], timeZone: string) {
   const groups = new Map<string, SlotInfo[]>()
   slots.forEach((slot) => {
     const date = new Date(slot.start_utc)
     if (Number.isNaN(date.getTime())) return
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    const key = dateKeyInTimeZone(date, timeZone)
     groups.set(key, [...(groups.get(key) || []), slot])
   })
   return Array.from(groups.entries()).map(([key, items]) => ({
     key,
-    label: formatDate(items[0]?.start_utc),
+    label: formatDate(items[0]?.start_utc, timeZone),
     items,
   }))
 }
@@ -613,6 +640,17 @@ function detectClientTimeZone() {
   }
 }
 
+function sanitizeInlineMarkup(value?: string | null) {
+  const source = String(value || '')
+  if (!source.trim()) return ''
+  return source
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/&lt;(\/?(?:b|strong|i|em))&gt;/gi, '<$1>')
+    .replace(/&lt;br\s*\/?&gt;/gi, '<br />')
+}
+
 export function MaxMiniAppPage() {
   const [initData, setInitData] = useState('')
   const [accessSessionId, setAccessSessionId] = useState<string | null>(null)
@@ -638,7 +676,6 @@ export function MaxMiniAppPage() {
   const [rescheduleBookingId, setRescheduleBookingId] = useState<number | null>(null)
   const [activePanel, setActivePanel] = useState<MiniAppPanel>('home')
   const [panelHistory, setPanelHistory] = useState<MiniAppPanel[]>([])
-  const [chatReady, setChatReady] = useState<ChatReadyState | null>(null)
   const [bookingNotice, setBookingNotice] = useState<BookingNotice | null>(null)
 
   const currentTest2Question = useMemo(() => {
@@ -648,10 +685,15 @@ export function MaxMiniAppPage() {
 
   const currentQuestion = useMemo(() => {
     if (!test1 || test1.is_completed) return null
-    return test1.questions.find((question) => !(question.id in test1.draft_answers)) || test1.questions[0] || null
+    return test1.questions.find((question) => !(question.id in test1.draft_answers)) || null
   }, [test1])
 
-  const dayGroups = useMemo(() => groupSlotsByDay(slots), [slots])
+  const bookingTimeZone = useMemo(
+    () => cities.find((city) => city.city_id === bookingContext?.city_id)?.tz || 'Europe/Moscow',
+    [bookingContext?.city_id, cities],
+  )
+
+  const dayGroups = useMemo(() => groupSlotsByDay(slots, bookingTimeZone), [bookingTimeZone, slots])
   const visibleSlots = useMemo(() => {
     if (!selectedDay) return slots
     return dayGroups.find((group) => group.key === selectedDay)?.items || []
@@ -663,7 +705,6 @@ export function MaxMiniAppPage() {
     && (test1.required_next_action === 'select_interview_slot' || journey?.active_booking),
   )
 
-  const canOpenChat = Boolean(binding?.chat_url && (capabilities.open_max_link || capabilities.open_link))
   const showBackButton = Boolean(accessSessionId && panelHistory.length > 0 && activePanel !== 'home')
   const shouldWarnOnClose = Boolean(accessSessionId && activePanel === 'test1' && !test1?.is_completed)
   const hasBookingFlow = Boolean(canChooseBooking && accessSessionId)
@@ -747,7 +788,7 @@ export function MaxMiniAppPage() {
           initData: currentInitData,
           sessionId,
         })
-        const nextDayGroups = groupSlotsByDay(nextSlots)
+        const nextDayGroups = groupSlotsByDay(nextSlots, bookingTimeZone)
         setSlots(nextSlots)
         setSelectedDay((previous) => {
           if (previous && nextDayGroups.some((group) => group.key === previous)) return previous
@@ -811,7 +852,6 @@ export function MaxMiniAppPage() {
     setInitData(resolvedInitData)
     setBusy(true)
     setError(null)
-    setChatReady(null)
     setBookingNotice(null)
     setManualAvailabilityNotice(null)
     if (!resolvedInitData) {
@@ -855,14 +895,27 @@ export function MaxMiniAppPage() {
       if (payload.session?.session_id) {
         setAccessSessionId(payload.session.session_id)
         const nextState = await refreshCandidateState(payload.session.session_id, resolvedInitData)
-        setTest2(null)
-        setIntroDay(null)
         setPanelHistory([])
-        if (!nextState.test1Response.is_completed) {
+        const nextPrimaryKind = String(nextState.journeyResponse.primary_action?.kind || '').trim().toLowerCase()
+        if (nextPrimaryKind === 'test2') {
+          await loadTest2State(payload.session.session_id, resolvedInitData)
+          setIntroDay(null)
+          setActivePanel('test2')
+        } else if (nextPrimaryKind === 'intro_day') {
+          await loadIntroDayState(payload.session.session_id, resolvedInitData)
+          setTest2(null)
+          setActivePanel('intro-day')
+        } else if (!nextState.test1Response.is_completed) {
+          setTest2(null)
+          setIntroDay(null)
           setActivePanel('test1')
         } else if (nextState.journeyResponse.active_booking) {
+          setTest2(null)
+          setIntroDay(null)
           setActivePanel('booked')
         } else {
+          setTest2(null)
+          setIntroDay(null)
           setActivePanel('home')
         }
       } else {
@@ -1031,24 +1084,26 @@ export function MaxMiniAppPage() {
     setBusy(true)
     setError(null)
     try {
-      const booking = rescheduleBookingId
-        ? await maxApi<Booking>(`/candidate-access/bookings/${rescheduleBookingId}/reschedule`, {
+      if (rescheduleBookingId) {
+        await maxApi<Booking>(`/candidate-access/bookings/${rescheduleBookingId}/reschedule`, {
           method: 'POST',
           initData,
           sessionId: accessSessionId,
           body: { new_slot_id: slotId },
         })
-        : await maxApi<Booking>('/candidate-access/bookings', {
+      } else {
+        await maxApi<Booking>('/candidate-access/bookings', {
           method: 'POST',
           initData,
           sessionId: accessSessionId,
           body: { slot_id: slotId },
         })
+      }
       setRescheduleBookingId(null)
       setBookingNotice({
-        title: rescheduleBookingId ? 'Время обновлено' : 'Собеседование назначено',
-        body: `${booking.recruiter_name} ждёт вас ${formatDate(booking.start_utc)}. Проверьте детали встречи и при необходимости откройте чат MAX.`,
-        tone: 'success',
+        title: 'Слот отправлен на согласование',
+        body: 'Мы просматриваем ваше резюме и результаты Test 1. Совсем скоро сообщим решение. Если слот согласуют, детали встречи появятся здесь и в чате MAX.',
+        tone: 'progress',
       })
       await refreshCandidateState(accessSessionId)
       replacePanel('booked')
@@ -1071,7 +1126,7 @@ export function MaxMiniAppPage() {
       })
       setBookingNotice({
         title: 'Встреча подтверждена',
-        body: `Мы закрепили время ${formatDate(journey.active_booking.start_utc)}. Откройте памятку и чат MAX, если понадобится помощь с подготовкой.`,
+        body: `Мы закрепили время ${formatDate(journey.active_booking.start_utc, bookingTimeZone)}. Проверьте памятку и детали встречи на этом экране.`,
         tone: 'success',
       })
       await refreshCandidateState(accessSessionId)
@@ -1096,7 +1151,7 @@ export function MaxMiniAppPage() {
       })
       setBookingNotice({
         title: 'Запись отменена',
-        body: 'Выберите другое время или продолжите общение с рекрутером в чате MAX.',
+        body: 'Выберите другое время, когда будете готовы вернуться к записи.',
         tone: 'progress',
       })
       const nextState = await refreshCandidateState(accessSessionId)
@@ -1143,40 +1198,15 @@ export function MaxMiniAppPage() {
     }
   }
 
-  async function handoffToChat() {
-    if (!accessSessionId) return
-    setBusy(true)
-    setError(null)
-    try {
-      const response = await maxApi<ChatHandoffResponse>('/candidate-access/chat-handoff', {
-        method: 'POST',
-        initData,
-        sessionId: accessSessionId,
-      })
-      setChatReady({
-        handoffSent: response.handoff_sent,
-        title: response.handoff_sent ? 'Чат MAX готов' : 'Чат MAX открыт',
-        body: response.handoff_sent
-          ? 'Мы отправили подсказку рекрутеру. Откройте чат MAX, чтобы продолжить без потери контекста.'
-          : 'Откройте чат MAX. Если автоматическое сообщение не отправилось, рекрутер всё равно увидит ваш сценарий по текущей сессии.',
-      })
-      pushPanel('chat-ready')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось открыть чат')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function openChatLink() {
-    const chatUrl = String(binding?.chat_url || '').trim()
-    if (!chatUrl) {
-      setError('Чат MAX пока недоступен. Попробуйте позже или обратитесь к рекрутеру.')
+  function openMeetingLink(url?: string | null) {
+    const meetingUrl = String(url || '').trim()
+    if (!meetingUrl) {
+      setError('Ссылка на подключение пока недоступна. Попробуйте чуть позже.')
       return
     }
-    const opened = openMaxDeepLink(chatUrl) || openExternalLink(chatUrl)
+    const opened = openExternalLink(meetingUrl)
     if (!opened) {
-      setError('Клиент MAX не открыл чат автоматически. Попробуйте перейти в чат вручную.')
+      setError('Не удалось открыть ссылку на встречу автоматически. Попробуйте перейти по ней позже.')
     }
   }
 
@@ -1263,11 +1293,15 @@ export function MaxMiniAppPage() {
         })
       return
     }
-    if (journey.primary_action.kind === 'chat') {
-      void handoffToChat()
+    if (journey.primary_action.kind === 'help') {
+      pushPanel('help')
       return
     }
-    pushPanel('test1')
+    if (journey.primary_action.kind === 'test1') {
+      pushPanel('test1')
+      return
+    }
+    pushPanel('help')
   }
 
   useEffect(() => {
@@ -1326,30 +1360,22 @@ export function MaxMiniAppPage() {
           body={binding.message}
           tone="warn"
           badge="Безопасный режим"
-          testId="miniapp-manual-review"
-          actions={(
-            <>
-              <button
-                type="button"
-                className="max-btn max-btn--primary"
-                disabled={busy || !canOpenChat}
-                onClick={openChatLink}
-              >
-                Открыть чат MAX
-              </button>
-              <button
-                type="button"
-                className="max-btn max-btn--ghost"
-                disabled={busy}
-                onClick={() => replacePanel('help')}
-              >
+        testId="miniapp-manual-review"
+        actions={(
+          <>
+            <button
+              type="button"
+              className="max-btn max-btn--primary"
+              disabled={busy}
+              onClick={() => replacePanel('help')}
+            >
                 Что делать дальше
               </button>
             </>
           )}
         >
           <p className="max-muted">
-            Мы не связываем анкету автоматически, если есть неоднозначность. Следующий безопасный шаг доступен через чат MAX.
+            Мы не связываем анкету автоматически, если есть неоднозначность. Дождитесь следующего сообщения RecruitSmart или обратитесь к рекрутеру.
           </p>
         </MiniAppStateCard>
       )
@@ -1387,22 +1413,14 @@ export function MaxMiniAppPage() {
           badge="Bounded pilot"
           testId="miniapp-launch-error"
           role="alert"
-          actions={(
-            <>
-              <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void bootstrap()}>
-                Попробовать снова
-              </button>
-              <button
-                type="button"
-                className="max-btn max-btn--ghost"
-                disabled={busy || !canOpenChat}
-                onClick={openChatLink}
-              >
-                Открыть чат MAX
-              </button>
-            </>
-          )}
-        />
+        actions={(
+          <>
+            <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void bootstrap()}>
+              Попробовать снова
+            </button>
+          </>
+        )}
+      />
       )
     }
 
@@ -1435,14 +1453,6 @@ export function MaxMiniAppPage() {
               }}
             >
               Взять номер из MAX
-            </button>
-            <button
-              type="button"
-              className="max-btn max-btn--ghost"
-              disabled={busy || !canOpenChat}
-              onClick={openChatLink}
-            >
-              Продолжить в чате
             </button>
           </>
         )}
@@ -1504,14 +1514,6 @@ export function MaxMiniAppPage() {
             >
               {heroAction}
             </button>
-            <button
-              type="button"
-              className="max-btn max-btn--ghost"
-              disabled={busy || !canOpenChat}
-              onClick={openChatLink}
-            >
-              Открыть чат MAX
-            </button>
           </div>
         </section>
 
@@ -1546,7 +1548,7 @@ export function MaxMiniAppPage() {
               <span className="max-pill max-pill--success">{formatBookingStatus(journey.active_booking.status)}</span>
             </div>
             <div className="max-booking-card">
-              <strong className="ui-tabular-nums">{formatDate(journey.active_booking.start_utc)}</strong>
+              <strong className="ui-tabular-nums">{formatDate(journey.active_booking.start_utc, bookingTimeZone)}</strong>
               <p>Рекрутёр: {journey.active_booking.recruiter_name}</p>
             </div>
             <div className="max-actions">
@@ -1579,17 +1581,45 @@ export function MaxMiniAppPage() {
   }
 
   function renderTest1() {
-    if (!accessSessionId || !test1 || activePanel !== 'test1' || test1.is_completed || !currentQuestion) return null
+    if (!accessSessionId || !test1 || activePanel !== 'test1' || test1.is_completed) return null
+    const allAnswersCaptured = Object.keys(test1.draft_answers).length >= test1.questions.length
+    if (!currentQuestion && allAnswersCaptured) {
+      return (
+        <section className="max-card max-stack" data-testid="miniapp-test1-review">
+          <div className="max-section-head">
+            <div>
+              <p className="max-card__eyebrow">Короткая анкета</p>
+              <h2>Проверьте анкету и завершите Test 1</h2>
+            </div>
+            <span className="max-pill">Готово к отправке</span>
+          </div>
+          <div className="max-banner max-banner--progress" role="status">
+            <p className="max-banner__eyebrow">Последний шаг</p>
+            <p className="max-banner__body">
+              Все ответы сохранены. Отправьте анкету, и мы сразу откроем следующий шаг без повторного показа первого вопроса.
+            </p>
+          </div>
+          <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void completeTest1()}>
+            Завершить анкету
+          </button>
+        </section>
+      )
+    }
+    if (!currentQuestion) return null
     return (
       <section className="max-card max-stack" data-testid="miniapp-test1">
         <div className="max-section-head">
-          <h2>Короткая анкета</h2>
+          <div>
+            <p className="max-card__eyebrow">Короткая анкета</p>
+            <h2>Test 1</h2>
+          </div>
           <span className="max-pill">Шаг {currentQuestion.question_index + 1}</span>
         </div>
-        <div>
-          <h3>{currentQuestion.prompt}</h3>
-          {currentQuestion.helper ? <p>{currentQuestion.helper}</p> : null}
-        </div>
+        <article className="max-question-card">
+          <p className="max-card__eyebrow">Текущий вопрос</p>
+          <h3 dangerouslySetInnerHTML={{ __html: sanitizeInlineMarkup(currentQuestion.prompt) }} />
+          {currentQuestion.helper ? <p dangerouslySetInnerHTML={{ __html: sanitizeInlineMarkup(currentQuestion.helper) }} /> : null}
+        </article>
         {currentQuestion.options.length ? (
           <div className="max-options">
             {currentQuestion.options.map((option) => (
@@ -1626,7 +1656,7 @@ export function MaxMiniAppPage() {
             </div>
           </>
         )}
-        {Object.keys(test1.draft_answers).length >= test1.questions.length ? (
+        {allAnswersCaptured ? (
           <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void completeTest1()}>
             Завершить анкету
           </button>
@@ -1669,9 +1699,6 @@ export function MaxMiniAppPage() {
             <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => replacePanel('home')}>
               Вернуться на главный экран
             </button>
-            <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-              Открыть чат MAX
-            </button>
           </div>
         </section>
       )
@@ -1706,12 +1733,12 @@ export function MaxMiniAppPage() {
         ) : (
           <div className="max-banner max-banner--progress" role="status">
             <p className="max-banner__eyebrow">Тест уже открыт</p>
-            <p className="max-banner__body">Продолжите в mini app или откройте чат MAX, если нужен fallback без потери контекста.</p>
+            <p className="max-banner__body">Продолжите тест здесь. Когда статус изменится, экран обновится автоматически.</p>
           </div>
         )}
         <div className="max-actions">
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
+          <button type="button" className="max-btn max-btn--ghost" disabled={busy} onClick={() => replacePanel('help')}>
+            Что делать дальше
           </button>
         </div>
       </section>
@@ -1732,9 +1759,6 @@ export function MaxMiniAppPage() {
         <div className="max-actions">
           <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={action}>
             {actionLabel}
-          </button>
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
           </button>
         </div>
       </article>
@@ -1794,7 +1818,7 @@ export function MaxMiniAppPage() {
                   onClick={() => void saveBookingContext(accessSessionId, bookingContext?.city_id || 0, recruiter.recruiter_id)}
                 >
                   <strong>{recruiter.recruiter_name}</strong>
-                  <span>{index === 0 ? 'Рекомендуем' : 'Доступные слоты'}{recruiter.next_slot_utc ? ` · ${formatDate(recruiter.next_slot_utc)}` : ''}</span>
+                  <span>{index === 0 ? 'Рекомендуем' : 'Доступные слоты'}{recruiter.next_slot_utc ? ` · ${formatDate(recruiter.next_slot_utc, bookingTimeZone)}` : ''}</span>
                 </button>
               ))}
             </div>
@@ -1832,7 +1856,7 @@ export function MaxMiniAppPage() {
               <div className="max-grid">
                 {visibleSlots.map((slot) => (
                   <article key={slot.slot_id} className="max-slot-card">
-                    <strong className="ui-tabular-nums">{formatDate(slot.start_utc)}</strong>
+                    <strong className="ui-tabular-nums">{formatDate(slot.start_utc, bookingTimeZone)}</strong>
                     <p>{slot.recruiter_name}</p>
                     <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void createOrRescheduleBooking(slot.slot_id)}>
                       Выбрать
@@ -1909,9 +1933,6 @@ export function MaxMiniAppPage() {
           <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void submitManualAvailability()}>
             Отправить пожелания
           </button>
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
-          </button>
         </div>
       </section>
     )
@@ -1919,27 +1940,61 @@ export function MaxMiniAppPage() {
 
   function renderBookedPanel() {
     if (!accessSessionId || !journey?.active_booking || activePanel !== 'booked') return null
-    const bookingTone = bookingNotice?.tone || 'success'
     const bookingStatus = formatBookingStatus(journey.active_booking.status)
+    const rawBookingStatus = String(journey.active_booking.status || '').trim().toLowerCase()
+    const canConfirmPending = rawBookingStatus === 'pending' && Boolean(journey.active_booking.candidate_can_confirm_pending)
+    const isPendingReview = rawBookingStatus === 'pending' && !canConfirmPending
+    const isCandidateConfirmed = rawBookingStatus === 'confirmed_by_candidate'
+    const meetingLink = String(journey.active_booking.meet_link || '').trim()
+    const minutesUntilInterview = minutesUntilStart(journey.active_booking.start_utc)
+    const isUrgentInterviewConfirmation = !isPendingReview
+      && !isCandidateConfirmed
+      && minutesUntilInterview != null
+      && minutesUntilInterview <= 120
+    const bookingTone = bookingNotice?.tone || (isPendingReview ? 'progress' : 'success')
+    const defaultTitle = isPendingReview
+      ? 'Слот на согласовании'
+      : (canConfirmPending ? 'Мы предлагаем время собеседования' : (isCandidateConfirmed ? 'Встреча подтверждена' : 'Собеседование назначено'))
+    const defaultBody = isPendingReview
+      ? 'Мы просматриваем ваше резюме и результаты Test 1. Совсем скоро сообщим решение. Если слот согласуют, детали встречи появятся здесь и в чате MAX.'
+      : (canConfirmPending
+        ? 'Если это время вам подходит, подтвердите встречу здесь. Сразу после подтверждения пришлём детали и ссылку в чат MAX.'
+      : (isCandidateConfirmed
+        ? 'Встреча уже подтверждена. Здесь остаются только детали, перенос или отмена записи.'
+        : (isUrgentInterviewConfirmation
+          ? 'До собеседования осталось меньше двух часов. Подтвердите участие сейчас: после подтверждения сразу покажем ссылку здесь и в чате MAX.'
+          : 'Проверьте детали встречи, памятку и при необходимости подтвердите запись.')))
     return (
       <section className="max-card max-stack max-booking-success" data-testid="miniapp-booked">
         <div className="max-section-head">
           <div>
             <p className="max-card__eyebrow">Встреча в расписании</p>
-            <h2>{bookingNotice?.title || 'Собеседование назначено'}</h2>
+            <h2>{bookingNotice?.title || defaultTitle}</h2>
           </div>
           <span className="max-pill max-pill--success">{bookingStatus}</span>
         </div>
         <div className="max-booking-card">
-          <strong className="ui-tabular-nums">{formatDate(journey.active_booking.start_utc)}</strong>
+          <strong className="ui-tabular-nums">{formatDate(journey.active_booking.start_utc, bookingTimeZone)}</strong>
           <p>Рекрутёр: {journey.active_booking.recruiter_name}</p>
         </div>
         <div className={`max-banner max-banner--${bookingTone}`} data-testid="miniapp-booking-success" role="status">
           <p className="max-banner__eyebrow">Что важно сейчас</p>
           <p className="max-banner__body">
-            {bookingNotice?.body || 'Проверьте детали встречи, памятку и при необходимости подтвердите запись.'}
+            {bookingNotice?.body || defaultBody}
           </p>
         </div>
+        {isCandidateConfirmed && meetingLink ? (
+          <article className="max-card max-card--compact max-inline-card max-inline-card--success">
+            <p className="max-card__eyebrow">Подключение</p>
+            <h3>Ссылка на видеовстречу</h3>
+            <p>{meetingLink}</p>
+            <div className="max-actions">
+              <button type="button" className="max-btn max-btn--primary" onClick={() => openMeetingLink(meetingLink)}>
+                Открыть конференцию
+              </button>
+            </div>
+          </article>
+        ) : null}
         {journey.prep_card ? (
           <article className={`max-card max-card--compact max-inline-card max-inline-card--${normalizeTone(journey.prep_card.tone)}`}>
             <p className="max-card__eyebrow">Подготовка</p>
@@ -1948,26 +2003,33 @@ export function MaxMiniAppPage() {
           </article>
         ) : null}
         <div className="max-actions">
-          <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void confirmBooking()}>
-            Подтвердить встречу
-          </button>
-          <button
-            type="button"
-            className="max-btn max-btn--ghost"
-            disabled={busy}
-            onClick={() => {
-              setRescheduleBookingId(journey.active_booking?.booking_id || null)
-              pushPanel(resolveBookingPanel(bookingContext))
-            }}
-          >
-            Выбрать другое время
-          </button>
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
-          </button>
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy} onClick={() => void cancelBooking()}>
-            Отменить запись
-          </button>
+          {!isPendingReview ? (
+            <>
+              {!isCandidateConfirmed ? (
+                <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => void confirmBooking()}>
+                  Подтвердить встречу
+                </button>
+              ) : null}
+              {!canConfirmPending ? (
+                <>
+                  <button
+                    type="button"
+                    className="max-btn max-btn--ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      setRescheduleBookingId(journey.active_booking?.booking_id || null)
+                      pushPanel(resolveBookingPanel(bookingContext))
+                    }}
+                  >
+                    Выбрать другое время
+                  </button>
+                  <button type="button" className="max-btn max-btn--ghost" disabled={busy} onClick={() => void cancelBooking()}>
+                    Отменить запись
+                  </button>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </div>
       </section>
     )
@@ -1977,6 +2039,8 @@ export function MaxMiniAppPage() {
     if (!accessSessionId || activePanel !== 'intro-day' || !introDay) return null
     const contactSummary = introDay.intro_contact || [introDay.contact_name, introDay.contact_phone].filter(Boolean).join(', ')
     const confirmed = ['confirmed', 'confirmed_by_candidate'].includes(String(introDay.status || '').trim().toLowerCase())
+    const minutesUntilIntroDay = minutesUntilStart(introDay.start_utc)
+    const isUrgentIntroConfirmation = !confirmed && minutesUntilIntroDay != null && minutesUntilIntroDay <= 180
     return (
       <section className="max-card max-stack" data-testid="miniapp-intro-day">
         <div className="max-section-head">
@@ -2000,7 +2064,9 @@ export function MaxMiniAppPage() {
           <p className="max-banner__body">
             {confirmed
               ? 'Участие подтверждено. Если детали встречи изменятся, мы обновим их здесь и в чате MAX.'
-              : 'Проверьте адрес, время и подтвердите участие. Если нужен fallback, продолжите в чате MAX.'}
+              : (isUrgentIntroConfirmation
+                ? 'До ознакомительного дня осталось меньше трёх часов. Подтвердите участие сейчас, чтобы не потерять место и сразу увидеть финальные детали.'
+                : 'Проверьте адрес, время и подтвердите участие. Если нужен fallback, продолжите в чате MAX.')}
           </p>
         </div>
         <div className="max-actions">
@@ -2013,35 +2079,8 @@ export function MaxMiniAppPage() {
               Вернуться на главный экран
             </button>
           )}
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
-          </button>
         </div>
       </section>
-    )
-  }
-
-  function renderChatReady() {
-    if (activePanel !== 'chat-ready' || !chatReady) return null
-    return (
-      <MiniAppStateCard
-        eyebrow="Поддержка"
-        title={chatReady.title}
-        body={chatReady.body}
-        tone="success"
-        badge="Переход в чат"
-        testId="miniapp-chat-ready"
-        actions={(
-          <>
-            <button type="button" className="max-btn max-btn--primary" disabled={!canOpenChat} onClick={openChatLink}>
-              Открыть чат MAX
-            </button>
-            <button type="button" className="max-btn max-btn--ghost" disabled={busy} onClick={() => replacePanel('home')}>
-              Вернуться на главный экран
-            </button>
-          </>
-        )}
-      />
     )
   }
 
@@ -2079,10 +2118,7 @@ export function MaxMiniAppPage() {
           </div>
         )}
         <div className="max-actions">
-          <button type="button" className="max-btn max-btn--primary" disabled={busy || !canOpenChat} onClick={openChatLink}>
-            Открыть чат MAX
-          </button>
-          <button type="button" className="max-btn max-btn--ghost" disabled={busy} onClick={() => replacePanel('home')}>
+          <button type="button" className="max-btn max-btn--primary" disabled={busy} onClick={() => replacePanel('home')}>
             На главный экран
           </button>
         </div>
@@ -2094,12 +2130,6 @@ export function MaxMiniAppPage() {
     <div className={`max-miniapp max-miniapp--panel-${activePanel}`}>
       <div className="max-miniapp__backdrop" />
       <div className="max-miniapp__content">
-        <section className="max-hero">
-          <span className="max-hero__badge">RecruitSmart · MAX pilot</span>
-          <h1>Личный кабинет кандидата</h1>
-          <p>Тот же путь кандидата RecruitSmart: анкета, статус шага и запись на собеседование в одном защищённом mini app.</p>
-        </section>
-
         {error ? (
           <div className="max-banner max-banner--error" role="alert">
             <p className="max-banner__eyebrow">Не удалось обновить экран</p>
@@ -2115,7 +2145,6 @@ export function MaxMiniAppPage() {
         {renderManualAvailabilityPanel()}
         {renderBookedPanel()}
         {renderIntroDayPanel()}
-        {renderChatReady()}
         {renderHelpPanel()}
 
         {busy && (binding || accessSessionId) ? (

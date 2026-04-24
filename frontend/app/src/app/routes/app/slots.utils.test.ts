@@ -3,6 +3,7 @@ import {
   buildStatusCounts,
   matchesStatusFilter,
   normalizeSlotStatus,
+  slotCandidateIdentityLabel,
   slotDateForFilter,
   slotRecruiterTimeLabel,
   slotRegionTimeLabel,
@@ -57,5 +58,30 @@ describe('slots.utils', () => {
     expect(matchesStatusFilter(confirmed, 'BOOKED')).toBe(true)
     expect(matchesStatusFilter(pending, 'BOOKED')).toBe(false)
     expect(normalizeSlotStatus('confirmed_by_candidate')).toBe('CONFIRMED_BY_CANDIDATE')
+  })
+
+  it('renders MAX identity without falling back to Telegram-only wording', () => {
+    const row: SlotApiItem = {
+      id: 10,
+      start_utc: '2026-02-24T06:00:00+00:00',
+      candidate_fio: 'MAX Candidate',
+      candidate_id: 100,
+      candidate_tg_id: null,
+      candidate_channel: 'max',
+      candidate_channel_id: 'max-user-10',
+      candidate_identity_label: 'MAX',
+    }
+
+    expect(slotCandidateIdentityLabel(row)).toBe('MAX')
+  })
+
+  it('keeps Telegram identity label for Telegram-backed slots', () => {
+    const row: SlotApiItem = {
+      id: 11,
+      start_utc: '2026-02-24T06:00:00+00:00',
+      candidate_tg_id: '777',
+    }
+
+    expect(slotCandidateIdentityLabel(row)).toBe('tg_id: 777')
   })
 })

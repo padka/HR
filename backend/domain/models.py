@@ -536,6 +536,16 @@ def _enforce_slot_overlap(mapper, connection, target: Slot) -> None:  # pragma: 
 
 class SlotReservationLock(Base):
     __tablename__ = "slot_reservation_locks"
+    __table_args__ = (
+        Index(
+            "uq_slot_reservation_locks_key",
+            "candidate_tg_id",
+            "recruiter_id",
+            "reservation_date",
+            unique=True,
+        ),
+        Index("ix_slot_reservation_locks_candidate_id", "candidate_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slot_id: Mapped[int] = mapped_column(ForeignKey("slots.id", ondelete="CASCADE"), nullable=False)

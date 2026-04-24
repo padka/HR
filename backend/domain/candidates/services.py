@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,8 @@ INVITE_CHANNEL_GENERIC = "generic"
 INVITE_CHANNEL_TELEGRAM = "telegram"
 INVITE_CHANNEL_MAX = "max"
 
+logger = logging.getLogger(__name__)
+
 
 def normalize_invite_channel(value: Optional[str]) -> str:
     normalized = (value or "").strip().lower()
@@ -56,6 +59,36 @@ def normalize_invite_channel(value: Optional[str]) -> str:
 def _should_promote_source_to_max(source: Optional[str]) -> bool:
     normalized = str(source or "").strip().lower()
     return normalized in {"", "bot", "generic", "unknown", "candidate_access"}
+
+
+async def load_preferred_user_by_max_user_id(
+    session: AsyncSession,
+    max_user_id: str,
+    *,
+    for_update: bool = False,
+) -> Optional[User]:
+    normalized = str(max_user_id or "").strip()
+    if not normalized:
+        return None
+    query = (
+        select(User)
+        .where(User.max_user_id == normalized)
+        .order_by(User.is_active.desc(), User.last_activity.desc(), User.id.desc())
+        .limit(2)
+    )
+    if for_update:
+        query = query.with_for_update()
+    users = list((await session.execute(query)).scalars().all())
+    if len(users) > 1:
+        logger.warning(
+            "candidate.max_user_id_duplicate_resolved",
+            extra={
+                "duplicate_count": len(users),
+                "selected_user_id": users[0].id,
+                "selected_is_active": bool(users[0].is_active),
+            },
+        )
+    return users[0] if users else None
 
 
 async def create_or_update_user(
@@ -207,10 +240,7 @@ async def get_user_by_max_user_id(max_user_id: str) -> Optional[User]:
     if not normalized:
         return None
     async with async_session() as session:
-        result = await session.execute(
-            select(User).where(User.max_user_id == normalized)
-        )
-        user = result.scalar_one_or_none()
+        user = await load_preferred_user_by_max_user_id(session, normalized)
         if user:
             session.expunge(user)
         return user
@@ -471,8 +501,10 @@ async def bind_max_to_candidate(
             if candidate.max_user_id and candidate.max_user_id != normalized_max_user_id:
                 return None
 
-            existing = await session.scalar(
-                select(User).where(User.max_user_id == normalized_max_user_id)
+            existing = await load_preferred_user_by_max_user_id(
+                session,
+                normalized_max_user_id,
+                for_update=True,
             )
             if existing is not None and existing.id != candidate.id:
                 return None
@@ -540,10 +572,7 @@ async def log_inbound_max_message(
             if existing is not None:
                 await session.refresh(existing)
                 return existing
-        result = await session.execute(
-            select(User).where(User.max_user_id == normalized_max_user_id)
-        )
-        user = result.scalar_one_or_none()
+        user = await load_preferred_user_by_max_user_id(session, normalized_max_user_id)
         if user is None:
             return None
         now = datetime.now(timezone.utc)
@@ -585,6 +614,8 @@ async def log_outbound_max_message(
     author_label: Optional[str] = "max_bot",
     provider_message_id: Optional[str] = None,
     client_request_id: Optional[str] = None,
+    status: str = ChatMessageStatus.SENT.value,
+    error: Optional[str] = None,
 ) -> Optional[ChatMessage]:
     normalized_max_user_id = str(max_user_id or "").strip()
     if not normalized_max_user_id:
@@ -599,7 +630,7 @@ async def log_outbound_max_message(
                 await session.refresh(existing)
                 return existing
 
-        user = await session.scalar(select(User).where(User.max_user_id == normalized_max_user_id))
+        user = await load_preferred_user_by_max_user_id(session, normalized_max_user_id)
         if user is None:
             return None
 
@@ -615,7 +646,8 @@ async def log_outbound_max_message(
             channel="max",
             text=text,
             payload_json=message_payload,
-            status=ChatMessageStatus.SENT.value,
+            status=status,
+            error=error,
             author_label=author_label,
             client_request_id=client_request_id,
         )

@@ -74,6 +74,10 @@ def _resolve_candidate_tg_id(candidate: User, preferred: Optional[int] = None) -
     return preferred or candidate.telegram_user_id or candidate.telegram_id
 
 
+def _resolve_candidate_external_id(candidate: User) -> Optional[str]:
+    return str(getattr(candidate, "max_user_id", "") or "").strip() or None
+
+
 async def _resolve_candidate_for_assignment(session, assignment: SlotAssignment) -> User | None:
     candidate = None
     if assignment.candidate_id:
@@ -495,6 +499,7 @@ async def create_slot_assignment(
     candidate_tz: Optional[str] = None,
     created_by: Optional[str] = None,
     allow_replace_active_assignment: bool = False,
+    offer_payload: Optional[dict[str, Any]] = None,
 ) -> ServiceResult:
     async with async_session() as session:
         try:
@@ -524,7 +529,8 @@ async def create_slot_assignment(
                     return ServiceResult(False, "candidate_not_found", 404, "Кандидат не найден.")
 
                 candidate_tg_id = _resolve_candidate_tg_id(candidate, candidate_tg_id)
-                if candidate_tg_id is None:
+                candidate_external_id = _resolve_candidate_external_id(candidate)
+                if candidate_tg_id is None and candidate_external_id is None:
                     return ServiceResult(
                         False,
                         "candidate_telegram_missing",
@@ -683,12 +689,17 @@ async def create_slot_assignment(
                         "reschedule": reschedule_token,
                     },
                 }
+                if offer_payload:
+                    payload.update(dict(offer_payload))
+                if candidate_external_id is not None:
+                    payload["candidate_external_id"] = candidate_external_id
 
                 await add_outbox_notification(
                     notification_type="slot_assignment_offer",
                     booking_id=slot.id,
                     candidate_tg_id=candidate_tg_id,
                     payload=payload,
+                    messenger_channel="max" if candidate_external_id is not None else "telegram",
                     session=session,
                 )
 
@@ -1347,10 +1358,32 @@ async def propose_alternative(
             if other_active_assignments >= capacity:
                 return ServiceResult(False, "slot_full", 409, "Слот заполнен.")
 
+            if target_slot.id != slot.id:
+                stale_active_assignments = await _active_other_assignments_count(
+                    session,
+                    slot_id=int(slot.id),
+                    current_assignment_id=int(assignment.id),
+                )
+                if stale_active_assignments:
+                    return ServiceResult(
+                        False,
+                        "scheduling_conflict",
+                        409,
+                        "У старого слота осталось активное назначение. "
+                        "Нужна ручная проверка scheduling.",
+                    )
+                _clear_slot_binding(slot)
+
             assignment.slot_id = target_slot.id
             assignment.status = SlotAssignmentStatus.OFFERED
             assignment.offered_at = _now()
             assignment.status_before_reschedule = None
+            _bind_slot_to_assignment(
+                target_slot,
+                assignment=assignment,
+                candidate=candidate,
+                slot_status=SlotStatus.PENDING,
+            )
 
             request.status = RescheduleRequestStatus.DECLINED
             request.decided_at = _now()
@@ -1365,6 +1398,9 @@ async def propose_alternative(
             )
             reschedule_token = await _create_action_token(
                 session, ACTION_RESCHEDULE, assignment.id
+            )
+            candidate_external_id = (
+                _resolve_candidate_external_id(candidate) if candidate is not None else None
             )
 
             await add_outbox_notification(
@@ -1386,7 +1422,9 @@ async def propose_alternative(
                     },
                     "comment": comment,
                     "is_alternative": True,
+                    **({"candidate_external_id": candidate_external_id} if candidate_external_id is not None else {}),
                 },
+                messenger_channel="max" if candidate_external_id is not None else "telegram",
                 session=session,
             )
 

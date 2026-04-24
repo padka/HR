@@ -286,7 +286,7 @@ class MaxAdapter(MessengerProtocol):
                         {
                             "type": "open_app",
                             "text": button.text,
-                            "web_app": button.url,
+                            "webApp": button.url,
                         }
                     )
                     continue

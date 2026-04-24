@@ -20,6 +20,7 @@ from backend.domain.candidates.models import (
     CandidateLaunchChannel,
     User,
 )
+from backend.domain.candidates.status import CandidateStatus
 from backend.domain.models import Application, ApplicationEvent
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -102,6 +103,11 @@ async def _seed_launch_context(
     provider_user_id: str | None = None,
     candidate_max_user_id: str | None = None,
     with_application: bool = False,
+    candidate_status: CandidateStatus | None = None,
+    workflow_status: str | None = None,
+    lifecycle_state: str | None = None,
+    issued_by_type: str | None = None,
+    journey_current_step_key: str | None = None,
 ) -> dict[str, int | str | None]:
     now = datetime.now(UTC)
     async with async_session() as session:
@@ -115,6 +121,9 @@ async def _seed_launch_context(
             messenger_platform="max",
             max_user_id=candidate_max_user_id,
             source="max",
+            candidate_status=candidate_status,
+            workflow_status=workflow_status,
+            lifecycle_state=lifecycle_state,
         )
         session.add(candidate)
         await session.flush()
@@ -135,6 +144,28 @@ async def _seed_launch_context(
             await session.flush()
             application_id = int(application.id)
 
+        journey_session_id: int | None = None
+        if journey_current_step_key is not None:
+            next_journey_session_id = int(
+                await session.scalar(select(func.coalesce(func.max(CandidateJourneySession.id), 0) + 1))
+                or 1
+            )
+            journey_session = CandidateJourneySession(
+                id=next_journey_session_id,
+                candidate_id=candidate.id,
+                application_id=application_id,
+                journey_key="candidate_portal",
+                journey_version="v1",
+                entry_channel=CandidateLaunchChannel.MAX.value,
+                current_step_key=journey_current_step_key,
+                last_surface=CandidateJourneySurface.MAX_MINIAPP.value,
+                last_auth_method=CandidateAccessAuthMethod.MAX_INIT_DATA.value,
+                last_activity_at=now,
+            )
+            session.add(journey_session)
+            await session.flush()
+            journey_session_id = int(journey_session.id)
+
         launch_token = CandidateAccessToken(
             id=next_token_id,
             token_hash=hashlib.sha256(f"token:{start_param}".encode()).hexdigest(),
@@ -146,6 +177,8 @@ async def _seed_launch_context(
             launch_channel=CandidateLaunchChannel.MAX.value,
             start_param=start_param,
             provider_user_id=provider_user_id,
+            journey_session_id=journey_session_id,
+            issued_by_type=issued_by_type,
             expires_at=now + timedelta(hours=1),
         )
         session.add(launch_token)
@@ -156,6 +189,7 @@ async def _seed_launch_context(
             "token_id": launch_token.id,
             "start_param": start_param,
             "application_id": application_id,
+            "journey_session_id": journey_session_id,
         }
 
 
@@ -218,10 +252,20 @@ async def _seed_bound_candidate_without_start_param(
     *,
     max_user_id: str,
     start_param: str,
+    candidate_status: CandidateStatus | None = None,
+    workflow_status: str | None = None,
+    lifecycle_state: str | None = None,
+    issued_by_type: str | None = None,
+    journey_current_step_key: str | None = None,
 ) -> dict[str, int | str | None]:
     return await _seed_launch_context(
         start_param=start_param,
         candidate_max_user_id=max_user_id,
+        candidate_status=candidate_status,
+        workflow_status=workflow_status,
+        lifecycle_state=lifecycle_state,
+        issued_by_type=issued_by_type,
+        journey_current_step_key=journey_current_step_key,
     )
 
 
@@ -305,11 +349,49 @@ def test_max_launch_reuses_existing_session_for_same_query_id(max_api_client):
     assert events[0].metadata_json["_rs_source_ref"] == "stable-query"
 
 
+def test_max_launch_refreshes_reused_access_session_version_snapshot(max_api_client):
+    seeded = asyncio.run(_seed_launch_context(start_param="stable-version-ref"))
+    init_data = _generate_max_init_data(
+        user_id=700020,
+        start_param="stable-version-ref",
+        query_id="stable-version-query",
+    )
+
+    first = max_api_client.post("/api/max/launch", json={"init_data": init_data})
+    assert first.status_code == 200
+
+    async def _bump() -> None:
+        async with async_session() as session:
+            result = await session.execute(
+                select(CandidateJourneySession)
+                .where(CandidateJourneySession.candidate_id == int(seeded["candidate_id"]))
+                .order_by(CandidateJourneySession.id.desc())
+                .limit(1)
+            )
+            journey = result.scalar_one_or_none()
+            assert journey is not None
+            journey.session_version = max(1, int(journey.session_version or 1)) + 1
+            await session.commit()
+
+    asyncio.run(_bump())
+
+    second = max_api_client.post("/api/max/launch", json={"init_data": init_data})
+    assert second.status_code == 200
+    assert second.json()["session"]["reused"] is True
+
+    access_session = asyncio.run(_load_access_session(seeded["candidate_id"]))
+    journey_session = asyncio.run(_load_journey_session(seeded["candidate_id"]))
+    assert access_session is not None
+    assert journey_session is not None
+    assert int(access_session.session_version_snapshot or 0) == int(journey_session.session_version or 0)
+
+
 def test_max_launch_falls_back_to_bound_candidate_when_start_param_missing(max_api_client):
     seeded = asyncio.run(
         _seed_bound_candidate_without_start_param(
             max_user_id="700099",
             start_param="bound-system-button-ref",
+            candidate_status=CandidateStatus.INTERVIEW_SCHEDULED,
         )
     )
 
@@ -325,6 +407,75 @@ def test_max_launch_falls_back_to_bound_candidate_when_start_param_missing(max_a
     access_session = asyncio.run(_load_access_session(seeded["candidate_id"]))
     assert access_session is not None
     assert access_session.provider_user_id == "700099"
+
+
+def test_max_launch_keeps_bound_candidate_test2_session_when_start_param_missing(max_api_client):
+    seeded = asyncio.run(
+        _seed_bound_candidate_without_start_param(
+            max_user_id="700109",
+            start_param="bound-test2-ref",
+            candidate_status=CandidateStatus.TEST2_SENT,
+            workflow_status="TEST_SENT",
+            lifecycle_state="interview",
+            issued_by_type="candidate_self_serve",
+            journey_current_step_key="test2",
+        )
+    )
+
+    response = max_api_client.post(
+        "/api/max/launch",
+        json={"init_data": _generate_max_init_data(user_id=700109, start_param=None)},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == seeded["candidate_id"]
+    assert payload["binding"]["start_param"] == "bound-test2-ref"
+
+    journey_session = asyncio.run(_load_journey_session(seeded["candidate_id"]))
+    assert journey_session is not None
+    assert journey_session.id == seeded["journey_session_id"]
+    assert journey_session.current_step_key == "test2"
+
+    token = asyncio.run(_load_token(seeded["token_id"]))
+    assert token is not None
+    assert token.revoked_at is None
+
+
+def test_max_launch_restarts_test1_for_inactive_bound_candidate(max_api_client):
+    seeded = asyncio.run(
+        _seed_bound_candidate_without_start_param(
+            max_user_id="700111",
+            start_param="old-inactive-ref",
+            candidate_status=CandidateStatus.INTERVIEW_DECLINED,
+            lifecycle_state="interview",
+            issued_by_type="candidate_self_serve",
+            journey_current_step_key="intro_day",
+        )
+    )
+
+    response = max_api_client.post(
+        "/api/max/launch",
+        json={"init_data": _generate_max_init_data(user_id=700111, start_param=None)},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candidate"]["id"] == seeded["candidate_id"]
+    assert payload["binding"]["start_param"] != "old-inactive-ref"
+
+    journey_session = asyncio.run(_load_journey_session(seeded["candidate_id"]))
+    assert journey_session is not None
+    assert journey_session.current_step_key == "test1"
+    assert journey_session.id != seeded["journey_session_id"]
+
+    access_session = asyncio.run(_load_access_session(seeded["candidate_id"]))
+    assert access_session is not None
+    assert access_session.provider_user_id == "700111"
+
+    old_token = asyncio.run(_load_token(seeded["token_id"]))
+    assert old_token is not None
+    assert old_token.revoked_at is not None
 
 
 def test_max_launch_rejects_ambiguous_bound_candidate_context(max_api_client):

@@ -164,6 +164,7 @@ INCOMING_STATUS_FILTERS = {
     "slot_pending",
     "requested_other_time",
 }
+INCOMING_CHANNEL_FILTERS = {"all", "telegram", "max"}
 INCOMING_OWNER_FILTERS = {"all", "mine", "assigned", "unassigned"}
 INCOMING_WAITING_FILTERS = {"all", "24h", "48h"}
 INCOMING_AI_LEVEL_FILTERS = {"all", "high", "medium", "low", "unknown"}
@@ -579,6 +580,13 @@ def _matches_incoming_status_filter(row: Dict[str, Any], status: str) -> bool:
     return True
 
 
+def _matches_incoming_channel_filter(row: Dict[str, Any], channel: str) -> bool:
+    if channel == "all":
+        return True
+    normalized = str(row.get("messenger_channel") or "").strip().lower()
+    return normalized == channel
+
+
 def _matches_incoming_search(row: Dict[str, Any], query: str) -> bool:
     if not query:
         return True
@@ -644,6 +652,7 @@ async def get_waiting_candidates_payload(
     search: Optional[str] = None,
     city_id: Optional[int] = None,
     status: str = "all",
+    channel: str = "all",
     owner: str = "all",
     waiting: str = "all",
     ai_level: str = "all",
@@ -656,6 +665,7 @@ async def get_waiting_candidates_payload(
     normalized_search = " ".join(str(search or "").split())
     normalized_city_id = int(city_id) if city_id not in (None, "", "all") else None
     normalized_status = normalize_waiting_candidates_enum(status, INCOMING_STATUS_FILTERS, "all")
+    normalized_channel = normalize_waiting_candidates_enum(channel, INCOMING_CHANNEL_FILTERS, "all")
     normalized_owner = normalize_waiting_candidates_enum(owner, INCOMING_OWNER_FILTERS, "all")
     normalized_waiting = normalize_waiting_candidates_enum(waiting, INCOMING_WAITING_FILTERS, "all")
     normalized_ai_level = normalize_waiting_candidates_enum(ai_level, INCOMING_AI_LEVEL_FILTERS, "all")
@@ -667,6 +677,7 @@ async def get_waiting_candidates_payload(
         page_size=normalized_page_size,
         city_id=normalized_city_id,
         status=normalized_status,
+        channel=normalized_channel,
         owner=normalized_owner,
         waiting=normalized_waiting,
         ai_level=normalized_ai_level,
@@ -726,6 +737,7 @@ async def get_waiting_candidates_payload(
                     User.telegram_user_id,
                     User.telegram_username,
                     User.username,
+                    User.messenger_platform,
                     User.responsible_recruiter_id,
                     User.last_activity,
                 )
@@ -929,6 +941,7 @@ async def get_waiting_candidates_payload(
             user_telegram_user_id,
             user_telegram_username,
             user_username,
+            user_messenger_platform,
             user_responsible_recruiter_id,
             user_last_activity,
         ) in users:
@@ -1043,72 +1056,74 @@ async def get_waiting_candidates_payload(
                 last_activity=user_last_activity,
                 status_changed_at=user_status_changed_at,
             )
-            waiting_rows.append(
-                {
-                    "id": int(user_id),
-                    "name": user_fio,
-                    "city": user_city or "Не указан",
-                    "city_id": city_id,
-                    "status_display": status_display,
-                    "status_color": status_color,
-                    "status_slug": status_slug,
-                    "waiting_since": waiting_since_iso,
-                    "waiting_since_dt": normalized_waiting_since,
-                    "waiting_hours": waiting_hours,
-                    "availability_window": _format_waiting_window(user_manual_slot_from, user_manual_slot_to, tz_label),
-                    "availability_note": user_manual_slot_comment,
-                    "tz": tz_label,
-                    "telegram_id": user_telegram_id,
-                    "telegram_user_id": user_telegram_user_id or user_telegram_id,
-                    "telegram_username": user_telegram_username or user_username,
-                    "last_message": last_msg.get("text") if last_msg else None,
-                    "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
-                    "requested_another_time": requested_another_time,
-                    "requested_another_time_at": (
-                        reschedule_intent.created_at
-                        if requested_another_time and reschedule_intent is not None
-                        else None
-                    ),
-                    "requested_another_time_comment": (
-                        reschedule_intent.candidate_comment
-                        if requested_another_time and reschedule_intent is not None
-                        else None
-                    ),
-                    "requested_another_time_from": (
-                        reschedule_intent.requested_start_utc
-                        if requested_another_time and reschedule_intent is not None
-                        else None
-                    ),
-                    "requested_another_time_to": (
-                        reschedule_intent.requested_end_utc
-                        if requested_another_time and reschedule_intent is not None
-                        else None
-                    ),
-                    "incoming_substatus": incoming_substatus,
-                    "state_contract_version": state_contract.get("version"),
-                    "lifecycle_summary": state_contract.get("lifecycle_summary"),
-                    "scheduling_summary": state_contract.get("scheduling_summary"),
-                    "candidate_next_action": state_contract.get("candidate_next_action"),
-                    "operational_summary": operational_summary,
-                    "state_reconciliation": reconciliation,
-                    "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
-                    "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
-                    "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
-                    "ai_recommendation": ai_fit_map.get(int(user_id), {}).get("recommendation"),
-                    "ai_risk_hint": ai_fit_map.get(int(user_id), {}).get("risk_hint"),
-                    "ai_reasons": ai_fit_map.get(int(user_id), {}).get("reasons", []),
-                    "responsible_recruiter_id": user_responsible_recruiter_id,
-                    "responsible_recruiter_name": recruiter_map.get(user_responsible_recruiter_id) if user_responsible_recruiter_id else None,
-                    "schedule_url": f"/candidates/{int(user_id)}/schedule-slot",
-                    "profile_url": f"/candidates/{int(user_id)}",
-                    "priority_score": 0,  # will be updated below
-                    "_queue_state": incoming_substatus,
-                    "_pending_approval": pending_approval,
-                    "_stalled": stalled,
-                    "_has_reconciliation_issues": has_reconciliation_issues,
-                    "_ai_sort_state": ai_sort_state,
-                }
-            )
+            row = {
+                "id": int(user_id),
+                "name": user_fio,
+                "city": user_city or "Не указан",
+                "city_id": city_id,
+                "messenger_channel": str(user_messenger_platform or "telegram").strip().lower() or "telegram",
+                "status_display": status_display,
+                "status_color": status_color,
+                "status_slug": status_slug,
+                "waiting_since": waiting_since_iso,
+                "waiting_since_dt": normalized_waiting_since,
+                "waiting_hours": waiting_hours,
+                "availability_window": _format_waiting_window(user_manual_slot_from, user_manual_slot_to, tz_label),
+                "availability_note": user_manual_slot_comment,
+                "tz": tz_label,
+                "telegram_id": user_telegram_id,
+                "telegram_user_id": user_telegram_user_id or user_telegram_id,
+                "telegram_username": user_telegram_username or user_username,
+                "last_message": last_msg.get("text") if last_msg else None,
+                "last_message_at": last_msg_at.isoformat() if last_msg_at else None,
+                "requested_another_time": requested_another_time,
+                "requested_another_time_at": (
+                    reschedule_intent.created_at
+                    if requested_another_time and reschedule_intent is not None
+                    else None
+                ),
+                "requested_another_time_comment": (
+                    reschedule_intent.candidate_comment
+                    if requested_another_time and reschedule_intent is not None
+                    else None
+                ),
+                "requested_another_time_from": (
+                    reschedule_intent.requested_start_utc
+                    if requested_another_time and reschedule_intent is not None
+                    else None
+                ),
+                "requested_another_time_to": (
+                    reschedule_intent.requested_end_utc
+                    if requested_another_time and reschedule_intent is not None
+                    else None
+                ),
+                "incoming_substatus": incoming_substatus,
+                "state_contract_version": state_contract.get("version"),
+                "lifecycle_summary": state_contract.get("lifecycle_summary"),
+                "scheduling_summary": state_contract.get("scheduling_summary"),
+                "candidate_next_action": state_contract.get("candidate_next_action"),
+                "operational_summary": operational_summary,
+                "state_reconciliation": reconciliation,
+                "ai_relevance_score": ai_fit_map.get(int(user_id), {}).get("score"),
+                "ai_relevance_level": ai_fit_map.get(int(user_id), {}).get("level"),
+                "ai_relevance_updated_at": ai_fit_map.get(int(user_id), {}).get("updated_at"),
+                "ai_recommendation": ai_fit_map.get(int(user_id), {}).get("recommendation"),
+                "ai_risk_hint": ai_fit_map.get(int(user_id), {}).get("risk_hint"),
+                "ai_reasons": ai_fit_map.get(int(user_id), {}).get("reasons", []),
+                "responsible_recruiter_id": user_responsible_recruiter_id,
+                "responsible_recruiter_name": recruiter_map.get(user_responsible_recruiter_id) if user_responsible_recruiter_id else None,
+                "schedule_url": f"/candidates/{int(user_id)}/schedule-slot",
+                "profile_url": f"/candidates/{int(user_id)}",
+                "priority_score": 0,  # will be updated below
+                "_queue_state": incoming_substatus,
+                "_pending_approval": pending_approval,
+                "_stalled": stalled,
+                "_has_reconciliation_issues": has_reconciliation_issues,
+                "_ai_sort_state": ai_sort_state,
+            }
+            include_in_incoming = requested_another_time or incoming_substatus in {"waiting_slot", "stalled_waiting_slot"}
+            if include_in_incoming:
+                waiting_rows.append(row)
 
         queue_total = len(waiting_rows)
 
@@ -1122,6 +1137,11 @@ async def get_waiting_candidates_payload(
             filtered_rows = [
                 row for row in filtered_rows
                 if _matches_incoming_status_filter(row, normalized_status)
+            ]
+        if normalized_channel != "all":
+            filtered_rows = [
+                row for row in filtered_rows
+                if _matches_incoming_channel_filter(row, normalized_channel)
             ]
         if normalized_owner == "mine":
             filtered_rows = [

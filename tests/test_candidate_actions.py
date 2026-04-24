@@ -147,6 +147,17 @@ def test_get_candidate_actions_intro_day_confirmed():
     assert "?" in decline_action.confirmation
 
 
+def test_get_candidate_actions_interview_stages_keep_explicit_resend_test2():
+    """Interview stages keep contextual actions and explicit Test2 resend."""
+    scheduled_actions = get_candidate_actions(CandidateStatus.INTERVIEW_SCHEDULED, has_upcoming_slot=True)
+    confirmed_actions = get_candidate_actions(CandidateStatus.INTERVIEW_CONFIRMED, has_upcoming_slot=True)
+
+    assert any(action.key == "interview_outcome_passed" for action in scheduled_actions)
+    assert any(action.key == "resend_test2" for action in scheduled_actions)
+    assert any(action.key == "interview_passed" for action in confirmed_actions)
+    assert any(action.key == "resend_test2" for action in confirmed_actions)
+
+
 def test_get_candidate_actions_none_status():
     """Test that None status returns empty list."""
     actions = get_candidate_actions(None)
