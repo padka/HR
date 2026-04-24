@@ -1,31 +1,32 @@
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import logging.config
-import hashlib
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 # Context variable for request correlation ID
-_request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
 
 
-def set_request_id(request_id: Optional[str]) -> contextvars.Token[Optional[str]]:
+def set_request_id(request_id: str | None) -> contextvars.Token[str | None]:
     """Set the current request ID for logging correlation."""
     return _request_id_var.set(request_id)
 
 
-def get_request_id() -> Optional[str]:
+def get_request_id() -> str | None:
     """Get the current request ID for logging correlation."""
     return _request_id_var.get()
 
 
-def reset_request_id(token: contextvars.Token[Optional[str]]) -> None:
+def reset_request_id(token: contextvars.Token[str | None]) -> None:
     """Reset request ID to previous value using token from set_request_id."""
     _request_id_var.reset(token)
 
@@ -179,6 +180,30 @@ class PhoneMaskingFilter(logging.Filter):
         return True
 
 
+class SensitiveQueryParamFilter(logging.Filter):
+    """Redact sensitive URL query parameters in log messages and extras."""
+
+    _QUERY_PARAM_PATTERN = re.compile(
+        r"(?i)(?P<prefix>[?&](?:poll_token|code|state|token|access_token|refresh_token|client_secret)=)(?P<value>[^&#\s]+)"
+    )
+
+    def _mask_query_params(self, text: str) -> str:
+        return self._QUERY_PARAM_PATTERN.sub(r"\g<prefix>REDACTED", text)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self._mask_query_params(record.msg)
+        if getattr(record, "args", None):
+            record.args = tuple(
+                self._mask_query_params(arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        for key, value in list(record.__dict__.items()):
+            if isinstance(value, str) and not key.startswith("_"):
+                record.__dict__[key] = self._mask_query_params(value)
+        return True
+
+
 class SecretsFilter(logging.Filter):
     """Mask known secrets if they accidentally end up in logs."""
 
@@ -242,11 +267,16 @@ def configure_logging(settings=None) -> None:
         getattr(settings, "session_secret", ""),
         getattr(settings, "admin_password", ""),
         getattr(settings, "bot_callback_secret", ""),
+        getattr(settings, "hh_client_secret", ""),
+        getattr(settings, "max_bot_token", ""),
+        getattr(settings, "max_bot_api_secret", ""),
+        getattr(settings, "max_webhook_secret", ""),
     ]
 
     filters = {
         "pii": {"()": "backend.core.logging.PIIFilter"},
         "phone": {"()": "backend.core.logging.PhoneMaskingFilter"},
+        "query_params": {"()": "backend.core.logging.SensitiveQueryParamFilter"},
         "secrets": {"()": "backend.core.logging.SecretsFilter", "secrets": sensitive_values},
     }
 
@@ -255,7 +285,7 @@ def configure_logging(settings=None) -> None:
             "class": "logging.StreamHandler",
             "level": log_level,
             "formatter": formatter_name,
-            "filters": ["pii", "phone", "secrets"],
+            "filters": ["pii", "phone", "query_params", "secrets"],
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
@@ -265,7 +295,7 @@ def configure_logging(settings=None) -> None:
             "maxBytes": 5 * 1024 * 1024,
             "backupCount": 5,
             "encoding": "utf-8",
-            "filters": ["pii", "phone", "secrets"],
+            "filters": ["pii", "phone", "query_params", "secrets"],
         },
     }
 
@@ -295,6 +325,7 @@ __all__ = [
     "pseudonymize",
     "reset_request_id",
     "SecretsFilter",
+    "SensitiveQueryParamFilter",
     "set_request_id",
     "StandardFormatter",
 ]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -28,7 +30,7 @@ def max_miniapp_client(monkeypatch: pytest.MonkeyPatch):
 
     app = create_app()
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://example.test") as client:
             yield client
     finally:
         settings_module.get_settings.cache_clear()
@@ -58,7 +60,7 @@ def max_miniapp_disabled_client(monkeypatch: pytest.MonkeyPatch):
 
     app = create_app()
     try:
-        with TestClient(app) as client:
+        with TestClient(app, base_url="https://example.test") as client:
             yield client
     finally:
         settings_module.get_settings.cache_clear()
@@ -69,6 +71,14 @@ def test_max_miniapp_shell_serves_bootstrap_page(max_miniapp_client: TestClient)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+    assert "default-src 'self'" in response.headers["content-security-policy"]
+    assert "https://st.max.ru" in response.headers["content-security-policy"]
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert "camera=()" in response.headers["permissions-policy"]
+    assert response.headers["strict-transport-security"].startswith("max-age=")
+    assert response.headers["x-request-id"]
     assert response.headers["cache-control"] == "no-store, no-cache, must-revalidate"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["expires"] == "0"
@@ -76,6 +86,11 @@ def test_max_miniapp_shell_serves_bootstrap_page(max_miniapp_client: TestClient)
     assert '<div id="root"></div>' in body
     assert '/assets/' in body
     assert 'https://st.max.ru/js/max-web-app.js' not in body
+    asset_match = re.search(r'(?:"|href=)(/assets/[^" ]+\.(?:js|css))', body)
+    assert asset_match is not None
+    asset = max_miniapp_client.get(asset_match.group(1))
+    assert asset.status_code == 200
+    assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_max_miniapp_shell_serves_manifest_and_icons(max_miniapp_client: TestClient):

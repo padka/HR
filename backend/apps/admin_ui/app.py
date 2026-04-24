@@ -68,7 +68,12 @@ from backend.apps.admin_ui.security import (
 from backend.apps.admin_ui.state import BotIntegration, setup_bot_state
 from backend.apps.bot.services import configure_template_provider
 from backend.apps.admin_ui.calendar_hub import calendar_hub
-from backend.apps.admin_ui.middleware import SecureHeadersMiddleware, DegradedDatabaseMiddleware, RequestIDMiddleware
+from backend.apps.admin_ui.middleware import (
+    CacheHeadersMiddleware,
+    DegradedDatabaseMiddleware,
+    RequestIDMiddleware,
+    SecureHeadersMiddleware,
+)
 from backend.apps.admin_ui.perf.metrics.http_metrics import HTTPMetricsMiddleware
 from backend.apps.admin_ui.perf.metrics.db_metrics import (
     install_sqlalchemy_metrics,
@@ -663,6 +668,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(DegradedDatabaseMiddleware)
     app.add_middleware(SecureHeadersMiddleware)
+    app.add_middleware(CacheHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(HTTPMetricsMiddleware)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -767,7 +773,7 @@ def create_app() -> FastAPI:
     @app.get("/app/{path:path}", include_in_schema=False)
     async def spa_assets(path: str) -> Response:
         target = (SPA_DIST_DIR / path).resolve()
-        if target.exists() and target.is_file():
+        if target.exists() and target.is_file() and target.is_relative_to(SPA_DIST_DIR):
             return FileResponse(target)
         index_file = SPA_DIST_DIR / "index.html"
         if index_file.exists():

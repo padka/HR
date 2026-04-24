@@ -27,6 +27,11 @@ from backend.apps.admin_api.webapp.recruiter_routers import (
     router as recruiter_webapp_router,
 )
 from backend.apps.admin_api.webapp.routers import router as webapp_router
+from backend.apps.admin_ui.middleware import (
+    CacheHeadersMiddleware,
+    RequestIDMiddleware,
+    SecureHeadersMiddleware,
+)
 from backend.core.cache import (
     CacheConfig,
     connect_cache,
@@ -35,6 +40,7 @@ from backend.core.cache import (
     init_cache,
 )
 from backend.core.db import async_engine, async_session
+from backend.core.logging import configure_logging
 from backend.core.messenger.bootstrap import ensure_max_adapter
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import unregister_adapter
@@ -119,6 +125,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings)
     app = FastAPI(title="TG Bot Admin API", lifespan=lifespan)
     assets_dir = SPA_DIST_DIR / "assets"
     if assets_dir.exists():
@@ -152,6 +159,9 @@ def create_app() -> FastAPI:
         same_site=settings.session_cookie_samesite,
         https_only=settings.session_cookie_secure,
     )
+    app.add_middleware(SecureHeadersMiddleware)
+    app.add_middleware(CacheHeadersMiddleware)
+    app.add_middleware(RequestIDMiddleware)
     mount_admin(app, async_engine)
 
     # Mount WebApp API endpoints for Telegram Mini App
@@ -185,6 +195,78 @@ def create_app() -> FastAPI:
     async def root():
         return {"ok": True, "admin": "/admin", "webapp_api": "/api/webapp", "health": "/health"}
 
+    async def _health_payload() -> tuple[dict[str, Any], int]:
+        start_time = time.time()
+        components: dict[str, dict[str, Any]] = {
+            "application": {"status": "up"},
+        }
+        overall_status = "healthy"
+        current_settings = get_settings()
+
+        db_start = time.time()
+        try:
+            async with async_session() as session:
+                await session.execute(text("SELECT 1"))
+            db_latency = (time.time() - db_start) * 1000
+            components["database"] = {
+                "status": "up",
+                "latency_ms": round(db_latency, 2),
+            }
+        except Exception:
+            overall_status = "unhealthy"
+            components["database"] = {
+                "status": "down",
+                "error": "database_unavailable",
+            }
+
+        if current_settings.redis_url:
+            redis_start = time.time()
+            try:
+                cache = get_cache()
+                await cache.ping()
+                redis_latency = (time.time() - redis_start) * 1000
+                components["redis"] = {
+                    "status": "up",
+                    "latency_ms": round(redis_latency, 2),
+                }
+            except RuntimeError:
+                overall_status = "unhealthy"
+                components["redis"] = {
+                    "status": "down",
+                    "error": "cache_not_initialized",
+                }
+            except Exception:
+                overall_status = "unhealthy"
+                components["redis"] = {
+                    "status": "down",
+                    "error": "redis_unavailable",
+                }
+        else:
+            if current_settings.environment == "production":
+                overall_status = "degraded"
+            components["redis"] = {
+                "status": "not_configured",
+                "note": "Redis is not configured",
+            }
+
+        payload = {
+            "status": overall_status,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "components": components,
+            "response_time_ms": round((time.time() - start_time) * 1000, 2),
+        }
+        status_code = 503 if overall_status == "unhealthy" else 200
+        return payload, status_code
+
+    @app.get("/healthz", include_in_schema=False)
+    async def live_check():
+        return {"status": "ok"}
+
+    @app.get("/ready", include_in_schema=False)
+    async def ready_check():
+        payload, status_code = await _health_payload()
+        return JSONResponse(content=payload, status_code=status_code)
+
     @app.get("/health")
     async def health_check():
         """
@@ -194,77 +276,8 @@ def create_app() -> FastAPI:
             - 200 if all components are healthy
             - 503 if any component is unhealthy
         """
-        start_time = time.time()
-        components: dict[str, dict[str, Any]] = {}
-        overall_status = "healthy"
-        settings = get_settings()
-
-        # 1. Application health (always up if we're responding)
-        components["application"] = {"status": "up"}
-
-        # 2. Database health check
-        db_start = time.time()
-        try:
-            async with async_session() as session:
-                await session.execute(text("SELECT 1"))
-            db_latency = (time.time() - db_start) * 1000
-            components["database"] = {
-                "status": "up",
-                "latency_ms": round(db_latency, 2)
-            }
-        except Exception as e:
-            overall_status = "unhealthy"
-            components["database"] = {
-                "status": "down",
-                "error": str(e)
-            }
-
-        # 3. Redis health check (if configured)
-        if settings.redis_url:
-            redis_start = time.time()
-            try:
-                cache = get_cache()
-                if cache:
-                    # Try to ping Redis
-                    await cache.ping()
-                    redis_latency = (time.time() - redis_start) * 1000
-                    components["redis"] = {
-                        "status": "up",
-                        "latency_ms": round(redis_latency, 2)
-                    }
-                else:
-                    # Redis configured but cache not initialized
-                    overall_status = "degraded"
-                    components["redis"] = {
-                        "status": "down",
-                        "error": "Cache not initialized"
-                    }
-            except Exception as e:
-                overall_status = "unhealthy"
-                components["redis"] = {
-                    "status": "down",
-                    "error": str(e)
-                }
-        else:
-            # Redis not configured (acceptable in non-production)
-            if settings.environment == "production":
-                overall_status = "degraded"
-            components["redis"] = {
-                "status": "not_configured",
-                "note": "Redis is not configured"
-            }
-
-        # Build response
-        response_data = {
-            "status": overall_status,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "components": components,
-            "response_time_ms": round((time.time() - start_time) * 1000, 2)
-        }
-
-        # Return 503 if unhealthy, 200 otherwise
-        status_code = 503 if overall_status == "unhealthy" else 200
-        return JSONResponse(content=response_data, status_code=status_code)
+        payload, status_code = await _health_payload()
+        return JSONResponse(content=payload, status_code=status_code)
 
     return app
 
