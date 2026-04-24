@@ -291,8 +291,13 @@ async def _probe_database() -> None:
 
 
 def _auto_upgrade_schema_if_needed(settings) -> bool:
-    """Run lightweight migration step in non-production environments."""
-    if settings.environment == "production":
+    """Run lightweight migration step only in local/dev-style environments."""
+    environment = str(getattr(settings, "environment", "") or "").strip().lower()
+    if environment in {"production", "staging"}:
+        return False
+    if not _is_truthy_env("RUN_MIGRATIONS", default=True):
+        return False
+    if not _is_truthy_env("AUTO_MIGRATE", default=environment in {"development", "test"}):
         return False
     try:
         upgrade_to_head()

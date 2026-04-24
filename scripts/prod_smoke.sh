@@ -40,6 +40,20 @@ warn() {
     echo -e "${YELLOW}⚠ WARN${NC}: $1"
 }
 
+is_truthy() {
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_falsey() {
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        0|false|no|off) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 section() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -277,14 +291,26 @@ fi
 # ============================================================================
 # 6. Database Migration Check
 # ============================================================================
-section "6. Running Database Migrations"
+section "6. Database Migration Check"
 
 if [[ -f "scripts/run_migrations.py" ]]; then
-    echo "Running: python3 scripts/run_migrations.py"
-    if python3 scripts/run_migrations.py; then
-        pass "Database migrations completed successfully"
+    if is_falsey "${RUN_MIGRATIONS:-true}"; then
+        if ! is_truthy "${CODE_ONLY_DEPLOY_APPROVED:-false}"; then
+            fail "RUN_MIGRATIONS=false requires CODE_ONLY_DEPLOY_APPROVED=true"
+        else
+            warn "Database migrations skipped for approved code-only validation"
+        fi
     else
-        fail "Database migrations failed"
+        if ! is_truthy "${MIGRATION_HISTORY_RECONCILED:-false}"; then
+            fail "Migration history is not reconciled; refusing to run migrations"
+        else
+            echo "Running: python3 scripts/run_migrations.py"
+            if python3 scripts/run_migrations.py; then
+                pass "Database migrations completed successfully"
+            else
+                fail "Database migrations failed"
+            fi
+        fi
     fi
 else
     warn "Migration script not found at scripts/run_migrations.py"

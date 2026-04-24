@@ -16,6 +16,7 @@ CURRENT_COMMIT=""
 BACKUP_FILE=""
 MIGRATION_STATUS="not-run"
 HEALTH_STATUS="pending"
+SHOULD_RUN_MIGRATIONS=1
 
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
@@ -38,11 +39,53 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
 }
 
+is_truthy() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_falsey() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_migration_contract() {
+  if is_falsey "${RUN_MIGRATIONS:-true}"; then
+    is_truthy "${CODE_ONLY_DEPLOY_APPROVED:-false}" || fail \
+      "RUN_MIGRATIONS=false requires CODE_ONLY_DEPLOY_APPROVED=true. Use only for approved code-only staging validation."
+    SHOULD_RUN_MIGRATIONS=0
+    log "Migration runner disabled by RUN_MIGRATIONS=false"
+    return
+  fi
+
+  is_truthy "${MIGRATION_HISTORY_RECONCILED:-false}" || fail \
+    "Migration history is not reconciled. Recover/reconstruct missing 0104/0105 first, or set RUN_MIGRATIONS=false CODE_ONLY_DEPLOY_APPROVED=true for code-only staging validation."
+  SHOULD_RUN_MIGRATIONS=1
+}
+
 load_env_file() {
+  local has_run_migrations="${RUN_MIGRATIONS+x}"
+  local run_migrations_value="${RUN_MIGRATIONS:-}"
+  local has_code_only_approved="${CODE_ONLY_DEPLOY_APPROVED+x}"
+  local code_only_approved_value="${CODE_ONLY_DEPLOY_APPROVED:-}"
+  local has_auto_migrate="${AUTO_MIGRATE+x}"
+  local auto_migrate_value="${AUTO_MIGRATE:-}"
+  local has_history_reconciled="${MIGRATION_HISTORY_RECONCILED+x}"
+  local history_reconciled_value="${MIGRATION_HISTORY_RECONCILED:-}"
+
   set -a
   # shellcheck disable=SC1091
   source "$PROJECT_ROOT/.env"
   set +a
+
+  [[ "$has_run_migrations" == "x" ]] && export RUN_MIGRATIONS="$run_migrations_value"
+  [[ "$has_code_only_approved" == "x" ]] && export CODE_ONLY_DEPLOY_APPROVED="$code_only_approved_value"
+  [[ "$has_auto_migrate" == "x" ]] && export AUTO_MIGRATE="$auto_migrate_value"
+  [[ "$has_history_reconciled" == "x" ]] && export MIGRATION_HISTORY_RECONCILED="$history_reconciled_value"
 }
 
 current_branch() {
@@ -181,6 +224,7 @@ main() {
   [[ -f .env ]] || fail ".env file is required in $PROJECT_ROOT"
 
   load_env_file
+  validate_migration_contract
 
   docker volume inspect postgres_data >/dev/null 2>&1 || fail "Docker volume 'postgres_data' does not exist"
   verify_postgres_running
@@ -233,30 +277,41 @@ main() {
   docker compose rm -f admin_ui admin_api bot max_bot migrate || true
   verify_postgres_running
 
-  step 5 "Run migrations"
-  if docker compose run --rm migrate; then
-    MIGRATION_STATUS="success"
-    log "Migrations completed successfully"
+  if (( SHOULD_RUN_MIGRATIONS )); then
+    step 5 "Run migrations"
+    if docker compose run --rm migrate; then
+      MIGRATION_STATUS="success"
+      log "Migrations completed successfully"
+    else
+      MIGRATION_STATUS="failed"
+      log "Migration failed; collecting logs and attempting recovery"
+      docker compose logs --tail=100 migrate || true
+      set +e
+      restore_backup "$BACKUP_FILE"
+      restore_status=$?
+      git checkout "$ROLLBACK_COMMIT"
+      git_status=$?
+      docker compose build --no-cache
+      rebuild_status=$?
+      set -e
+      log "Restore attempt exit code: $restore_status"
+      log "Git rollback exit code: $git_status"
+      log "Rollback rebuild exit code: $rebuild_status"
+      fail "Migration failed; deployment aborted after restore/rollback attempt"
+    fi
   else
-    MIGRATION_STATUS="failed"
-    log "Migration failed; collecting logs and attempting recovery"
-    docker compose logs --tail=100 migrate || true
-    set +e
-    restore_backup "$BACKUP_FILE"
-    restore_status=$?
-    git checkout "$ROLLBACK_COMMIT"
-    git_status=$?
-    docker compose build --no-cache
-    rebuild_status=$?
-    set -e
-    log "Restore attempt exit code: $restore_status"
-    log "Git rollback exit code: $git_status"
-    log "Rollback rebuild exit code: $rebuild_status"
-    fail "Migration failed; deployment aborted after restore/rollback attempt"
+    step 5 "Skip migrations"
+    MIGRATION_STATUS="skipped"
+    log "Migrations skipped for approved code-only validation"
   fi
 
   step 6 "Start all services"
-  docker compose up -d
+  if (( SHOULD_RUN_MIGRATIONS )); then
+    docker compose up -d
+  else
+    docker compose up -d postgres redis_notifications redis_cache
+    docker compose up -d --no-deps admin_ui admin_api bot
+  fi
   wait_elapsed=0
   until (( wait_elapsed >= SERVICE_WAIT_TIMEOUT )); do
     if docker compose ps --services --filter status=running | grep -q '^admin_ui$' \
