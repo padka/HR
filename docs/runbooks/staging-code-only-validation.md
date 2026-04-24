@@ -2,9 +2,10 @@
 
 Date: 2026-04-25
 
-Release ref: `rc/hardening-candidate-scale-20260425-1`
+Release ref: use the latest immutable `rc/hardening-candidate-scale-20260425-N`
+tag created after this document commit. Do not move older RC tags.
 
-Commit: `f23773fa1494573e92777b2b9d7777c5a847c2f6`
+Commit: verify with `git rev-parse <RC_TAG>^{}` before handoff.
 
 ## Scope
 
@@ -14,7 +15,7 @@ It must not be used to mutate production. It must not run migrations while the
 
 ## Preconditions
 
-- Use the exact tag `rc/hardening-candidate-scale-20260425-1`.
+- Use the exact immutable RC tag selected for CI handoff.
 - Staging DB must already be production-like enough for the code.
 - `RUN_MIGRATIONS=false` must be set.
 - `CODE_ONLY_DEPLOY_APPROVED=true` must be set.
@@ -27,20 +28,22 @@ NO-GO.
 
 ## Local Artifact Handoff
 
-The tag was created locally:
+Create a new immutable RC tag from the final clean HEAD:
 
 ```bash
-git tag -a rc/hardening-candidate-scale-20260425-1 \
-  -m "RC hardening candidate scale 20260425-1" \
-  f23773fa1494573e92777b2b9d7777c5a847c2f6
+RC_TAG=rc/hardening-candidate-scale-20260425-<N>
+git status --short
+git tag -a "$RC_TAG" -m "RC hardening candidate scale 20260425-<N>" HEAD
+git rev-parse "$RC_TAG^{}"
 ```
 
 To hand off to CI, push the branch/tag from a clean worktree:
 
 ```bash
+RC_TAG=rc/hardening-candidate-scale-20260425-<N>
 git status --short
 git push origin release/hardening-artifact-freeze
-git push origin rc/hardening-candidate-scale-20260425-1
+git push origin "$RC_TAG"
 ```
 
 CI must run from the tag or branch ref, not from a local workspace.
