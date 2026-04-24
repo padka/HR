@@ -9,14 +9,25 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from backend.core.settings import get_settings
-from backend.domain.hh_integration.contracts import DEFAULT_HH_WEBHOOK_ACTIONS
+from backend.domain.hh_integration.contracts import (
+    DEFAULT_HH_WEBHOOK_ACTIONS,
+    HHSyncFailureCode,
+)
 
 
 class HHApiError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, payload: Any = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        payload: Any = None,
+        retry_after_seconds: int | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass(frozen=True)
@@ -26,6 +37,7 @@ class HHNormalizedError:
     retryable: bool
     status_code: int | None = None
     payload: Any = None
+    retry_after_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -91,10 +103,12 @@ class HHApiClient:
                 payload = exc.response.json()
             except Exception:
                 payload = exc.response.text[:500]
+            retry_after_seconds = _parse_retry_after(exc.response.headers.get("retry-after"))
             raise HHApiError(
-                f"HH API {exc.response.status_code} for {method} {url}",
+                f"HH API {exc.response.status_code} for {method} {urlsplit(url).path}",
                 status_code=exc.response.status_code,
                 payload=payload,
+                retry_after_seconds=retry_after_seconds,
             ) from exc
         except httpx.RequestError as exc:
             raise HHApiError(f"HH API transport error for {method} {url}: {exc}") from exc
@@ -293,27 +307,67 @@ class HHApiClient:
         )
 
 
+def _parse_retry_after(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def normalize_hh_api_error(error: HHApiError) -> HHNormalizedError:
     if error.status_code == 401:
         return HHNormalizedError(
-            code="token_refresh_required",
+            code=HHSyncFailureCode.TOKEN_REFRESH_REQUIRED,
             message=str(error),
             retryable=True,
             status_code=error.status_code,
             payload=error.payload,
+            retry_after_seconds=error.retry_after_seconds,
+        )
+    if error.status_code == 403:
+        return HHNormalizedError(
+            code=HHSyncFailureCode.ACCESS_FORBIDDEN,
+            message="HH access forbidden for this employer or manager account",
+            retryable=False,
+            status_code=error.status_code,
+            payload=None,
+            retry_after_seconds=None,
+        )
+    if error.status_code == 404:
+        return HHNormalizedError(
+            code=HHSyncFailureCode.NOT_FOUND,
+            message=str(error),
+            retryable=False,
+            status_code=error.status_code,
+            payload=None,
+            retry_after_seconds=None,
+        )
+    if error.status_code == 429:
+        return HHNormalizedError(
+            code=HHSyncFailureCode.RATE_LIMITED,
+            message=str(error),
+            retryable=True,
+            status_code=error.status_code,
+            payload=None,
+            retry_after_seconds=error.retry_after_seconds,
         )
     if error.status_code is not None:
         return HHNormalizedError(
-            code="provider_http_error",
+            code=HHSyncFailureCode.PROVIDER_HTTP_ERROR,
             message=str(error),
-            retryable=True,
+            retryable=500 <= int(error.status_code) < 600,
             status_code=error.status_code,
-            payload=error.payload,
+            payload=None,
+            retry_after_seconds=error.retry_after_seconds,
         )
     return HHNormalizedError(
-        code="transport_error",
+        code=HHSyncFailureCode.TRANSPORT_ERROR,
         message=str(error),
         retryable=True,
         status_code=error.status_code,
-        payload=error.payload,
+        payload=None,
+        retry_after_seconds=error.retry_after_seconds,
     )

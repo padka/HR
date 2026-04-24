@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, select
-
 from backend.core.ai.service import schedule_warm_candidates_ai_outputs
 from backend.core.db import async_session
+from backend.core.settings import get_settings
 from backend.domain.candidates.models import User
-from backend.domain.hh_integration.client import HHApiClient, HHApiError, normalize_hh_api_error
+from backend.domain.hh_integration.client import (
+    HHApiClient,
+    HHApiError,
+    normalize_hh_api_error,
+)
 from backend.domain.hh_integration.contracts import (
+    HHConnectionStatus,
     HHIdentitySyncStatus,
     HHSyncDirection,
     HHSyncFailureCode,
@@ -33,6 +38,7 @@ from backend.domain.hh_integration.models import (
     HHSyncJob,
 )
 from backend.domain.hh_integration.service import decrypt_access_token
+from sqlalchemy import and_, delete, func, or_, select
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,14 @@ _RUNNING_STALE_AFTER = timedelta(minutes=15)
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _retry_delay(attempts: int, *, retry_after_seconds: int | None = None) -> timedelta:
+    if retry_after_seconds is not None:
+        return timedelta(seconds=max(int(retry_after_seconds), 1))
+    base_delay = _JOB_RETRY_DELAYS[min(max(attempts, 1) - 1, len(_JOB_RETRY_DELAYS) - 1)]
+    jitter_ratio = random.uniform(0.85, 1.15)
+    return timedelta(seconds=max(1.0, base_delay.total_seconds() * jitter_ratio))
 
 
 def serialize_hh_sync_job(job: HHSyncJob) -> dict[str, object]:
@@ -126,6 +140,17 @@ async def list_hh_sync_jobs(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def count_hh_sync_jobs_by_status(session, *, connection_id: int) -> dict[str, int]:
+    rows = (
+        await session.execute(
+            select(HHSyncJob.status, func.count(HHSyncJob.id))
+            .where(HHSyncJob.connection_id == connection_id)
+            .group_by(HHSyncJob.status)
+        )
+    ).all()
+    return {str(status): int(count) for status, count in rows}
+
+
 async def retry_hh_sync_job(session, *, connection: HHConnection, job_id: int) -> HHSyncJob | None:
     job = (
         await session.execute(
@@ -204,6 +229,7 @@ async def _fail_job(
     failure_code: str,
     retryable: bool,
     result_payload: dict | None = None,
+    retry_after_seconds: int | None = None,
 ) -> None:
     async with async_session() as session:
         async with session.begin():
@@ -216,11 +242,105 @@ async def _fail_job(
             job.result_json = result_payload or None
             job.finished_at = _utcnow()
             if not retryable or attempts >= len(_JOB_RETRY_DELAYS) + 1:
-                job.status = HHSyncJobStatus.DEAD
+                job.status = (
+                    HHSyncJobStatus.FORBIDDEN
+                    if failure_code == HHSyncFailureCode.ACCESS_FORBIDDEN
+                    else HHSyncJobStatus.DEAD
+                )
                 job.next_retry_at = None
             else:
                 job.status = HHSyncJobStatus.PENDING
-                job.next_retry_at = _utcnow() + _JOB_RETRY_DELAYS[min(attempts - 1, len(_JOB_RETRY_DELAYS) - 1)]
+                job.next_retry_at = _utcnow() + _retry_delay(
+                    attempts,
+                    retry_after_seconds=retry_after_seconds,
+                )
+
+
+async def _record_connection_failure(
+    *,
+    connection_id: int | None,
+    normalized_error,
+) -> None:
+    if connection_id is None:
+        return
+    async with async_session() as session:
+        async with session.begin():
+            connection = await session.get(HHConnection, connection_id, with_for_update=True)
+            if connection is None:
+                return
+            connection.last_error = normalized_error.message
+            if not normalized_error.retryable:
+                connection.status = HHConnectionStatus.ERROR
+
+
+async def cleanup_hh_sync_jobs(
+    *,
+    done_retention_days: int | None = None,
+    dead_retention_days: int | None = None,
+    keep_last_dead_per_connection: int | None = None,
+) -> dict[str, int]:
+    """Apply idempotent retention for terminal HH sync jobs."""
+    settings = get_settings()
+    done_days = int(done_retention_days or settings.hh_sync_done_retention_days)
+    dead_days = int(dead_retention_days or settings.hh_sync_dead_retention_days)
+    keep_dead = int(
+        settings.hh_sync_keep_last_dead_per_connection
+        if keep_last_dead_per_connection is None
+        else keep_last_dead_per_connection
+    )
+    now = _utcnow()
+    done_cutoff = now - timedelta(days=max(done_days, 1))
+    dead_cutoff = now - timedelta(days=max(dead_days, 1))
+
+    async with async_session() as session:
+        async with session.begin():
+            done_ids = list(
+                (
+                    await session.execute(
+                        select(HHSyncJob.id)
+                        .where(
+                            HHSyncJob.status == HHSyncJobStatus.DONE,
+                            or_(
+                                HHSyncJob.finished_at <= done_cutoff,
+                                and_(HHSyncJob.finished_at.is_(None), HHSyncJob.created_at <= done_cutoff),
+                            ),
+                        )
+                    )
+                ).scalars().all()
+            )
+            if done_ids:
+                await session.execute(delete(HHSyncJob).where(HHSyncJob.id.in_(done_ids)))
+            done_deleted = len(done_ids)
+
+            dead_jobs = (
+                await session.execute(
+                    select(HHSyncJob.id, HHSyncJob.connection_id)
+                    .where(
+                        HHSyncJob.status.in_([HHSyncJobStatus.DEAD, HHSyncJobStatus.FORBIDDEN]),
+                        or_(
+                            HHSyncJob.finished_at <= dead_cutoff,
+                            and_(HHSyncJob.finished_at.is_(None), HHSyncJob.created_at <= dead_cutoff),
+                        ),
+                    )
+                    .order_by(HHSyncJob.connection_id.asc(), HHSyncJob.id.desc())
+                )
+            ).all()
+            seen_by_connection: dict[int | None, int] = {}
+            dead_delete_ids: list[int] = []
+            for job_id, connection_id in dead_jobs:
+                key = int(connection_id) if connection_id is not None else None
+                seen = seen_by_connection.get(key, 0)
+                seen_by_connection[key] = seen + 1
+                if seen >= keep_dead:
+                    dead_delete_ids.append(int(job_id))
+
+            if dead_delete_ids:
+                await session.execute(
+                    delete(HHSyncJob).where(HHSyncJob.id.in_(dead_delete_ids))
+                )
+            dead_deleted = len(dead_delete_ids)
+
+    return {"done_deleted": done_deleted, "dead_deleted": dead_deleted}
 
 
 def _iter_actions(actions_snapshot: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -517,7 +637,8 @@ async def _execute_hh_sync_job(job_id: int) -> None:
         if job is None:
             return
 
-        connection = await session.get(HHConnection, job.connection_id) if job.connection_id else None
+        connection_id = job.connection_id
+        connection = await session.get(HHConnection, connection_id) if connection_id else None
         payload = dict(job.payload_json or {})
 
         try:
@@ -564,9 +685,11 @@ async def _execute_hh_sync_job(job_id: int) -> None:
                 schedule_warm_candidates_ai_outputs(result.candidate_ids_touched, refresh=True)
         except HHApiError as exc:
             normalized = normalize_hh_api_error(exc)
-            async with session.begin():
-                if connection is not None:
-                    connection.last_error = normalized.message
+            await session.rollback()
+            await _record_connection_failure(
+                connection_id=connection_id,
+                normalized_error=normalized,
+            )
             await _fail_job(
                 job_id,
                 error_message=normalized.message,
@@ -577,9 +700,11 @@ async def _execute_hh_sync_job(job_id: int) -> None:
                     "message": normalized.message,
                     "status_code": normalized.status_code,
                 },
+                retry_after_seconds=normalized.retry_after_seconds,
             )
             return
         except Exception as exc:
+            await session.rollback()
             failure_code = HHSyncFailureCode.PROVIDER_HTTP_ERROR
             retryable = True
             result_payload = None
@@ -630,6 +755,8 @@ async def process_pending_hh_sync_jobs(*, batch_size: int = 1) -> int:
 
 __all__ = [
     "enqueue_hh_sync_job",
+    "cleanup_hh_sync_jobs",
+    "count_hh_sync_jobs_by_status",
     "list_hh_sync_jobs",
     "process_pending_hh_sync_jobs",
     "retry_hh_sync_job",

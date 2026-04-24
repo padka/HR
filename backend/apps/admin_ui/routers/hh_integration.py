@@ -33,6 +33,7 @@ from backend.domain.hh_integration.importer import (
     serialize_import_result,
 )
 from backend.domain.hh_integration.jobs import (
+    count_hh_sync_jobs_by_status,
     enqueue_hh_sync_job,
     list_hh_sync_jobs,
     retry_hh_sync_job,
@@ -414,15 +415,16 @@ async def import_hh_negotiations_route(
 @router.get("/jobs")
 async def get_hh_sync_jobs(
     limit: int = Query(default=20, ge=1, le=100),
-    status: str | None = Query(default=None),
+    job_status: str | None = Query(default=None, alias="status"),
     principal: Principal = AdminPrincipalDep,
     session=AsyncSessionDep,
 ):
     connection = await get_connection_for_principal(session, principal)
     if connection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HH connection is not configured")
-    jobs = await list_hh_sync_jobs(session, connection_id=connection.id, limit=limit, status=status)
-    return {"ok": True, "jobs": [serialize_hh_sync_job(job) for job in jobs]}
+    jobs = await list_hh_sync_jobs(session, connection_id=connection.id, limit=limit, status=job_status)
+    summary = await count_hh_sync_jobs_by_status(session, connection_id=connection.id)
+    return {"ok": True, "summary": summary, "jobs": [serialize_hh_sync_job(job) for job in jobs]}
 
 
 @router.post("/jobs/import/vacancies")

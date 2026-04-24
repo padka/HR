@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
-
 from backend.apps.admin_ui.background_tasks import enqueue_hh_auto_import_jobs
 from backend.apps.admin_ui.security import Principal, require_admin
 from backend.core.db import async_session
+from backend.domain.hh_integration.client import HHApiError
+from backend.domain.hh_integration.contracts import (
+    HHConnectionStatus,
+    HHSyncFailureCode,
+    HHSyncJobStatus,
+)
 from backend.domain.hh_integration.crypto import HHSecretCipher
 from backend.domain.hh_integration.jobs import (
+    cleanup_hh_sync_jobs,
     enqueue_hh_sync_job,
     process_pending_hh_sync_jobs,
 )
@@ -20,6 +26,7 @@ from backend.domain.hh_integration.models import (
     HHSyncJob,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 @pytest.fixture
@@ -154,6 +161,116 @@ class TestHHJobQueue:
             assert stored.status == "done"
 
     @pytest.mark.asyncio
+    async def test_process_pending_hh_sync_jobs_marks_403_forbidden_without_unhandled_failure(self):
+        connection = await _seed_connection_with_vacancy()
+        async with async_session() as session:
+            connection = await session.get(HHConnection, connection.id)
+            job, _ = await enqueue_hh_sync_job(
+                session,
+                connection=connection,
+                job_type="import_vacancies",
+                entity_type="employer",
+                entity_external_id="emp-1",
+                payload_json={},
+            )
+            await session.commit()
+
+        with patch("backend.domain.hh_integration.jobs.HHApiClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.list_vacancies.side_effect = HHApiError(
+                "HH API 403 for GET /employers/emp-1/vacancies/active?client_secret=leak",
+                status_code=403,
+                payload={"description": "forbidden"},
+            )
+            mock_client_cls.return_value = mock_client
+            processed = await process_pending_hh_sync_jobs(batch_size=1)
+
+        assert processed == 1
+        async with async_session() as session:
+            stored = await session.get(HHSyncJob, job.id)
+            stored_connection = await session.get(HHConnection, connection.id)
+
+        assert stored is not None
+        assert stored.status == HHSyncJobStatus.FORBIDDEN
+        assert stored.failure_code == HHSyncFailureCode.ACCESS_FORBIDDEN
+        assert stored.next_retry_at is None
+        assert "client_secret" not in (stored.last_error or "")
+        assert stored_connection is not None
+        assert stored_connection.status == HHConnectionStatus.ERROR
+
+    @pytest.mark.asyncio
+    async def test_cleanup_hh_sync_jobs_retains_recent_dead_per_connection(self):
+        connection = await _seed_connection_with_vacancy()
+        old = datetime.now(UTC) - timedelta(days=45)
+        async with async_session() as session:
+            connection = await session.get(HHConnection, connection.id)
+            session.add_all(
+                [
+                    HHSyncJob(
+                        connection_id=connection.id,
+                        job_type="import_vacancies",
+                        direction="inbound",
+                        entity_type="employer",
+                        entity_external_id="emp-1",
+                        status=HHSyncJobStatus.DONE,
+                        idempotency_key="retention-done-old",
+                        created_at=old,
+                        finished_at=old,
+                    ),
+                    HHSyncJob(
+                        connection_id=connection.id,
+                        job_type="import_vacancies",
+                        direction="inbound",
+                        entity_type="employer",
+                        entity_external_id="emp-1",
+                        status=HHSyncJobStatus.DEAD,
+                        idempotency_key="retention-dead-keep",
+                        created_at=old,
+                        finished_at=old,
+                    ),
+                    HHSyncJob(
+                        connection_id=connection.id,
+                        job_type="import_vacancies",
+                        direction="inbound",
+                        entity_type="employer",
+                        entity_external_id="emp-1",
+                        status=HHSyncJobStatus.FORBIDDEN,
+                        idempotency_key="retention-forbidden-delete",
+                        created_at=old,
+                        finished_at=old,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        result = await cleanup_hh_sync_jobs(
+            done_retention_days=1,
+            dead_retention_days=1,
+            keep_last_dead_per_connection=1,
+        )
+
+        assert result == {"done_deleted": 1, "dead_deleted": 1}
+        async with async_session() as session:
+            remaining = {
+                job.idempotency_key
+                for job in (
+                    await session.execute(
+                        select(HHSyncJob).where(
+                            HHSyncJob.idempotency_key.in_(
+                                [
+                                    "retention-done-old",
+                                    "retention-dead-keep",
+                                    "retention-forbidden-delete",
+                                ]
+                            )
+                        )
+                    )
+                ).scalars()
+            }
+
+        assert remaining == {"retention-forbidden-delete"}
+
+    @pytest.mark.asyncio
     async def test_enqueue_hh_auto_import_jobs_creates_deduped_jobs(self):
         await _seed_connection_with_vacancy()
 
@@ -193,5 +310,6 @@ class TestHHJobRoutes:
         assert created.json()["created"] is True
         assert listed.status_code == 200
         jobs = listed.json()["jobs"]
+        assert listed.json()["summary"]["pending"] == 1
         assert jobs[0]["job_type"] == "import_negotiations"
         assert jobs[0]["entity_external_id"] == "131018950"

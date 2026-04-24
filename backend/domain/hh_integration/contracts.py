@@ -31,6 +31,7 @@ class HHSyncJobStatus:
     DONE = "done"
     ERROR = "error"
     DEAD = "dead"
+    FORBIDDEN = "forbidden"
 
 
 class HHSyncDirection:
@@ -50,6 +51,9 @@ class HHIdentitySyncStatus:
 class HHSyncFailureCode:
     TRANSPORT_ERROR = "transport_error"
     PROVIDER_HTTP_ERROR = "provider_http_error"
+    ACCESS_FORBIDDEN = "hh_access_forbidden"
+    RATE_LIMITED = "hh_rate_limited"
+    NOT_FOUND = "hh_not_found"
     TOKEN_REFRESH_REQUIRED = "token_refresh_required"
     ACTION_UNAVAILABLE = "action_unavailable"
     WRONG_STATE = "wrong_state"
