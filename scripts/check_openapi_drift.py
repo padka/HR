@@ -18,6 +18,7 @@ _export_openapi = __import__(
 )
 TARGETS = _export_openapi.TARGETS
 build_live_schema = _export_openapi.build_live_schema
+normalize_openapi_schema = _export_openapi.normalize_openapi_schema
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
 
@@ -104,7 +105,7 @@ def main() -> int:
             print("OpenAPI drift check failed closed because the live app is not importable.")
             return 1
 
-        committed_schema = json.loads(target.path.read_text(encoding="utf-8"))
+        committed_schema = normalize_openapi_schema(json.loads(target.path.read_text(encoding="utf-8")))
         drift_found |= _report_schema_drift(
             target_name=target.name,
             committed_schema=committed_schema,

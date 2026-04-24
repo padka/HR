@@ -6,6 +6,15 @@ import pytest
 from sqlalchemy import create_engine, text
 
 
+def _postgres_proof_url() -> str:
+    db_url = os.getenv("TEST_DATABASE_URL")
+    if not db_url:
+        pytest.skip("TEST_DATABASE_URL is required for PostgreSQL migration proof")
+    if not db_url.startswith("postgresql"):
+        pytest.skip("PostgreSQL is required for migration integration test")
+    return db_url
+
+
 def _drop_public_tables(engine):
     with engine.connect() as conn:
         result = conn.execute(
@@ -57,10 +66,7 @@ def test_migrations_on_clean_postgres():
     3. All tables, indexes, and constraints are created correctly
     4. No SQLite-specific code breaks on PostgreSQL
     """
-    # Use test database URL from environment
-    db_url = os.getenv("TEST_DATABASE_URL", "postgresql://rs:pass@localhost:5432/rs_test")
-    if not db_url.startswith("postgresql"):
-        pytest.skip("PostgreSQL is required for migration integration test")
+    db_url = _postgres_proof_url()
 
     # Convert to sync URL (remove +asyncpg if present)
     sync_db_url = db_url.replace("+asyncpg", "")
@@ -137,9 +143,7 @@ def test_migrations_on_clean_postgres():
 
 @pytest.mark.no_db_cleanup
 def test_migrations_upgrade_from_0103_to_recovered_0105_postgres():
-    db_url = os.getenv("TEST_DATABASE_URL", "postgresql://rs:pass@localhost:5432/rs_test")
-    if not db_url.startswith("postgresql"):
-        pytest.skip("PostgreSQL is required for migration integration test")
+    db_url = _postgres_proof_url()
 
     sync_db_url = db_url.replace("+asyncpg", "")
     engine = create_engine(sync_db_url)

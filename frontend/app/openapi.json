@@ -654,12 +654,7 @@
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/Body_slots_create_slots_create_post"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/Body_slots_create_slots_create_post"
               }
             }
           }
@@ -920,12 +915,7 @@
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/Body_slots_delete_form_slots__slot_id__delete_post"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/Body_slots_delete_form_slots__slot_id__delete_post"
               }
             }
           }
@@ -2303,12 +2293,7 @@
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/Body_candidates_toggle_candidates__candidate_id__toggle_post"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/Body_candidates_toggle_candidates__candidate_id__toggle_post"
               }
             }
           }
@@ -2902,12 +2887,7 @@
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "allOf": [
-                  {
-                    "$ref": "#/components/schemas/Body_candidates_assign_city_candidates__candidate_id__assign_city_post"
-                  }
-                ],
-                "title": "Body"
+                "$ref": "#/components/schemas/Body_candidates_assign_city_candidates__candidate_id__assign_city_post"
               }
             }
           }

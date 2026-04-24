@@ -109,7 +109,39 @@ def build_live_schema(target: str = "admin_ui") -> dict:
     with _openapi_quiet_context():
         create_app = _load_app_factory(spec)
         app = create_app()
-        return app.openapi()
+        return normalize_openapi_schema(app.openapi())
+
+
+def normalize_openapi_schema(value):
+    """Normalize semantically equivalent FastAPI/Pydantic schema noise.
+
+    Python/FastAPI/Pydantic combinations can differ on whether an unrestricted
+    object explicitly renders ``additionalProperties: true`` and whether form
+    body references are wrapped in a single-item ``allOf``. Both forms describe
+    the same contract, so generated artifacts and drift checks should not depend
+    on the interpreter version used by CI.
+    """
+
+    if isinstance(value, list):
+        return [normalize_openapi_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    normalized = {key: normalize_openapi_schema(item) for key, item in value.items()}
+    if normalized.get("type") == "object" and normalized.get("additionalProperties") is True:
+        normalized.pop("additionalProperties")
+
+    all_of = normalized.get("allOf")
+    if (
+        isinstance(all_of, list)
+        and len(all_of) == 1
+        and isinstance(all_of[0], dict)
+        and set(all_of[0]) == {"$ref"}
+        and set(normalized).issubset({"allOf", "title"})
+    ):
+        return dict(all_of[0])
+
+    return normalized
 
 
 def write_openapi_schema(target: str = "admin_ui", path: Path | None = None) -> tuple[Path, dict]:
