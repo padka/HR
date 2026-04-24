@@ -29,6 +29,13 @@ type CandidateActionsProps = {
   onActionClick: (action: CandidateAction) => void
 }
 
+function isTest2Action(action: CandidateAction | null | undefined): boolean {
+  if (!action) return false
+  const key = action.key?.toLowerCase?.() || ''
+  const label = action.label?.toLowerCase?.() || ''
+  return action.target_status === 'test2_sent' || key.includes('test2') || label.includes('тест 2')
+}
+
 function renderPrimaryActionButton(
   label: string,
   options: { pending: boolean; disabled: boolean; onClick: () => void },
@@ -91,11 +98,8 @@ export function CandidateActions({
   const backendPrimaryLegacyAction = backendPrimaryAction?.legacy_action_key
     ? actions.find((action) => action.key === backendPrimaryAction.legacy_action_key)
     : null
-  const test2Action = actions.find((action) => {
-    const key = action.key?.toLowerCase?.() || ''
-    const label = action.label?.toLowerCase?.() || ''
-    return action.target_status === 'test2_sent' || key.includes('test2') || label.includes('тест 2')
-  })
+  const test2Action = actions.find((action) => action.key === 'resend_test2')
+    || actions.find((action) => isTest2Action(action))
   const scheduleAction = actions.find((action) =>
     ['schedule_interview', 'reschedule_interview'].includes(action.key)
   )
@@ -150,6 +154,12 @@ export function CandidateActions({
   }
 
   const handlePrimaryAction = () => {
+    if (backendPrimaryAction) {
+      if (hasBackendPrimaryAction) {
+        handleBackendPrimaryAction()
+      }
+      return
+    }
     if (hasBackendPrimaryAction) {
       handleBackendPrimaryAction()
       return
@@ -168,22 +178,34 @@ export function CandidateActions({
   }
 
   const primaryActionLabel = backendPrimaryAction?.label
-    || (canScheduleInterview ? scheduleLabel : null)
-    || (canScheduleIntroDay ? 'Назначить ОД' : null)
-    || (test2Action ? 'Отправить Тест 2' : null)
+    || (!backendPrimaryAction
+      ? ((canScheduleInterview ? scheduleLabel : null)
+        || (canScheduleIntroDay ? 'Назначить ОД' : null)
+        || (test2Action ? 'Отправить Тест 2' : null))
+      : null)
     || surfaceState.nextActionLabel
     || 'Следующий шаг уточняется'
-  const primaryActionEnabled = hasBackendPrimaryAction || canScheduleInterview || canScheduleIntroDay || Boolean(test2Action)
+  const primaryActionEnabled = backendPrimaryAction
+    ? Boolean(hasBackendPrimaryAction && backendPrimaryAction.enabled !== false)
+    : (canScheduleInterview || canScheduleIntroDay || Boolean(test2Action))
+  const primaryActionUsesTest2 = Boolean(
+    test2Action
+    && (
+      (!backendPrimaryAction && !canScheduleInterview && !canScheduleIntroDay)
+      || isTest2Action(backendPrimaryLegacyAction)
+    )
+  )
+  const test2RailAction = primaryActionUsesTest2 ? null : test2Action
 
   const filteredActions = actions.filter((action) => {
-    if (action === test2Action || action === rejectAction) return false
+    if (isTest2Action(action) || action === rejectAction) return false
     if (backendPrimaryLegacyAction && action.key === backendPrimaryLegacyAction.key) return false
     if (['schedule_interview', 'reschedule_interview', 'schedule_intro_day'].includes(action.key)) return false
     return true
   })
   const inlineActions = filteredActions.slice(0, 2)
   const overflowActions = filteredActions.slice(2)
-  const hasSecondaryActions = inlineActions.length > 0 || overflowActions.length > 0 || Boolean(rejectAction)
+  const hasSecondaryActions = Boolean(test2RailAction) || inlineActions.length > 0 || overflowActions.length > 0 || Boolean(rejectAction)
 
   return (
     <div className="cd-actions" ref={actionsRef} data-testid="candidate-actions">
@@ -203,10 +225,10 @@ export function CandidateActions({
                 type="button"
                 className="cd-rail-btn cd-rail-btn--secondary"
                 data-testid="candidate-insights-trigger"
-                aria-label="Открыть инсайты кандидата"
+                aria-label="Открыть заметки по кандидату"
                 onClick={onOpenInsights}
               >
-                Инсайты
+                Заметки
               </button>
             ) : null}
           </div>
@@ -235,6 +257,15 @@ export function CandidateActions({
         {hasSecondaryActions ? (
           <div className="cd-action-rail" data-testid="candidate-action-rail">
             <div className="cd-action-rail__scroll">
+              {test2RailAction ? (
+                <button
+                  className={`cd-rail-btn ${test2RailAction.variant === 'primary' ? 'cd-rail-btn--primary' : 'cd-rail-btn--secondary'}`}
+                  onClick={() => onActionClick(test2RailAction)}
+                  disabled={actionPending}
+                >
+                  {test2RailAction.label}
+                </button>
+              ) : null}
               {inlineActions.map((action) => (
                 <button
                   key={action.key}

@@ -23,6 +23,7 @@ FitLevel = Literal["high", "medium", "low", "unknown"]
 Confidence = Literal["high", "medium", "low"]
 CriterionStatus = Literal["met", "not_met", "unknown"]
 ScorecardRecommendation = Literal["od_recommended", "clarify_before_od", "not_recommended"]
+FeedbackState = Literal["pending", "accepted", "dismissed", "edited"]
 
 
 class RiskItem(BaseModel):
@@ -216,6 +217,52 @@ class CandidateCoachV1(BaseModel):
     interview_questions: list[str] = Field(default_factory=list)
     next_best_action: str = ""
     message_drafts: list[DraftItem] = Field(default_factory=list)
+
+
+class CandidateFactItem(BaseModel):
+    key: str = ""
+    label: str = ""
+    value: str = ""
+    confidence: Confidence = "medium"
+    source: str = ""
+    confirmed: bool = True
+    ambiguity_note: str | None = None
+
+
+class CandidateFactsV1(BaseModel):
+    summary: str = ""
+    facts: list[CandidateFactItem] = Field(default_factory=list)
+    confirmed_keys: list[str] = Field(default_factory=list)
+    ambiguous_keys: list[str] = Field(default_factory=list)
+    prefill_ready_keys: list[str] = Field(default_factory=list)
+    clarification_question: str | None = None
+
+
+class RecruiterPlaybookV1(BaseModel):
+    what_to_write: str = ""
+    what_to_offer: str = ""
+    likely_objection: str = ""
+    best_cta: str = ""
+
+
+class RecruiterNextBestActionV1(BaseModel):
+    summary: str = ""
+    ai_confidence: Confidence = "medium"
+    recommended_action: NextActionItem | None = None
+    reasons: list[EvidenceItem] = Field(default_factory=list)
+    risks: list[RiskItem] = Field(default_factory=list)
+    interview_focus: list[str] = Field(default_factory=list)
+    outreach_goal: str = ""
+    playbook: RecruiterPlaybookV1 | None = None
+    feedback_state: FeedbackState = "pending"
+
+
+class CandidateContactDraftsV1(BaseModel):
+    analysis: str | None = None
+    intent_key: str = ""
+    recommended_channel: str = ""
+    drafts: list[DraftItem] = Field(min_length=1)
+    used_context: dict = Field(default_factory=dict)
 
 
 class InterviewScriptIfAnswer(BaseModel):

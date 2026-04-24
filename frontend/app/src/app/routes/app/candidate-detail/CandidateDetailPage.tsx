@@ -47,7 +47,7 @@ export function CandidateDetailPage() {
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [isInsightsOpen, setIsInsightsOpen] = useState(false)
   const [isInterviewScriptOpen, setIsInterviewScriptOpen] = useState(false)
-  const [chatDraftSeed, setChatDraftSeed] = useState<{ text: string; nonce: number } | null>(null)
+  const [chatDraftSeed] = useState<{ text: string; nonce: number } | null>(null)
   const [isRecruitmentScriptOpen, setIsRecruitmentScriptOpen] = useState(false)
 
   const pipelineActionsRef = useRef<HTMLDivElement | null>(null)
@@ -197,13 +197,6 @@ export function CandidateDetailPage() {
     setIsChatOpen(true)
   }
 
-  const handleInsertChatDraft = (text: string) => {
-    setIsInsightsOpen(false)
-    if (isMobile) setMobileTab('chat')
-    setChatDraftSeed({ text, nonce: Date.now() })
-    setIsChatOpen(true)
-  }
-
   const showProfileSection = !isMobile || mobileTab === 'profile'
 
   return (
@@ -341,7 +334,7 @@ export function CandidateDetailPage() {
                 setIsInsightsOpen(true)
               }}
             >
-              Инсайты
+              Заметки
             </button>
             <button
               type="button"
@@ -380,15 +373,9 @@ export function CandidateDetailPage() {
           <CandidateDrawer
             candidateId={candidateId}
             candidate={detail}
-            ai={ai}
             statusLabel={statusLabel}
             isOpen={isInsightsOpen}
             onClose={() => setIsInsightsOpen(false)}
-            onOpenInterviewScript={() => {
-              setIsInsightsOpen(false)
-              setIsInterviewScriptOpen(true)
-            }}
-            onInsertChatDraft={handleInsertChatDraft}
           />
         )}
 

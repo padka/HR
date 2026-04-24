@@ -12,6 +12,7 @@ import { browserTimeZone, buildSlotTimePreview, formatTzOffset } from '@/app/lib
 import { ModalPortal } from '@/shared/components/ModalPortal'
 import {
   clearIncomingPersistedFilters,
+  type IncomingChannelFilter,
   loadIncomingPersistedFilters,
   saveIncomingPersistedFilters,
   type IncomingAiFilter,
@@ -47,8 +48,13 @@ const STATUS_FILTER_LABELS: Record<IncomingStatusFilter, string> = {
   all: 'Все статусы',
   waiting_slot: 'Ожидают слот',
   stalled_waiting_slot: 'Застряли >24ч',
-  slot_pending: 'На согласовании',
   requested_other_time: 'Запросили другое время',
+}
+
+const CHANNEL_FILTER_LABELS: Record<IncomingChannelFilter, string> = {
+  all: 'Все каналы',
+  telegram: 'Telegram',
+  max: 'MAX',
 }
 
 const OWNER_FILTER_LABELS: Record<IncomingOwnerFilter, string> = {
@@ -120,6 +126,7 @@ export function IncomingPage() {
   const [search, setSearch] = useState(() => persistedFilters.search ?? '')
   const [cityFilter, setCityFilter] = useState(() => persistedFilters.cityFilter ?? 'all')
   const [statusFilter, setStatusFilter] = useState<IncomingStatusFilter>(() => persistedFilters.statusFilter ?? 'all')
+  const [channelFilter, setChannelFilter] = useState<IncomingChannelFilter>(() => persistedFilters.channelFilter ?? 'all')
   const [ownerFilter, setOwnerFilter] = useState<IncomingOwnerFilter>(() => persistedFilters.ownerFilter ?? 'all')
   const [waitingFilter, setWaitingFilter] = useState<IncomingWaitingFilter>(() => persistedFilters.waitingFilter ?? 'all')
   const [aiFilter, setAiFilter] = useState<IncomingAiFilter>(() => persistedFilters.aiFilter ?? 'all')
@@ -160,6 +167,7 @@ export function IncomingPage() {
       search: debouncedSearch,
       cityFilter,
       statusFilter,
+      channelFilter,
       ownerFilter,
       waitingFilter,
       aiFilter,
@@ -171,6 +179,7 @@ export function IncomingPage() {
       search: debouncedSearch,
       cityId: cityFilter === 'all' ? null : Number(cityFilter),
       status: statusFilter,
+      channel: channelFilter,
       owner: ownerFilter,
       waiting: waitingFilter,
       aiLevel: aiFilter,
@@ -321,6 +330,10 @@ export function IncomingPage() {
     const byCity = incomingTarget.city_id ? cityTzMap.get(incomingTarget.city_id) : null
     return byCity || recruiterTz
   }, [cityTzMap, incomingTarget, recruiterTz])
+  const incomingRequestedPreference = useMemo(
+    () => (incomingTarget ? formatRequestedAnotherTime(incomingTarget) : null),
+    [incomingTarget],
+  )
 
   const incomingManualPreview = useMemo(
     () => buildSlotTimePreview(incomingDate, incomingTime, recruiterTz, incomingCandidateTz),
@@ -378,6 +391,13 @@ export function IncomingPage() {
         clear: () => setStatusFilter('all'),
       })
     }
+    if (channelFilter !== 'all') {
+      filters.push({
+        key: `channel:${channelFilter}`,
+        label: `Канал: ${CHANNEL_FILTER_LABELS[channelFilter]}`,
+        clear: () => setChannelFilter('all'),
+      })
+    }
     if (ownerFilter !== 'all') {
       filters.push({
         key: `owner:${ownerFilter}`,
@@ -400,7 +420,7 @@ export function IncomingPage() {
       })
     }
     return filters
-  }, [aiFilter, cityFilter, cityOptions, ownerFilter, search, statusFilter, waitingFilter])
+  }, [aiFilter, channelFilter, cityFilter, cityOptions, ownerFilter, search, statusFilter, waitingFilter])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -408,13 +428,14 @@ export function IncomingPage() {
       search,
       cityFilter,
       statusFilter,
+      channelFilter,
       ownerFilter,
       waitingFilter,
       aiFilter,
       sortMode,
       showAdvancedFilters,
     })
-  }, [aiFilter, cityFilter, ownerFilter, search, showAdvancedFilters, sortMode, statusFilter, waitingFilter])
+  }, [aiFilter, channelFilter, cityFilter, ownerFilter, search, showAdvancedFilters, sortMode, statusFilter, waitingFilter])
 
   useEffect(() => {
     if (!incomingQuery.data) return
@@ -432,12 +453,13 @@ export function IncomingPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [debouncedSearch, cityFilter, statusFilter, ownerFilter, waitingFilter, aiFilter, sortMode, pageSize])
+  }, [debouncedSearch, cityFilter, statusFilter, channelFilter, ownerFilter, waitingFilter, aiFilter, sortMode, pageSize])
 
   const resetFilters = () => {
     setSearch('')
     setCityFilter('all')
     setStatusFilter('all')
+    setChannelFilter('all')
     setOwnerFilter('all')
     setWaitingFilter('all')
     setAiFilter('all')
@@ -521,8 +543,12 @@ export function IncomingPage() {
               <option value="all">Все статусы</option>
               <option value="waiting_slot">Ожидают слот</option>
               <option value="stalled_waiting_slot">Застряли {'>'}24ч</option>
-              <option value="slot_pending">На согласовании</option>
               <option value="requested_other_time">Запросили другое время</option>
+            </select>
+            <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value as IncomingChannelFilter)}>
+              <option value="all">Все каналы</option>
+              <option value="telegram">Telegram</option>
+              <option value="max">MAX</option>
             </select>
             <select value={sortMode} onChange={(e) => setSortMode(e.target.value as IncomingSortMode)}>
               {Object.entries(SORT_MODE_LABELS).map(([value, label]) => (
@@ -939,6 +965,13 @@ export function IncomingPage() {
                   <p className="text-muted text-sm">
                     Напоминание за 2 часа отправляется по времени кандидата.
                   </p>
+                )}
+                {(incomingRequestedPreference || incomingTarget.availability_note) && (
+                  <div className="incoming-row__detail-card incoming-row__detail-card--requested">
+                    <strong>Что попросил кандидат</strong>
+                    {incomingRequestedPreference && <span>{incomingRequestedPreference}</span>}
+                    {incomingTarget.availability_note && <span>{incomingTarget.availability_note}</span>}
+                  </div>
                 )}
                 <label>
                   Сообщение кандидату (необязательно)

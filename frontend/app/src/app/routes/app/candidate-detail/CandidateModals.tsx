@@ -146,6 +146,7 @@ function TestAttemptModal({ testTitle, attempt, onClose }: NonNullable<Candidate
   const questions = attempt.details?.questions || []
   const totalQuestions = stats?.total_questions ?? questions.length
   const correctAnswers = stats?.correct_answers ?? questions.filter((question) => question.is_correct).length
+  const attemptLabel = attempt.id > 0 ? `попытка #${attempt.id}` : 'последний результат'
 
   return (
     <ModalPortal>
@@ -153,7 +154,7 @@ function TestAttemptModal({ testTitle, attempt, onClose }: NonNullable<Candidate
         <div className="glass glass--elevated modal">
           <div className="modal__header">
             <div>
-              <h2 className="modal__title">{testTitle} · попытка #{attempt.id}</h2>
+              <h2 className="modal__title">{testTitle} · {attemptLabel}</h2>
               <p className="modal__subtitle">
                 {formatDateTime(attempt.completed_at)}
                 {attempt.source ? ` · ${attempt.source}` : ''}

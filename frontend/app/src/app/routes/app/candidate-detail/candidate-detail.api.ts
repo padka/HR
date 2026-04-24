@@ -4,8 +4,11 @@ import {
   applyCandidateAction,
   fetchCandidateChannelHealth,
   fetchCandidateAiCoach,
+  fetchCandidateAiFacts,
+  fetchCandidateAiNextBestAction,
   fetchCandidateAiSummary,
   fetchCandidateChat,
+  fetchCandidateContactDrafts,
   fetchCandidateChatDrafts,
   fetchCandidateCoachDrafts,
   fetchCandidateCohortComparison,
@@ -15,7 +18,10 @@ import {
   issueCandidateMaxLaunchInvite,
   markCandidateChatRead,
   refreshCandidateAiCoach,
+  refreshCandidateAiFacts,
+  refreshCandidateAiNextBestAction,
   refreshCandidateAiSummary,
+  saveCandidateAiNextBestActionFeedback,
   revokeCandidateMaxLaunchInvite,
   scheduleCandidateInterview,
   scheduleCandidateIntroDay,
@@ -148,6 +154,26 @@ export function useCandidateAi(candidateId: number) {
     refetchOnReconnect: false,
   })
 
+  const factsQuery = useQuery({
+    queryKey: ['ai-facts', candidateId],
+    queryFn: () => fetchCandidateAiFacts(candidateId),
+    enabled: false,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
+  const nextBestActionQuery = useQuery({
+    queryKey: ['ai-next-best-action', candidateId],
+    queryFn: () => fetchCandidateAiNextBestAction(candidateId),
+    enabled: false,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
   const refreshSummaryMutation = useMutation({
     mutationFn: () => refreshCandidateAiSummary(candidateId),
     onSuccess: (data) => {
@@ -162,12 +188,48 @@ export function useCandidateAi(candidateId: number) {
     },
   })
 
+  const refreshFactsMutation = useMutation({
+    mutationFn: () => refreshCandidateAiFacts(candidateId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-facts', candidateId], data)
+    },
+  })
+
+  const refreshNextBestActionMutation = useMutation({
+    mutationFn: () => refreshCandidateAiNextBestAction(candidateId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-next-best-action', candidateId], data)
+    },
+  })
+
   const draftsMutation = useMutation({
     mutationFn: (mode: 'short' | 'neutral' | 'supportive') => fetchCandidateChatDrafts(candidateId, mode),
   })
 
   const coachDraftsMutation = useMutation({
     mutationFn: (mode: 'short' | 'neutral' | 'supportive') => fetchCandidateCoachDrafts(candidateId, mode),
+  })
+
+  const contactDraftsMutation = useMutation({
+    mutationFn: (mode: 'short' | 'neutral' | 'supportive') => fetchCandidateContactDrafts(candidateId, mode),
+  })
+
+  const nextBestActionFeedbackMutation = useMutation({
+    mutationFn: (payload: { action: 'accept' | 'dismiss' | 'edit_and_send'; note?: string | null }) =>
+      saveCandidateAiNextBestActionFeedback(candidateId, payload),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['ai-next-best-action-feedback', candidateId], data)
+      queryClient.setQueryData(['ai-next-best-action', candidateId], (prev: any) => {
+        if (!prev?.recommendation || !data?.feedback_state) return prev
+        return {
+          ...prev,
+          recommendation: {
+            ...prev.recommendation,
+            feedback_state: data.feedback_state,
+          },
+        }
+      })
+    },
   })
 
   const resumeMutation = useMutation({
@@ -177,10 +239,16 @@ export function useCandidateAi(candidateId: number) {
   return {
     summaryQuery,
     coachQuery,
+    factsQuery,
+    nextBestActionQuery,
     refreshSummaryMutation,
     refreshCoachMutation,
+    refreshFactsMutation,
+    refreshNextBestActionMutation,
     draftsMutation,
     coachDraftsMutation,
+    contactDraftsMutation,
+    nextBestActionFeedbackMutation,
     resumeMutation,
   }
 }

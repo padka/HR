@@ -917,6 +917,124 @@ def test_ai_candidate_coach_cache_reuse(ai_app):
         assert p2["input_hash"] == p1["input_hash"]
 
 
+def test_ai_candidate_facts_cache_reuse(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="Facts Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=911101,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+            tr = TestResult(
+                user_id=user.id,
+                raw_score=8,
+                final_score=4.6,
+                rating="TEST1",
+                total_time=120,
+                source="bot",
+            )
+            session.add(tr)
+            await session.commit()
+            await session.refresh(tr)
+
+            session.add_all(
+                [
+                    QuestionAnswer(
+                        test_result_id=tr.id,
+                        question_index=4,
+                        question_text="Готовы ли вы к полевому формату работы и выездам по городу?",
+                        correct_answer=None,
+                        user_answer="Да, подходит",
+                        attempts_count=1,
+                        time_spent=12,
+                        is_correct=True,
+                        overtime=False,
+                    ),
+                    QuestionAnswer(
+                        test_result_id=tr.id,
+                        question_index=5,
+                        question_text="Сколько времени потребуется, чтобы закрыть дела и приступить к обучению?",
+                        correct_answer=None,
+                        user_answer="Уже готов завтра",
+                        attempts_count=1,
+                        time_spent=13,
+                        is_correct=True,
+                        overtime=False,
+                    ),
+                ]
+            )
+            await session.commit()
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        first = client.get(f"/api/ai/candidates/{candidate_id}/facts", auth=("admin", "admin"))
+        second = client.get(f"/api/ai/candidates/{candidate_id}/facts", auth=("admin", "admin"))
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["ok"] is True
+    assert first_payload["facts"]["facts"]
+    assert "start_readiness" in first_payload["facts"]["confirmed_keys"]
+    assert second_payload["cached"] is True
+    assert second_payload["input_hash"] == first_payload["input_hash"]
+
+
+def test_ai_next_best_action_feedback_and_contact_drafts(ai_app):
+    async def _seed() -> int:
+        async with async_session() as session:
+            user = User(
+                fio="NBA Candidate",
+                phone=None,
+                city="E2E City",
+                telegram_id=911102,
+                source="bot",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return int(user.id)
+
+    candidate_id = _run(_seed())
+
+    with TestClient(ai_app) as client:
+        next_action = client.get(f"/api/ai/candidates/{candidate_id}/next-best-action", auth=("admin", "admin"))
+        assert next_action.status_code == 200
+        recommendation = next_action.json()["recommendation"]
+        assert recommendation["summary"]
+        assert recommendation["recommended_action"]["label"]
+
+        feedback = client.post(
+            f"/api/ai/candidates/{candidate_id}/next-best-action/feedback",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": _csrf(client)},
+            json={"action": "accept"},
+        )
+        assert feedback.status_code == 200
+        assert feedback.json()["feedback_state"] == "accepted"
+
+        drafts = client.post(
+            f"/api/ai/candidates/{candidate_id}/contact/drafts",
+            auth=("admin", "admin"),
+            headers={"x-csrf-token": _csrf(client)},
+            json={"mode": "neutral"},
+        )
+        assert drafts.status_code == 200
+        drafts_payload = drafts.json()
+        assert drafts_payload["ok"] is True
+        assert drafts_payload["drafts"]
+        assert drafts_payload["intent_key"]
+
+
 def test_ai_candidate_coach_drafts_modes_and_invalid(ai_app):
     async def _seed() -> int:
         async with async_session() as session:

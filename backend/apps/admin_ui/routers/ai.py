@@ -148,6 +148,130 @@ async def api_ai_candidate_coach_drafts(
     return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})
 
 
+@router.get("/candidates/{candidate_id}/facts")
+async def api_ai_candidate_facts(
+    candidate_id: int,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    try:
+        result = await ai.get_candidate_facts(candidate_id, principal=principal, refresh=False)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "facts": result.payload})
+
+
+@router.post("/candidates/{candidate_id}/facts/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_facts_refresh(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    try:
+        result = await ai.get_candidate_facts(candidate_id, principal=principal, refresh=True)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, "facts": result.payload})
+
+
+@router.get("/candidates/{candidate_id}/next-best-action")
+async def api_ai_candidate_next_best_action(
+    candidate_id: int,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    try:
+        result = await ai.get_recruiter_next_best_action(candidate_id, principal=principal, refresh=False)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse(
+        {"ok": True, "cached": result.cached, "input_hash": result.input_hash, "recommendation": result.payload}
+    )
+
+
+@router.post("/candidates/{candidate_id}/next-best-action/refresh")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_next_best_action_refresh(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    try:
+        result = await ai.get_recruiter_next_best_action(candidate_id, principal=principal, refresh=True)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse(
+        {"ok": True, "cached": result.cached, "input_hash": result.input_hash, "recommendation": result.payload}
+    )
+
+
+@router.post("/candidates/{candidate_id}/next-best-action/feedback")
+@limiter.limit("15/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_next_best_action_feedback(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"message": "Ожидался JSON"})
+    action = str(payload.get("action") or "").strip().lower()
+    note = payload.get("note")
+    if action not in {"accept", "dismiss", "edit_and_send"}:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный action"})
+    if note is not None and not isinstance(note, str):
+        raise HTTPException(status_code=400, detail={"message": "Некорректный note"})
+    try:
+        result = await ai.save_recruiter_next_best_action_feedback(
+            candidate_id,
+            principal=principal,
+            action=action,
+            note=note if isinstance(note, str) else None,
+        )
+    except AIDisabledError:
+        return _disabled()
+    return JSONResponse({"ok": True, **result})
+
+
+@router.post("/candidates/{candidate_id}/contact/drafts")
+@limiter.limit("5/minute", key_func=get_principal_identifier)
+async def api_ai_candidate_contact_drafts(
+    candidate_id: int,
+    request: Request,
+    principal: Principal = principal_dep,
+    ai: AIService = ai_dep,
+) -> JSONResponse:
+    _ = await require_csrf_token(request)
+    payload = await request.json()
+    mode = "neutral"
+    if isinstance(payload, dict) and payload.get("mode"):
+        mode = str(payload.get("mode"))
+    if mode not in {"short", "neutral", "supportive"}:
+        raise HTTPException(status_code=400, detail={"message": "Некорректный mode"})
+    try:
+        result = await ai.get_candidate_contact_drafts(candidate_id, principal=principal, mode=mode)
+    except AIDisabledError:
+        return _disabled()
+    except AIRateLimitedError:
+        return _rate_limited()
+    return JSONResponse({"ok": True, "cached": result.cached, "input_hash": result.input_hash, **result.payload})
+
+
 @router.get("/candidates/{candidate_id}/interview-script")
 async def api_ai_candidate_interview_script(
     candidate_id: int,

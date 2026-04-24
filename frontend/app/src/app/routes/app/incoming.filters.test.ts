@@ -30,7 +30,8 @@ describe('incoming.filters', () => {
       JSON.stringify({
         search: 'иванов',
         cityFilter: '10',
-        statusFilter: 'slot_pending',
+        statusFilter: 'requested_other_time',
+        channelFilter: 'max',
         ownerFilter: 'mine',
         waitingFilter: '48h',
         aiFilter: 'high',
@@ -41,7 +42,8 @@ describe('incoming.filters', () => {
     expect(payload).toEqual({
       search: 'иванов',
       cityFilter: '10',
-      statusFilter: 'slot_pending',
+      statusFilter: 'requested_other_time',
+      channelFilter: 'max',
       ownerFilter: 'mine',
       waitingFilter: '48h',
       aiFilter: 'high',
@@ -52,6 +54,7 @@ describe('incoming.filters', () => {
     const broken = parseIncomingPersistedFilters(
       JSON.stringify({
         statusFilter: 'wrong',
+        channelFilter: 'oops',
         ownerFilter: 'oops',
         waitingFilter: 'oops',
         aiFilter: 'oops',
@@ -61,6 +64,7 @@ describe('incoming.filters', () => {
     expect(broken).toEqual(
       expect.objectContaining({
         statusFilter: 'all',
+        channelFilter: 'all',
         ownerFilter: 'all',
         waitingFilter: 'all',
         aiFilter: 'all',
@@ -75,6 +79,7 @@ describe('incoming.filters', () => {
       search: 'тест',
       cityFilter: 'all',
       statusFilter: 'waiting_slot',
+      channelFilter: 'telegram',
       ownerFilter: 'assigned',
       waitingFilter: '24h',
       aiFilter: 'medium',

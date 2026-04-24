@@ -42,6 +42,7 @@ def dashboard_incoming(
     page_size: int | None = None,
     city_id: int | None = None,
     status: str = "all",
+    channel: str = "all",
     owner: str = "all",
     waiting: str = "all",
     ai_level: str = "all",
@@ -59,6 +60,7 @@ def dashboard_incoming(
         f"p{int(page)}:ps{normalized_page_size}:"
         f"c{city_id or 'all'}:"
         f"s{(status or 'all').strip().lower()}:"
+        f"ch{(channel or 'all').strip().lower()}:"
         f"o{(owner or 'all').strip().lower()}:"
         f"w{(waiting or 'all').strip().lower()}:"
         f"ai{(ai_level or 'all').strip().lower()}:"

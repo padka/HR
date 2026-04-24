@@ -422,6 +422,51 @@ const aiCoachData = {
   },
 }
 
+const aiFactsData = {
+  ok: true,
+  cached: true,
+  input_hash: 'facts-1',
+  facts: {
+    summary: 'Можно переиспользовать основные факты из анкеты и уточнить только доход.',
+    facts: [
+      { key: 'start_readiness', label: 'Готовность выйти', value: 'Готов завтра', confidence: 'high', source: 'test1' },
+      { key: 'field_format_readiness', label: 'Полевой формат', value: 'Да, подходит', confidence: 'high', source: 'test1' },
+      { key: 'desired_income', label: 'Желаемый доход', value: 'Хочу обсудить после разговора', confidence: 'medium', source: 'test1', ambiguity_note: 'Нужно уточнить диапазон' },
+    ],
+    confirmed_keys: ['start_readiness', 'field_format_readiness'],
+    ambiguous_keys: ['desired_income'],
+    prefill_ready_keys: ['start_readiness', 'field_format_readiness'],
+    clarification_question: 'Подскажите, пожалуйста, какой доход на старте для вас комфортен?',
+  },
+}
+
+const aiNextBestActionData = {
+  ok: true,
+  cached: true,
+  input_hash: 'nba-1',
+  recommendation: {
+    summary: 'Кандидат уже достаточно тёплый, поэтому лучше быстро закрыть следующий слот без длинной переписки.',
+    ai_confidence: 'medium',
+    recommended_action: {
+      key: 'offer_concrete_slot',
+      label: 'Предложить 2 ближайших слота',
+      rationale: 'После Теста 1 важно быстро перевести кандидата в календарь.',
+      cta: 'Какой из двух вариантов вам удобнее: сегодня после 16:00 или завтра до 12:00?',
+    },
+    reasons: [{ key: 'exp', label: 'Опыт общения', evidence: 'Есть опыт общения с клиентами.' }],
+    risks: [{ key: 'stall', severity: 'medium', label: 'Риск паузы', explanation: 'Если не закрепить слот, кандидат может остыть.' }],
+    interview_focus: ['Проверить готовность к полевому формату'],
+    outreach_goal: 'Получить подтверждение по следующему шагу сегодня.',
+    playbook: {
+      what_to_write: 'Коротко подтвердить релевантность и сразу предложить время.',
+      what_to_offer: 'Два ближайших слота.',
+      likely_objection: 'Может попросить сначала обсудить доход.',
+      best_cta: 'Какой из двух вариантов вам удобнее?',
+    },
+    feedback_state: 'pending',
+  },
+}
+
 const slotsData = [
   {
     id: 1,
@@ -453,6 +498,7 @@ const incomingData = {
       name: 'Иван Петров',
       city: 'Москва',
       city_id: 1,
+      messenger_channel: 'telegram',
       status_display: 'Ожидает слот',
       status_slug: 'waiting_slot',
       waiting_hours: 3,
@@ -885,6 +931,12 @@ describe('UI cosmetics smoke', () => {
       if (key === 'ai-coach') {
         return { ...baseQueryResult, data: aiCoachData }
       }
+      if (key === 'ai-facts') {
+        return { ...baseQueryResult, data: aiFactsData }
+      }
+      if (key === 'ai-next-best-action') {
+        return { ...baseQueryResult, data: aiNextBestActionData }
+      }
       if (key === 'candidate-chat-templates') {
         return { ...baseQueryResult, data: candidateChatTemplatesData }
       }
@@ -1133,6 +1185,16 @@ describe('UI cosmetics smoke', () => {
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
     })
+    expectPolicy('ai-facts', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expectPolicy('ai-next-best-action', {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
     expectPolicy('candidate-chat-templates', {
       staleTime: 10 * 60_000,
       refetchOnWindowFocus: false,
@@ -1240,6 +1302,48 @@ describe('UI cosmetics smoke', () => {
     expect(screen.getByText('Напоминание за 2 часа отправляется по времени кандидата.')).toBeInTheDocument()
   })
 
+  it('shows candidate availability window from inbox data in details and scheduling modal', () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'dashboard-incoming') {
+        return {
+          ...baseQueryResult,
+          data: {
+            ...incomingData,
+            queue_total: 1,
+            total: 1,
+            returned_count: 1,
+            items: [
+              {
+                ...incomingData.items[0],
+                requested_another_time: false,
+                requested_another_time_from: null,
+                requested_another_time_to: null,
+                requested_another_time_comment: null,
+                availability_window: '20.04 23:10–23:50 (Europe/Moscow)',
+                availability_note: null,
+              },
+            ],
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    render(<IncomingPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Подробнее' }))
+    const details = screen.getByTestId('incoming-row-details-11')
+    expect(within(details).getByText('Желаемое время')).toBeInTheDocument()
+    expect(within(details).getByText('Хочет окно: 20.04 23:10–23:50 (Europe/Moscow)')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Подобрать время' }))
+    const modal = screen.getByTestId('incoming-schedule-modal')
+    expect(within(modal).getByText('Что попросил кандидат')).toBeInTheDocument()
+    expect(within(modal).getByText('Хочет окно: 20.04 23:10–23:50 (Europe/Moscow)')).toBeInTheDocument()
+  })
+
   it('uses expanded incoming workspace as recruiter dashboard default', () => {
     render(<DashboardPage />)
     const incomingFilterBar = screen.getByTestId('incoming-filter-bar')
@@ -1276,6 +1380,64 @@ describe('UI cosmetics smoke', () => {
     expect(screen.getByText('Требует разбора / есть конфликт')).toBeInTheDocument()
     expect(screen.getByText('Общая сводка')).toBeInTheDocument()
     expect(screen.getByText('Лидерборд эффективности')).toBeInTheDocument()
+  })
+
+  it('restores channel filter in admin triage incoming toolbar', () => {
+    useQueryMock.mockImplementation((options: QueryOptionsLike) => {
+      const rawKey = options?.queryKey
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey
+      if (key === 'dashboard-incoming') {
+        return {
+          ...baseQueryResult,
+          data: {
+            ...incomingData,
+            queue_total: 2,
+            total: 2,
+            returned_count: 2,
+            has_next: false,
+            items: [
+              {
+                ...incomingData.items[0],
+                id: 11,
+                name: 'Иван Петров',
+                messenger_channel: 'telegram',
+              },
+              {
+                ...incomingData.items[0],
+                id: 12,
+                name: 'Макс Иванов',
+                messenger_channel: 'max',
+                state_reconciliation: {
+                  issues: [],
+                  has_blockers: false,
+                },
+              },
+            ],
+          },
+        }
+      }
+      return { ...baseQueryResult }
+    })
+
+    useProfileMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        principal: { type: 'admin', id: 1 },
+        recruiter: { id: 7, tz: 'Europe/Moscow', cities: [{ id: 1, name: 'Москва' }] },
+        profile: {
+          city_options: [{ id: 1, name: 'Москва', tz: 'Europe/Moscow' }],
+        },
+      },
+    })
+
+    render(<DashboardPage />)
+
+    fireEvent.change(screen.getByLabelText('Фильтр входящих по каналу'), { target: { value: 'max' } })
+
+    expect(screen.getByText('Макс Иванов')).toBeInTheDocument()
+    expect(screen.queryByText('Иван Петров')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dashboard-triage-active-filters')).toHaveTextContent('Канал: MAX')
   })
 
   it('renders slots filter/table test ids', () => {
@@ -1330,6 +1492,100 @@ describe('UI cosmetics smoke', () => {
     expect(screen.queryByTestId('candidate-insights-drawer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('interview-script-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('interview-script-modal')).not.toBeInTheDocument()
+  })
+
+  it('opens latest test1 answers from candidate tests modal when report file is absent', async () => {
+    render(<CandidateDetailPage />)
+
+    fireEvent.click(screen.getByTestId('candidate-tests-trigger'))
+
+    expect(screen.getByText('Тесты кандидата')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Посмотреть ответы' }))
+
+    expect(screen.getByText(/Тест 1 · последний результат/)).toBeInTheDocument()
+    expect(screen.getByText('Опыт в подборе?')).toBeInTheDocument()
+    expect(screen.getAllByText('Ответ кандидата').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('3 года').length).toBeGreaterThan(0)
+  })
+
+  it('prefers embedded test answers over broken file report links', async () => {
+    const mutableDetail = candidateDetailData as any
+    const previousSections = mutableDetail.test_sections
+    mutableDetail.test_sections = previousSections.map((section: any) =>
+      section.key === 'test1'
+        ? {
+            ...section,
+            report_url: '/candidates/42/reports/test1',
+          }
+        : section,
+    )
+
+    try {
+      render(<CandidateDetailPage />)
+
+      fireEvent.click(screen.getByTestId('candidate-tests-trigger'))
+      fireEvent.click(screen.getByRole('button', { name: 'Посмотреть ответы' }))
+
+      expect(screen.getByText(/Тест 1 · последний результат/)).toBeInTheDocument()
+      expect(screen.queryByText('Загрузка отчёта...')).not.toBeInTheDocument()
+    } finally {
+      mutableDetail.test_sections = previousSections
+    }
+  })
+
+  it('keeps backend wait-for-candidate primary action and still exposes send test2', async () => {
+    const mutableDetail = candidateDetailData as any
+    const previousActions = mutableDetail.candidate_actions
+    const previousNextAction = mutableDetail.candidate_next_action
+    const previousLifecycle = mutableDetail.lifecycle_summary
+    const previousStatus = mutableDetail.candidate_status_slug
+
+    mutableDetail.candidate_status_slug = 'invited'
+    mutableDetail.lifecycle_summary = {
+      ...mutableDetail.lifecycle_summary,
+      stage: 'screening',
+      stage_label: 'Скрининг',
+    }
+    mutableDetail.candidate_actions = [
+      {
+        key: 'resend_test2',
+        label: 'Отправить Тест 2',
+        variant: 'primary',
+        target_status: 'test2_sent',
+        url_pattern: '/api/candidates/{id}/actions/resend_test2',
+      },
+    ]
+    mutableDetail.candidate_next_action = {
+      version: 1,
+      lifecycle_stage: 'screening',
+      record_state: 'active',
+      worklist_bucket: 'awaiting_candidate',
+      urgency: 'normal',
+      primary_action: {
+        type: 'wait_for_candidate',
+        label: 'Ожидаем ответ кандидата',
+        enabled: false,
+        owner_role: 'candidate',
+        ui_action: null,
+        legacy_action_key: null,
+        blocking_reasons: ['waiting_candidate_response'],
+      },
+      explanation: 'Ждём, пока кандидат заполнит анкету.',
+    }
+
+    render(<CandidateDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Ожидаем ответ кандидата' })).toBeInTheDocument()
+      expect(screen.getByText('Ждём, пока кандидат заполнит анкету.')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Отправить Тест 2' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Ожидаем ответ кандидата' })).toBeDisabled()
+
+    mutableDetail.candidate_actions = previousActions
+    mutableDetail.candidate_next_action = previousNextAction
+    mutableDetail.lifecycle_summary = previousLifecycle
+    mutableDetail.candidate_status_slug = previousStatus
   })
 
   it('keeps candidate journey inside funnel stages and removes standalone journey block', async () => {
@@ -1449,7 +1705,7 @@ describe('UI cosmetics smoke', () => {
     expect(screen.getByText('Быстрый просмотр профиля кандидата внутри RecruitSmart.')).toBeInTheDocument()
   })
 
-  it('opens insights as notes-first drawer with compact HH block only', async () => {
+  it('opens notes drawer without AI and HH side panels', async () => {
     render(<CandidateDetailPage />)
 
     fireEvent.click(screen.getByTestId('candidate-insights-trigger'))
@@ -1458,13 +1714,13 @@ describe('UI cosmetics smoke', () => {
     expect(drawer).toBeInTheDocument()
     expect(within(drawer).getByText('Заметки по кандидату')).toBeInTheDocument()
     expect(within(drawer).getByTestId('candidate-quick-notes')).toBeInTheDocument()
-    expect(within(drawer).getByTestId('candidate-insights-hh')).toBeInTheDocument()
-    expect(within(drawer).getByText('HeadHunter')).toBeInTheDocument()
-    expect(within(drawer).getByText('Резюме Ивана Петрова')).toBeInTheDocument()
-    expect(within(drawer).getByRole('link', { name: 'Открыть в HH' })).toHaveAttribute('href', 'https://hh.ru/resume/1')
+    expect(within(drawer).getByTestId('candidate-insights-notes')).toBeInTheDocument()
+    expect(within(drawer).getByTestId('candidate-quick-notes-surface')).toBeInTheDocument()
+    expect(within(drawer).getByTestId('candidate-quick-notes-composer')).toBeInTheDocument()
+    expect(within(drawer).queryByText('AI-факты')).not.toBeInTheDocument()
+    expect(within(drawer).queryByText('AI-подсказка рекрутеру')).not.toBeInTheDocument()
+    expect(within(drawer).queryByText('HeadHunter')).not.toBeInTheDocument()
     expect(within(drawer).queryByText('Карточка кандидата')).not.toBeInTheDocument()
-    expect(within(drawer).queryByText('AI-помощник')).not.toBeInTheDocument()
-    expect(within(drawer).queryByText('Подсказки рекрутеру')).not.toBeInTheDocument()
     expect(within(drawer).queryByText('Хронология')).not.toBeInTheDocument()
   })
 

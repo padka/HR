@@ -13,8 +13,8 @@ All public methods follow the same pattern:
 from __future__ import annotations
 
 import asyncio
-import logging
 import hashlib
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -23,8 +23,8 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from backend.apps.admin_ui.security import Principal
 from backend.core.db import async_session
@@ -41,7 +41,12 @@ from backend.domain.ai.models import (
 from backend.domain.candidates.models import User
 from backend.domain.models import City, Recruiter, Vacancy
 
-from .candidate_scorecard import OBJECTIVE_WEIGHTS, SEMANTIC_WEIGHTS, build_candidate_scorecard, fit_level_from_score
+from .candidate_scorecard import (
+    OBJECTIVE_WEIGHTS,
+    SEMANTIC_WEIGHTS,
+    build_candidate_scorecard,
+    fit_level_from_score,
+)
 from .context import (
     build_candidate_ai_context,
     build_city_candidate_recommendations_context,
@@ -49,15 +54,6 @@ from .context import (
     get_last_inbound_message_text,
 )
 from .interview_script_builder import build_structured_interview_script
-from .prompts import (
-    agent_chat_reply_prompts,
-    candidate_coach_drafts_prompts,
-    candidate_coach_prompts,
-    candidate_summary_prompts,
-    chat_reply_drafts_prompts,
-    city_candidate_recommendations_prompts,
-    dashboard_insight_prompts,
-)
 from .llm_script_generator import (
     KB_INTERVIEW_SCRIPT_CATEGORIES,
     PROMPT_VERSION_INTERVIEW_SCRIPT,
@@ -67,23 +63,41 @@ from .llm_script_generator import (
     hash_resume_content,
     normalize_hh_resume,
 )
+from .prompts import (
+    agent_chat_reply_prompts,
+    candidate_coach_drafts_prompts,
+    candidate_coach_prompts,
+    candidate_contact_draft_prompts,
+    candidate_facts_prompts,
+    candidate_summary_prompts,
+    chat_reply_drafts_prompts,
+    city_candidate_recommendations_prompts,
+    dashboard_insight_prompts,
+    recruiter_next_best_action_prompts,
+)
 from .providers import AIProvider, AIProviderError, FakeProvider, OpenAIProvider
 from .redaction import redact_text
 from .schemas import (
     AgentChatReplyV1,
     CandidateCoachV1,
+    CandidateContactDraftsV1,
+    CandidateFactsV1,
     CandidateSummaryV1,
     ChatReplyDraftsV1,
     CityCandidateRecommendationsV1,
     DashboardInsightV1,
     InterviewScriptFeedbackPayload,
     InterviewScriptPayload,
+    RecruiterNextBestActionV1,
 )
 
 logger = logging.getLogger(__name__)
 _CANDIDATE_AI_KINDS = (
     "candidate_summary_v1",
     "candidate_coach_v1",
+    "candidate_facts_v1",
+    "recruiter_next_best_action_v1",
+    "candidate_contact_draft_v1",
     "interview_script_v1",
 )
 
@@ -671,6 +685,336 @@ def _build_candidate_coach_fallback(
     return CandidateCoachV1.model_validate(coach).model_dump()
 
 
+def _is_ambiguous_fact(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    markers = (
+        "если",
+        "завис",
+        "обсуд",
+        "подума",
+        "не уверен",
+        "не знаю",
+        "смотря",
+        "по ситуации",
+        "посмотр",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _build_candidate_facts_fallback(
+    *,
+    context: dict[str, Any],
+    resume_context: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = context.get("candidate") if isinstance(context.get("candidate"), dict) else {}
+    profile = context.get("candidate_profile") if isinstance(context.get("candidate_profile"), dict) else {}
+    facts: list[dict[str, Any]] = []
+
+    def add_fact(
+        key: str,
+        label: str,
+        value: Any,
+        *,
+        source: str,
+        confidence: str = "medium",
+        confirmed: bool = True,
+        ambiguity_note: str | None = None,
+    ) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        facts.append(
+            {
+                "key": key,
+                "label": label,
+                "value": text,
+                "confidence": confidence,
+                "source": source,
+                "confirmed": confirmed,
+                "ambiguity_note": ambiguity_note,
+            }
+        )
+
+    add_fact("city", "Город", candidate.get("city"), source="system", confidence="high")
+    add_fact("desired_income", "Желаемый доход", profile.get("desired_income"), source="test1")
+    add_fact("start_readiness", "Готовность выйти", profile.get("start_readiness"), source="test1")
+    add_fact("field_format_readiness", "Полевой формат", profile.get("field_format_readiness"), source="test1")
+    add_fact("work_status", "Текущий статус", profile.get("work_status"), source="test1")
+    add_fact("work_experience", "Опыт продаж / переговоров", profile.get("work_experience"), source="test1")
+    add_fact("motivation", "Мотивация", profile.get("motivation"), source="test1")
+    add_fact("skills", "Ключевые навыки", profile.get("skills"), source="test1")
+    if resume_context.get("headline") or resume_context.get("summary"):
+        add_fact(
+            "hh_resume",
+            "HH / резюме",
+            resume_context.get("headline") or "Есть дополнительный контекст из резюме",
+            source="hh_resume",
+            confidence="medium",
+        )
+
+    ambiguous_keys = [
+        item["key"]
+        for item in facts
+        if _is_ambiguous_fact(str(item.get("value") or "")) or str(item.get("ambiguity_note") or "").strip()
+    ]
+    confirmed_keys = [item["key"] for item in facts if item["key"] not in ambiguous_keys]
+    prefill_ready_keys = list(confirmed_keys)
+
+    clarification_question: str | None = None
+    if "desired_income" in ambiguous_keys or not profile.get("desired_income"):
+        clarification_question = "Подскажите, пожалуйста, какой доход на старте для вас комфортен?"
+    elif "start_readiness" in ambiguous_keys or not profile.get("start_readiness"):
+        clarification_question = "Когда вы реально готовы выйти на следующий этап или приступить к обучению?"
+    elif "field_format_readiness" in ambiguous_keys or not profile.get("field_format_readiness"):
+        clarification_question = "Насколько вам комфортен полевой формат работы и выезды по городу?"
+
+    summary_parts: list[str] = []
+    if confirmed_keys:
+        summary_parts.append(f"Можно переиспользовать {len(confirmed_keys)} подтверждённых фактов из анкеты.")
+    if ambiguous_keys:
+        summary_parts.append(f"Нужно уточнить: {', '.join(ambiguous_keys[:3])}.")
+    if not summary_parts:
+        summary_parts.append("Структурированных фактов пока мало, лучше уточнить ключевые вводные вручную.")
+
+    return CandidateFactsV1.model_validate(
+        {
+            "summary": " ".join(summary_parts),
+            "facts": facts,
+            "confirmed_keys": confirmed_keys,
+            "ambiguous_keys": ambiguous_keys,
+            "prefill_ready_keys": prefill_ready_keys,
+            "clarification_question": clarification_question,
+        }
+    ).model_dump()
+
+
+def _stage_from_context(context: dict[str, Any]) -> str:
+    candidate = context.get("candidate") if isinstance(context.get("candidate"), dict) else {}
+    slots = context.get("slots") if isinstance(context.get("slots"), dict) else {}
+    upcoming = slots.get("upcoming") if isinstance(slots.get("upcoming"), dict) else {}
+    status = str(candidate.get("status") or "").strip().lower()
+    slot_status = str(upcoming.get("status") or "").strip().lower()
+    if status in {"slot_pending", "waiting_for_slot", "stalled_waiting_slot"}:
+        if upcoming.get("id"):
+            return "awaiting_recruiter_slot_decision"
+        return "awaiting_slot_offer"
+    if status.startswith("interview"):
+        if slot_status in {"booked", "confirmed", "reserved", "pending"}:
+            return "interview_scheduled"
+        return "interview_flow"
+    if status.startswith("test2"):
+        return "test2"
+    return "active_screening"
+
+
+def _build_recruiter_next_best_action_fallback(
+    *,
+    context: dict[str, Any],
+    scorecard: dict[str, Any],
+    facts_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    stage = _stage_from_context(context)
+    recommendation = str(scorecard.get("recommendation") or "clarify_before_od").strip().lower()
+    facts = facts_payload if isinstance(facts_payload, dict) else {}
+    ambiguous_keys = list(facts.get("ambiguous_keys") or [])
+    risks = _scorecard_risk_items(scorecard)
+    strengths = [
+        {
+            "key": str(item.get("key") or ""),
+            "label": str(item.get("label") or ""),
+            "evidence": str(item.get("evidence") or item.get("label") or "").strip(),
+        }
+        for item in list(scorecard.get("metrics") or [])
+        if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "met"
+    ][:3]
+
+    if stage == "awaiting_recruiter_slot_decision":
+        recommended_action = {
+            "key": "approve_or_adjust_slot",
+            "label": "Быстро согласовать слот",
+            "rationale": "Кандидат уже выбрал время. Чем быстрее закрыть решение, тем выше шанс сохранить контакт.",
+            "cta": "Либо согласуйте выбранный слот, либо сразу предложите альтернативу.",
+        }
+        outreach_goal = "Закрыть решение по выбранному слоту в этом касании."
+        playbook = {
+            "what_to_write": "Коротко подтвердить, что слот увидели и возвращаетесь с финальным решением без паузы.",
+            "what_to_offer": "Либо текущее время, либо одна чёткая альтернатива.",
+            "likely_objection": "Кандидат может переживать, что процесс завис.",
+            "best_cta": "Подтвердите, что это время ещё актуально, и я сразу закреплю решение.",
+        }
+    elif stage == "awaiting_slot_offer":
+        recommended_action = {
+            "key": "offer_concrete_slot",
+            "label": "Предложить ближайшие слоты",
+            "rationale": "После Теста 1 важно быстро перевести кандидата в календарь, а не продолжать долгий диалог.",
+            "cta": "Дайте 2 конкретных времени на выбор или попросите удобный диапазон.",
+        }
+        outreach_goal = "Получить от кандидата конкретный слот или диапазон сегодня."
+        playbook = {
+            "what_to_write": "Коротко подтвердить интерес и сразу предложить 2 варианта времени.",
+            "what_to_offer": "Ближайшие слоты, без широкого меню из 5-6 вариантов.",
+            "likely_objection": "Может попросить другое время или сначала детали по работе.",
+            "best_cta": "Какой вариант вам удобнее: сегодня вечером или завтра утром?",
+        }
+    elif stage == "interview_scheduled":
+        recommended_action = {
+            "key": "confirm_attendance",
+            "label": "Дожать подтверждение явки",
+            "rationale": "Сейчас критично получить короткое подтверждение и не потерять кандидата перед встречей.",
+            "cta": "Напомнить о встрече и попросить ответить, что всё в силе.",
+        }
+        outreach_goal = "Получить подтверждение явки без лишней переписки."
+        playbook = {
+            "what_to_write": "Напомнить дату и время, убрать лишнюю теорию, попросить одно короткое подтверждение.",
+            "what_to_offer": "Если неудобно, дать один безопасный путь для переноса.",
+            "likely_objection": "Может написать, что планы изменились или нужна ссылка заново.",
+            "best_cta": "Подтвердите, пожалуйста, что встреча актуальна и вы будете на связи.",
+        }
+    elif recommendation == "not_recommended":
+        recommended_action = {
+            "key": "manual_review",
+            "label": "Остановиться и перепроверить кейс",
+            "rationale": "Есть объективные стоп-факторы, поэтому нельзя переводить кандидата дальше автоматически.",
+            "cta": "Сверьте кейс вручную и решите, нужен ли мягкий отказ или эскалация.",
+        }
+        outreach_goal = "Не обещать следующий этап до ручной проверки."
+        playbook = {
+            "what_to_write": "Спокойно сообщить, что вы фиксируете детали и вернётесь с итогом после внутренней проверки.",
+            "what_to_offer": "Ничего не обещать заранее.",
+            "likely_objection": "Кандидат может попросить быстрый ответ по решению.",
+            "best_cta": "Спасибо, я зафиксирую всё корректно и вернусь с итогом после проверки.",
+        }
+    else:
+        recommended_action = {
+            "key": "clarify_and_move",
+            "label": "Снять ключевые неясности",
+            "rationale": "По профилю есть потенциал, но остаются вопросы, которые лучше закрыть до следующего этапа.",
+            "cta": "Задайте 1-2 коротких уточнения и сразу переведите к следующему шагу.",
+        }
+        outreach_goal = "Снять ambiguity и сразу довести до следующего действия."
+        likely_objection = (
+            f"Кандидат может ответить расплывчато по: {', '.join(ambiguous_keys[:2])}."
+            if ambiguous_keys
+            else "Кандидат может попросить сначала больше деталей по роли."
+        )
+        playbook = {
+            "what_to_write": "Показать, что профиль интересен, и попросить ответить буквально на 1-2 уточняющих вопроса.",
+            "what_to_offer": "Сразу обозначить, какой шаг будет следующим после уточнения.",
+            "likely_objection": likely_objection,
+            "best_cta": str(facts.get("clarification_question") or "Подскажите, пожалуйста, этот момент, и я сразу предложу следующий шаг."),
+        }
+
+    summary = recommended_action["rationale"]
+    if risks:
+        summary = f"{summary} Главный риск сейчас: {risks[0].get('label') or risks[0].get('explanation')}."
+
+    return RecruiterNextBestActionV1.model_validate(
+        {
+            "summary": summary,
+            "ai_confidence": "medium" if ambiguous_keys else "high",
+            "recommended_action": recommended_action,
+            "reasons": strengths,
+            "risks": risks,
+            "interview_focus": _questions_from_scorecard(scorecard)[:4],
+            "outreach_goal": outreach_goal,
+            "playbook": playbook,
+            "feedback_state": "pending",
+        }
+    ).model_dump()
+
+
+def _build_candidate_contact_draft_fallback(
+    *,
+    context: dict[str, Any],
+    scorecard: dict[str, Any],
+    mode: str,
+) -> dict[str, Any]:
+    stage = _stage_from_context(context)
+    candidate = context.get("candidate") if isinstance(context.get("candidate"), dict) else {}
+    channel = "telegram" if bool(candidate.get("telegram_linked")) else "max"
+    if stage == "awaiting_recruiter_slot_decision":
+        analysis = "Кандидат уже выбрал время, поэтому нужно быстро подтвердить, что слот увидели и решение не зависло."
+        intent_key = "slot_followup"
+        drafts = [
+            {
+                "text": "Добрый день! Видим ваш выбранный слот и уже сверяем его с расписанием рекрутёра. Чуть позже вернусь с подтверждением или сразу предложу ближайшую альтернативу.",
+                "reason": "Снимает тревогу у кандидата и удерживает его в процессе.",
+            },
+            {
+                "text": "Спасибо, слот зафиксировали в работе. Если это время перестанет быть удобным, напишите, и я сразу подберу ближайший вариант без потери этапа.",
+                "reason": "Сохраняет контакт и снижает риск тихой отмены.",
+            },
+        ]
+    elif stage == "awaiting_slot_offer":
+        analysis = "После Теста 1 лучше сразу сузить выбор до двух конкретных вариантов времени."
+        intent_key = "offer_slot"
+        drafts = [
+            {
+                "text": "Добрый день! По вашему профилю можно двигаться дальше. Предлагаю сразу выбрать удобное время: сегодня после 16:00 или завтра до 12:00. Какой вариант вам ближе?",
+                "reason": "Сужает выбор и ускоряет запись на интервью.",
+            },
+            {
+                "text": "Чтобы не затягивать процесс, напишите, пожалуйста, какой диапазон времени вам удобен сегодня или завтра, и я быстро закреплю слот.",
+                "reason": "Подходит, если у кандидата нет удобства под готовые варианты.",
+            },
+        ]
+    elif stage == "interview_scheduled":
+        analysis = "Здесь важнее короткое подтверждение явки, чем длинное объяснение процесса."
+        intent_key = "confirm_interview"
+        drafts = [
+            {
+                "text": "Напоминаю о встрече и прошу коротко подтвердить, что всё в силе. Если время изменилось, сразу напишите, чтобы мы успели перестроить слот.",
+                "reason": "Закрывает основной риск no-show перед интервью.",
+            },
+            {
+                "text": "Пожалуйста, подтвердите, что встреча для вас актуальна. Если нужен перенос, лучше сообщить сейчас, и я предложу ближайшую альтернативу.",
+                "reason": "Даёт понятный CTA и безопасный путь к переносу.",
+            },
+        ]
+    elif recommendation := str(scorecard.get("recommendation") or "").strip().lower():
+        analysis = "Сейчас лучше снять одну-две ключевые неясности и только потом вести кандидата дальше."
+        intent_key = "clarify"
+        drafts = [
+            {
+                "text": "Спасибо за ответы. Чтобы не тратить ваше время, хочу уточнить буквально один момент и после этого сразу предложу следующий шаг.",
+                "reason": "Сохраняет интерес и помогает быстро дособрать нужные вводные.",
+            },
+            {
+                "text": "Вижу потенциал по вашему профилю. Давайте коротко уточним пару деталей, чтобы я предложил вам следующий этап уже без задержки.",
+                "reason": "Мягко дожимает кандидата до полного контекста.",
+            },
+        ]
+        if recommendation == "od_recommended":
+            analysis = "Кандидат выглядит тёплым, поэтому лучше не растягивать переписку, а перевести его к следующему действию."
+            intent_key = "move_forward"
+    else:
+        analysis = "Нужен короткий нейтральный follow-up с понятным следующим шагом."
+        intent_key = "follow_up"
+        drafts = [
+            {
+                "text": "Добрый день! Возвращаюсь по вашему отклику. Если вопрос с работой ещё актуален, давайте сегодня закроем следующий шаг, чтобы не затягивать процесс.",
+                "reason": "Возвращает кандидата в диалог и задаёт темп.",
+            }
+        ]
+
+    if mode == "short":
+        drafts = [{**item, "text": item["text"].split(". ")[0].strip() + "."} for item in drafts]
+    elif mode == "supportive":
+        drafts = [{**item, "text": f"{item['text']} Если где-то неудобно по времени, подстроюсь и подберу лучший вариант."} for item in drafts]
+
+    return CandidateContactDraftsV1.model_validate(
+        {
+            "analysis": analysis,
+            "intent_key": intent_key,
+            "recommended_channel": channel,
+            "drafts": drafts,
+            "used_context": {"safe_text_used": False, "stage": stage},
+        }
+    ).model_dump()
+
+
 async def build_candidate_live_score_snapshot(
     candidate_id: int,
     *,
@@ -1222,6 +1566,399 @@ class AIService:
             )
             return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
 
+    async def get_candidate_facts(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        refresh: bool = False,
+    ) -> AIResult:
+        self._ensure_enabled()
+        ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+        resume_context = _normalized_resume_context(await self._get_hh_resume_normalized(candidate_id))
+        ctx["resume_context"] = resume_context
+        input_hash = compute_input_hash(ctx)
+        kind = "candidate_facts_v1"
+
+        if not refresh:
+            cached = await _get_cached_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+            )
+            if cached is not None:
+                cached_payload = cached.payload_json if isinstance(cached.payload_json, dict) else {}
+                return AIResult(
+                    payload=CandidateFactsV1.model_validate(cached_payload).model_dump(),
+                    cached=True,
+                    input_hash=input_hash,
+                )
+
+            fallback_payload = _build_candidate_facts_fallback(context=ctx, resume_context=resume_context)
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+        system_prompt, user_prompt = candidate_facts_prompts(context=ctx, allow_pii=self._allow_pii)
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = CandidateFactsV1.model_validate(payload).model_dump()
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.candidate_facts.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            fallback_payload = _build_candidate_facts_fallback(context=ctx, resume_context=resume_context)
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
+
+    async def get_recruiter_next_best_action(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        refresh: bool = False,
+        summary_result: AIResult | None = None,
+        facts_result: AIResult | None = None,
+    ) -> AIResult:
+        self._ensure_enabled()
+        if summary_result is None:
+            summary_result = await self.get_candidate_summary(candidate_id, principal=principal, refresh=False)
+        if facts_result is None:
+            facts_result = await self.get_candidate_facts(candidate_id, principal=principal, refresh=False)
+
+        ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+        ctx["summary_scorecard"] = (
+            summary_result.payload.get("scorecard")
+            if isinstance(summary_result.payload, dict) and isinstance(summary_result.payload.get("scorecard"), dict)
+            else None
+        )
+        ctx["summary_fit"] = (
+            summary_result.payload.get("fit")
+            if isinstance(summary_result.payload, dict) and isinstance(summary_result.payload.get("fit"), dict)
+            else None
+        )
+        ctx["candidate_facts"] = facts_result.payload if isinstance(facts_result.payload, dict) else {}
+        input_hash = compute_input_hash(
+            {
+                "context": ctx,
+                "summary_input_hash": summary_result.input_hash,
+                "facts_input_hash": facts_result.input_hash,
+            }
+        )
+        kind = "recruiter_next_best_action_v1"
+
+        if not refresh:
+            cached = await _get_cached_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+            )
+            if cached is not None:
+                cached_payload = cached.payload_json if isinstance(cached.payload_json, dict) else {}
+                return AIResult(
+                    payload=RecruiterNextBestActionV1.model_validate(cached_payload).model_dump(),
+                    cached=True,
+                    input_hash=input_hash,
+                )
+
+            fallback_payload = _build_recruiter_next_best_action_fallback(
+                context=ctx,
+                scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else {},
+                facts_payload=ctx.get("candidate_facts") if isinstance(ctx.get("candidate_facts"), dict) else {},
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
+
+        await self._ensure_quota(principal)
+        system_prompt, user_prompt = recruiter_next_best_action_prompts(context=ctx, allow_pii=self._allow_pii)
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = RecruiterNextBestActionV1.model_validate(payload).model_dump()
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.recruiter_next_best_action.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            fallback_payload = _build_recruiter_next_best_action_fallback(
+                context=ctx,
+                scorecard=ctx.get("summary_scorecard") if isinstance(ctx.get("summary_scorecard"), dict) else {},
+                facts_payload=ctx.get("candidate_facts") if isinstance(ctx.get("candidate_facts"), dict) else {},
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
+
+    async def get_candidate_contact_drafts(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        mode: str,
+    ) -> AIResult:
+        self._ensure_enabled()
+        summary_result = await self.get_candidate_summary(candidate_id, principal=principal, refresh=False)
+        facts_result = await self.get_candidate_facts(candidate_id, principal=principal, refresh=False)
+        next_best_action_result = await self.get_recruiter_next_best_action(
+            candidate_id,
+            principal=principal,
+            refresh=False,
+            summary_result=summary_result,
+            facts_result=facts_result,
+        )
+        base_ctx = await build_candidate_ai_context(candidate_id, principal=principal, include_pii=self._allow_pii)
+        base_ctx["summary_scorecard"] = (
+            summary_result.payload.get("scorecard")
+            if isinstance(summary_result.payload, dict) and isinstance(summary_result.payload.get("scorecard"), dict)
+            else None
+        )
+        base_ctx["candidate_facts"] = facts_result.payload if isinstance(facts_result.payload, dict) else {}
+        base_ctx["next_best_action"] = next_best_action_result.payload if isinstance(next_best_action_result.payload, dict) else {}
+        base_ctx["draft_mode"] = mode
+
+        input_hash = compute_input_hash(
+            {
+                "context": base_ctx,
+                "summary_input_hash": summary_result.input_hash,
+                "facts_input_hash": facts_result.input_hash,
+                "next_best_action_input_hash": next_best_action_result.input_hash,
+                "mode": mode,
+            }
+        )
+        kind = "candidate_contact_draft_v1"
+
+        cached = await _get_cached_output(
+            scope_type="candidate",
+            scope_id=candidate_id,
+            kind=kind,
+            input_hash=input_hash,
+        )
+        if cached is not None:
+            cached_payload = cached.payload_json if isinstance(cached.payload_json, dict) else {}
+            return AIResult(
+                payload=CandidateContactDraftsV1.model_validate(cached_payload).model_dump(),
+                cached=True,
+                input_hash=input_hash,
+            )
+
+        await self._ensure_quota(principal)
+        system_prompt, user_prompt = candidate_contact_draft_prompts(
+            context=base_ctx,
+            mode=mode,
+            allow_pii=self._allow_pii,
+        )
+        model = self._settings.openai_model
+        started = time.monotonic()
+        try:
+            payload, usage = await self._provider.generate_json(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=int(self._settings.ai_timeout_seconds),
+                max_tokens=int(self._settings.ai_max_tokens),
+            )
+            validated = CandidateContactDraftsV1.model_validate(payload).model_dump()
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=usage.tokens_in,
+                tokens_out=usage.tokens_out,
+                status_value="ok",
+                error_code="",
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=validated,
+            )
+            try:
+                await analytics.log_event(
+                    "ai_candidate_contact_drafts_generated",
+                    candidate_id=candidate_id,
+                    metadata={"kind": kind, "mode": mode},
+                )
+            except Exception:
+                pass
+            return AIResult(payload=validated, cached=False, input_hash=input_hash)
+        except Exception as exc:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _log_request(
+                principal=principal,
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                provider=self._provider.name,
+                model=model,
+                latency_ms=latency_ms,
+                tokens_in=0,
+                tokens_out=0,
+                status_value="error",
+                error_code=exc.__class__.__name__,
+            )
+            logger.warning("ai.candidate_contact_drafts.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+            fallback_payload = _build_candidate_contact_draft_fallback(
+                context=base_ctx,
+                scorecard=base_ctx.get("summary_scorecard") if isinstance(base_ctx.get("summary_scorecard"), dict) else {},
+                mode=mode,
+            )
+            await _store_output(
+                scope_type="candidate",
+                scope_id=candidate_id,
+                kind=kind,
+                input_hash=input_hash,
+                payload=fallback_payload,
+            )
+            return AIResult(payload=fallback_payload, cached=False, input_hash=input_hash)
+
+    async def save_recruiter_next_best_action_feedback(
+        self,
+        candidate_id: int,
+        *,
+        principal: Principal,
+        action: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_enabled()
+        if action not in {"accept", "dismiss", "edit_and_send"}:
+            raise ValueError("Некорректное действие feedback")
+        await build_candidate_ai_context(candidate_id, principal=principal, include_pii=False)
+        feedback_state = "edited" if action == "edit_and_send" else "accepted" if action == "accept" else "dismissed"
+        try:
+            await analytics.log_event(
+                "ai_recruiter_next_best_action_feedback",
+                candidate_id=candidate_id,
+                metadata={
+                    "action": action,
+                    "feedback_state": feedback_state,
+                    "note": (str(note or "").strip()[:500] or None),
+                    "principal_type": principal.type,
+                    "principal_id": principal.id,
+                },
+            )
+        except Exception:
+            logger.warning("ai.recruiter_next_best_action_feedback.failed", extra={"candidate_id": candidate_id}, exc_info=True)
+        return {
+            "candidate_id": int(candidate_id),
+            "feedback_state": feedback_state,
+            "action": action,
+            "saved_at": _iso(datetime.now(UTC)),
+        }
+
     async def get_candidate_coach_drafts(
         self,
         candidate_id: int,
@@ -1667,7 +2404,7 @@ class AIService:
         if not ft_model or ab_percent <= 0:
             return base_model
 
-        digest = hashlib.sha256(f"interview_script:{candidate_id}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"interview_script:{candidate_id}".encode()).hexdigest()
         bucket = int(digest[:8], 16) % 100
         return ft_model if bucket < ab_percent else base_model
 

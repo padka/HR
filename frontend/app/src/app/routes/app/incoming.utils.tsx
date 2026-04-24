@@ -183,6 +183,9 @@ export function formatRequestedAnotherTime(candidate: IncomingCandidate): string
   if (candidate.requested_another_time_comment) {
     return `Пожелание: ${candidate.requested_another_time_comment}`
   }
+  if (candidate.availability_window) {
+    return `Хочет окно: ${candidate.availability_window}`
+  }
   return null
 }
 

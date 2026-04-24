@@ -2,9 +2,9 @@ export type IncomingStatusFilter =
   | 'all'
   | 'waiting_slot'
   | 'stalled_waiting_slot'
-  | 'slot_pending'
   | 'requested_other_time'
 
+export type IncomingChannelFilter = 'all' | 'telegram' | 'max'
 export type IncomingOwnerFilter = 'all' | 'mine' | 'assigned' | 'unassigned'
 export type IncomingWaitingFilter = 'all' | '24h' | '48h'
 export type IncomingAiFilter = 'all' | 'high' | 'medium' | 'low' | 'unknown'
@@ -14,6 +14,7 @@ export type IncomingPersistedFilters = {
   search: string
   cityFilter: string
   statusFilter: IncomingStatusFilter
+  channelFilter: IncomingChannelFilter
   ownerFilter: IncomingOwnerFilter
   waitingFilter: IncomingWaitingFilter
   aiFilter: IncomingAiFilter
@@ -21,15 +22,15 @@ export type IncomingPersistedFilters = {
   showAdvancedFilters: boolean
 }
 
-export const INCOMING_FILTERS_STORAGE_KEY = 'recruitsmart:incoming:filters:v1'
+export const INCOMING_FILTERS_STORAGE_KEY = 'recruitsmart:incoming:filters:v2'
 
 const STATUS_FILTERS: IncomingStatusFilter[] = [
   'all',
   'waiting_slot',
   'stalled_waiting_slot',
-  'slot_pending',
   'requested_other_time',
 ]
+const CHANNEL_FILTERS: IncomingChannelFilter[] = ['all', 'telegram', 'max']
 const OWNER_FILTERS: IncomingOwnerFilter[] = ['all', 'mine', 'assigned', 'unassigned']
 const WAITING_FILTERS: IncomingWaitingFilter[] = ['all', '24h', '48h']
 const AI_FILTERS: IncomingAiFilter[] = ['all', 'high', 'medium', 'low', 'unknown']
@@ -60,6 +61,7 @@ export function parseIncomingPersistedFilters(raw: string | null): Partial<Incom
       search: pickString(parsed.search, ''),
       cityFilter: pickString(parsed.cityFilter, 'all'),
       statusFilter: pickEnum(parsed.statusFilter, STATUS_FILTERS, 'all'),
+      channelFilter: pickEnum(parsed.channelFilter, CHANNEL_FILTERS, 'all'),
       ownerFilter: pickEnum(parsed.ownerFilter, OWNER_FILTERS, 'all'),
       waitingFilter: pickEnum(parsed.waitingFilter, WAITING_FILTERS, 'all'),
       aiFilter: pickEnum(parsed.aiFilter, AI_FILTERS, 'all'),

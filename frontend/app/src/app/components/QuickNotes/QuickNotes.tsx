@@ -51,24 +51,44 @@ export default function QuickNotes({ storageKey }: QuickNotesProps) {
   }, [storageKey, text])
 
   return (
-    <section className="glass panel candidate-insights-drawer__section">
-      <div className="cd-section-header">
-        <h2 className="cd-section-title">Быстрые заметки</h2>
-      </div>
+    <section className="glass panel candidate-insights-drawer__section candidate-insights-drawer__section--notes">
+      <div className="quick-notes">
+        <div className="quick-notes__surface" data-testid="candidate-quick-notes-surface">
+          <div className="quick-notes__header">
+            <div>
+              <h2 className="cd-section-title">Заметки</h2>
+              <p className="subtitle">Рабочий журнал рекрутера по кандидату.</p>
+            </div>
+            <span className="quick-notes__status">{savedAtLabel}</span>
+          </div>
 
-      <textarea
-        rows={6}
-        maxLength={2000}
-        className="quick-notes-textarea"
-        placeholder="Заметки по кандидату..."
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        data-testid="candidate-quick-notes"
-      />
+          {text.trim() ? (
+            <div className="quick-notes__content" aria-label="Текст заметок">
+              {text}
+            </div>
+          ) : (
+            <div className="quick-notes__empty">
+              Здесь будут заметки по кандидату. Используйте этот блок как короткий рабочий журнал рекрутера.
+            </div>
+          )}
+        </div>
 
-      <div className="quick-notes-meta">
-        <span>{savedAtLabel}</span>
-        <span>{text.length}/2000</span>
+        <div className="quick-notes__composer" data-testid="candidate-quick-notes-composer">
+          <textarea
+            rows={4}
+            maxLength={2000}
+            className="quick-notes-textarea"
+            placeholder="Напишите заметку…"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            data-testid="candidate-quick-notes"
+          />
+
+          <div className="quick-notes-meta">
+            <span>Автосохранение включено</span>
+            <span>{text.length}/2000</span>
+          </div>
+        </div>
       </div>
     </section>
   )

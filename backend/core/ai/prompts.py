@@ -183,6 +183,124 @@ def candidate_coach_prompts(*, context: dict, allow_pii: bool = False) -> tuple[
     return system, user
 
 
+def candidate_facts_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
+    system = (
+        "You are Attila Recruiting Candidate Facts Extractor.\n"
+        "Task kind: candidate_facts_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
+        "- Extract only structured facts already supported by the context.\n"
+        "- Do not make screening or hiring decisions.\n"
+        "- Mark ambiguity explicitly when the answer is conditional, vague or missing.\n"
+        "- prefill_ready_keys should contain only fields with confident value and no ambiguity.\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "summary": "string",\n'
+        '  "facts": [{"key":"string","label":"string","value":"string","confidence":"high|medium|low","source":"string","confirmed":true|false,"ambiguity_note":"string|null"}],\n'
+        '  "confirmed_keys": ["string"],\n'
+        '  "ambiguous_keys": ["string"],\n'
+        '  "prefill_ready_keys": ["string"],\n'
+        '  "clarification_question": "string|null"\n'
+        "}\n"
+    )
+    user = (
+        "Extract recruiter-usable facts from candidate context.\n"
+        "Target facts:\n"
+        "- city / relocation\n"
+        "- desired_income\n"
+        "- start_readiness\n"
+        "- field_format_readiness\n"
+        "- work_status\n"
+        "- work_experience\n"
+        "- motivation\n"
+        "- skills\n"
+        "- hh_resume presence or signal when it materially helps\n"
+        "Guidelines:\n"
+        "- summary should explain what can already be reused in Test 1 and what still needs clarification.\n"
+        "- clarification_question should be exactly one short question, only if there is a real ambiguity.\n"
+        "- Never invent facts that are not present in test answers, resume context or deterministic candidate_profile.\n"
+        "Context (JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
+def recruiter_next_best_action_prompts(*, context: dict, allow_pii: bool = False) -> tuple[str, str]:
+    system = (
+        "You are Attila Recruiting Recruiter Copilot.\n"
+        "Task kind: recruiter_next_best_action_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
+        "- This is advisory-only output. Do not change candidate state.\n"
+        "- The recommendation must fit the current workflow stage and canonical business rules.\n"
+        "- recommended_action must be concrete, short and operational.\n"
+        "- playbook must help a recruiter move the candidate one step closer to the next agreed milestone.\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "summary": "string",\n'
+        '  "ai_confidence": "high|medium|low",\n'
+        '  "recommended_action": {"key":"string","label":"string","rationale":"string","cta":"string|null"} | null,\n'
+        '  "reasons": [{"key":"string","label":"string","evidence":"string"}],\n'
+        '  "risks": [{"key":"string","severity":"low|medium|high","label":"string","explanation":"string"}],\n'
+        '  "interview_focus": ["string"],\n'
+        '  "outreach_goal": "string",\n'
+        '  "playbook": {"what_to_write":"string","what_to_offer":"string","likely_objection":"string","best_cta":"string"} | null,\n'
+        '  "feedback_state": "pending|accepted|dismissed|edited"\n'
+        "}\n"
+    )
+    user = (
+        "Produce the next-best-action for a recruiter.\n"
+        "Guidelines:\n"
+        "- Use candidate status, slots.upcoming, chat timing, summary_scorecard and summary_fit.\n"
+        "- If a slot is pending recruiter approval, bias to approve or clarify quickly.\n"
+        "- If candidate is waiting for slot, bias to propose concrete time options.\n"
+        "- If interview is already scheduled, focus on confirmation / preparation.\n"
+        "- If there are blockers or missing_data in summary_scorecard, explain what to clarify before moving ahead.\n"
+        "- interview_focus should contain 3-5 short questions/themes for the next recruiter touchpoint.\n"
+        "- Keep language concise and recruiter-facing.\n"
+        "Context (JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
+def candidate_contact_draft_prompts(*, context: dict, mode: str, allow_pii: bool = False) -> tuple[str, str]:
+    style_excerpt = _style_guide_excerpt()
+    system = (
+        "You are Attila Recruiting Recruiter Copilot.\n"
+        "Task kind: candidate_contact_draft_v1.\n"
+        "Rules:\n"
+        "- Output MUST be a single JSON object (no markdown).\n"
+        f"{_pii_rule(allow_pii=allow_pii)}"
+        "- Drafts must be channel-aware for current recruiter messaging surfaces (Telegram or MAX).\n"
+        "- Drafts must fit the current candidate stage: unfinished Test1, slot selection, slot confirmation, re-engagement after interview.\n"
+        "- No promises that violate current business state.\n"
+        "- Every draft must include one clear CTA.\n"
+    )
+    if style_excerpt:
+        system += f"\nStyle guide excerpt:\n{style_excerpt}\n"
+    system += (
+        "JSON schema:\n"
+        "{\n"
+        '  "analysis": "string|null",\n'
+        '  "intent_key": "string",\n'
+        '  "recommended_channel": "string",\n'
+        '  "drafts": [{"text":"string","reason":"string"}],\n'
+        '  "used_context": {"safe_text_used": true|false, "stage":"string"}\n'
+        "}\n"
+    )
+    user = (
+        f"Generate 2-3 recruiter contact drafts in mode={mode} (short|neutral|supportive).\n"
+        "The drafts should move the candidate one step forward in the funnel without changing system state.\n"
+        "Use candidate status, slot state, recent candidate message, summary_scorecard and next_best_action context.\n"
+        "Context (JSON):\n"
+        f"{_json_block(context)}\n"
+    )
+    return system, user
+
+
 def interview_script_prompts(
     *,
     candidate_state: dict[str, Any],

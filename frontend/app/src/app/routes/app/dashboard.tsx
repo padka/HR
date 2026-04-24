@@ -33,7 +33,9 @@ import { Link } from '@tanstack/react-router'
 import '@/theme/pages/dashboard.css'
 import { fadeIn, listItem, stagger } from '@/shared/motion'
 import { resolveIncomingDemoCount, withDemoIncomingCandidates } from './incoming-demo'
+import { type IncomingChannelFilter } from './incoming.filters'
 import { IncomingPage } from './incoming'
+import { formatRequestedAnotherTime } from './incoming.utils'
 import { DashboardMetric } from './DashboardMetric'
 import {
   buildCandidateSurfaceState,
@@ -65,6 +67,10 @@ const INCOMING_SORT_LABELS: Record<'waiting' | 'recent' | 'name', string> = {
   waiting: 'Сначала кто дольше ждёт',
   recent: 'Последние сообщения',
   name: 'По имени',
+}
+const INCOMING_CHANNEL_LABELS: Record<Exclude<IncomingChannelFilter, 'all'>, string> = {
+  telegram: 'Telegram',
+  max: 'MAX',
 }
 
 const LeaderboardItemCard = memo(function LeaderboardItemCard({
@@ -224,6 +230,7 @@ export function DashboardPage() {
   const [incomingSearch, setIncomingSearch] = useState('')
   const [incomingCityFilter, setIncomingCityFilter] = useState('all')
   const [incomingFilter, setIncomingFilter] = useState<IncomingFilter>('all')
+  const [incomingChannelFilter, setIncomingChannelFilter] = useState<IncomingChannelFilter>('all')
   const [incomingSort, setIncomingSort] = useState<'waiting' | 'recent' | 'name'>('waiting')
   const [incomingPage, setIncomingPage] = useState(1)
   const [incomingPageSize, setIncomingPageSize] = useState<number>(50)
@@ -359,6 +366,10 @@ export function DashboardPage() {
     const byCity = incomingTarget.city_id ? cityTzMap.get(incomingTarget.city_id) : null
     return byCity || recruiterTz
   }, [incomingTarget, cityTzMap, recruiterTz])
+  const incomingRequestedPreference = useMemo(
+    () => (incomingTarget ? formatRequestedAnotherTime(incomingTarget) : null),
+    [incomingTarget],
+  )
 
   const incomingPreview = useMemo(
     () => buildSlotTimePreview(incomingDate, incomingTime, recruiterTz, incomingCandidateTz),
@@ -416,6 +427,13 @@ export function DashboardPage() {
         return false
       }
 
+      if (
+        incomingChannelFilter !== 'all'
+        && (candidate.messenger_channel || '').toLowerCase() !== incomingChannelFilter
+      ) {
+        return false
+      }
+
       if (!search) return true
       const haystack = [
         candidate.name,
@@ -441,7 +459,7 @@ export function DashboardPage() {
     filtered.sort((a, b) => compareIncomingCandidates(a, b, incomingSort))
 
     return filtered
-  }, [incomingBaseItems, incomingCityFilter, incomingFilter, incomingSearch, incomingSort])
+  }, [incomingBaseItems, incomingChannelFilter, incomingCityFilter, incomingFilter, incomingSearch, incomingSort])
 
   const incomingStats = useMemo(() => {
     const summary = summarizeIncomingCandidates(incomingBaseItems)
@@ -528,6 +546,14 @@ export function DashboardPage() {
       })
     }
 
+    if (incomingChannelFilter !== 'all') {
+      items.push({
+        key: 'channel',
+        label: `Канал: ${INCOMING_CHANNEL_LABELS[incomingChannelFilter]}`,
+        clear: () => setIncomingChannelFilter('all'),
+      })
+    }
+
     if (incomingSort !== 'waiting') {
       items.push({
         key: 'sort',
@@ -546,6 +572,7 @@ export function DashboardPage() {
 
     return items
   }, [
+    incomingChannelFilter,
     incomingCityFilter,
     incomingFilter,
     incomingPageSize,
@@ -567,6 +594,7 @@ export function DashboardPage() {
         search?: string
         city?: string
         filter?: IncomingFilter
+        channel?: IncomingChannelFilter
         sort?: 'waiting' | 'recent' | 'name'
         pageSize?: number
       }
@@ -574,6 +602,9 @@ export function DashboardPage() {
       if (typeof parsed.city === 'string') setIncomingCityFilter(parsed.city)
       if (parsed.filter && ['all', 'new', 'stalled', 'pending', 'requested_other_time'].includes(parsed.filter)) {
         setIncomingFilter(parsed.filter)
+      }
+      if (parsed.channel && ['all', 'telegram', 'max'].includes(parsed.channel)) {
+        setIncomingChannelFilter(parsed.channel)
       }
       if (parsed.sort && ['waiting', 'recent', 'name'].includes(parsed.sort)) {
         setIncomingSort(parsed.sort)
@@ -592,16 +623,18 @@ export function DashboardPage() {
       search: incomingSearch,
       city: incomingCityFilter,
       filter: incomingFilter,
+      channel: incomingChannelFilter,
       sort: incomingSort,
       pageSize: incomingPageSize,
     }
     window.localStorage.setItem(DASHBOARD_INCOMING_FILTERS_KEY, JSON.stringify(payload))
-  }, [incomingCityFilter, incomingFilter, incomingPageSize, incomingSearch, incomingSort, isAdmin])
+  }, [incomingChannelFilter, incomingCityFilter, incomingFilter, incomingPageSize, incomingSearch, incomingSort, isAdmin])
 
   const resetIncomingFilters = () => {
     setIncomingSearch('')
     setIncomingCityFilter('all')
     setIncomingFilter('all')
+    setIncomingChannelFilter('all')
     setIncomingSort('waiting')
     setIncomingPage(1)
     setIncomingPageSize(50)
@@ -617,7 +650,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     setIncomingPage(1)
-  }, [incomingCityFilter, incomingFilter, incomingSearch, incomingSort, incomingPageSize])
+  }, [incomingChannelFilter, incomingCityFilter, incomingFilter, incomingSearch, incomingSort, incomingPageSize])
 
   const incomingPagesTotal = useMemo(() => {
     if (!incomingItems.length) return 1
@@ -798,6 +831,16 @@ export function DashboardPage() {
                 <option value="requested_other_time">Запросили другое время</option>
                 <option value="stalled">Застряли {'>'}24ч</option>
                 <option value="new">NEW (24ч)</option>
+              </select>
+              <select
+                className="incoming-toolbar__select"
+                aria-label="Фильтр входящих по каналу"
+                value={incomingChannelFilter}
+                onChange={(e) => setIncomingChannelFilter(e.target.value as IncomingChannelFilter)}
+              >
+                <option value="all">Все каналы</option>
+                <option value="telegram">Telegram</option>
+                <option value="max">MAX</option>
               </select>
             </div>
             <div className="incoming-toolbar__controls incoming-toolbar__controls--actions">
@@ -1102,6 +1145,16 @@ export function DashboardPage() {
                       <option value="stalled">Застряли {'>'}24ч</option>
                       <option value="new">NEW (24ч)</option>
                     </select>
+                    <select
+                      className="incoming-toolbar__select"
+                      aria-label="Канал во входящей очереди"
+                      value={incomingChannelFilter}
+                      onChange={(e) => setIncomingChannelFilter(e.target.value as IncomingChannelFilter)}
+                    >
+                      <option value="all">Все каналы</option>
+                      <option value="telegram">Telegram</option>
+                      <option value="max">MAX</option>
+                    </select>
                     <button
                       className="ui-btn ui-btn--ghost ui-btn--sm"
                       type="button"
@@ -1396,6 +1449,13 @@ export function DashboardPage() {
                         {incomingPreview.candidateTz} · {formatTzOffset(incomingPreview.candidateTz)}
                       </div>
                     </div>
+                  </div>
+                )}
+                {(incomingRequestedPreference || incomingTarget.availability_note) && (
+                  <div className="incoming-row__detail-card incoming-row__detail-card--requested">
+                    <strong>Что попросил кандидат</strong>
+                    {incomingRequestedPreference && <span>{incomingRequestedPreference}</span>}
+                    {incomingTarget.availability_note && <span>{incomingTarget.availability_note}</span>}
                   </div>
                 )}
                 <label>

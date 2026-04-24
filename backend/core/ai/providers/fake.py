@@ -29,6 +29,9 @@ class FakeProvider:
             "candidate_summary_v1",
             "candidate_coach_v1",
             "candidate_coach_drafts_v1",
+            "candidate_facts_v1",
+            "recruiter_next_best_action_v1",
+            "candidate_contact_draft_v1",
             "candidate_next_actions_v1",
             "chat_reply_drafts_v1",
             "dashboard_insight_v1",
@@ -204,6 +207,73 @@ class FakeProvider:
                 ],
                 "used_context": {"safe_text_used": False},
             }
+        elif "candidate_facts_v1" in kind:
+            payload = {
+                "summary": "Базовые факты кандидата уже собраны из Теста 1 и готовы для повторного использования в анкете.",
+                "facts": [
+                    {
+                        "key": "start_readiness",
+                        "label": "Готовность выйти",
+                        "value": "Готов выйти в ближайшие 1-2 дня",
+                        "confidence": "high",
+                        "source": "test1",
+                        "confirmed": True,
+                        "ambiguity_note": None,
+                    },
+                    {
+                        "key": "work_experience",
+                        "label": "Опыт продаж",
+                        "value": "Есть опыт переговоров и общения с клиентами",
+                        "confidence": "medium",
+                        "source": "test1",
+                        "confirmed": True,
+                        "ambiguity_note": None,
+                    },
+                ],
+                "confirmed_keys": ["start_readiness", "work_experience"],
+                "ambiguous_keys": ["desired_income"],
+                "prefill_ready_keys": ["start_readiness", "work_experience"],
+                "clarification_question": "Подскажите, пожалуйста, какой доход вы считаете комфортным на старте?",
+            }
+        elif "recruiter_next_best_action_v1" in kind:
+            payload = {
+                "summary": "Кандидат выглядит достаточно тёплым: лучше быстро закрыть следующий шаг, пока контакт активен.",
+                "ai_confidence": "medium",
+                "recommended_action": {
+                    "key": "propose_or_confirm_slot",
+                    "label": "Закрыть ближайший слот",
+                    "rationale": "Кандидат уже в рабочем контакте и готов двигаться дальше без длинной переписки.",
+                    "cta": "Предложить 2 конкретных времени и попросить выбрать один вариант.",
+                },
+                "reasons": [
+                    {
+                        "key": "candidate_ready",
+                        "label": "Высокая готовность к следующему шагу",
+                        "evidence": "По ответам видно, что кандидат готов быстро выйти и не просит длинную паузу.",
+                    }
+                ],
+                "risks": [
+                    {
+                        "key": "stall_after_test1",
+                        "severity": "medium",
+                        "label": "Риск паузы после Теста 1",
+                        "explanation": "Если не закрепить конкретный слот, кандидат может остыть.",
+                    }
+                ],
+                "interview_focus": [
+                    "Проверить готовность к полевому формату",
+                    "Уточнить реальные ожидания по доходу",
+                    "Понять, как кандидат реагирует на отказ клиента",
+                ],
+                "outreach_goal": "Получить от кандидата конкретное подтверждение по следующему шагу сегодня.",
+                "playbook": {
+                    "what_to_write": "Коротко подтвердить релевантность и сразу предложить конкретные варианты времени.",
+                    "what_to_offer": "2 ближайших слота без широкого выбора.",
+                    "likely_objection": "Может попросить подумать или уточнить доход до встречи.",
+                    "best_cta": "Какой из двух вариантов вам удобнее: сегодня вечером или завтра утром?",
+                },
+                "feedback_state": "pending",
+            }
         elif "candidate_coach_v1" in kind:
             payload = {
                 "relevance_score": 78,
@@ -242,6 +312,26 @@ class FakeProvider:
                         "reason": "Снижает риск срыва и показывает управляемость процесса.",
                     },
                 ],
+            }
+        elif "candidate_contact_draft_v1" in kind:
+            payload = {
+                "analysis": "Кандидату лучше писать коротко и с одним понятным следующим шагом.",
+                "intent_key": "confirm_next_step",
+                "recommended_channel": "current",
+                "drafts": [
+                    {
+                        "text": "Добрый день! Вижу, что вы в активном процессе. Предлагаю сразу закрепить следующий шаг: вам удобнее сегодня после 16:00 или завтра до 12:00?",
+                        "reason": "Сужает выбор и быстрее доводит до подтверждения.",
+                    },
+                    {
+                        "text": "Чтобы не затягивать процесс, предлагаю выбрать один из ближайших вариантов по времени. Напишите, какой формат удобнее, и я всё зафиксирую.",
+                        "reason": "Подходит для нейтрального мягкого дожима без лишнего давления.",
+                    },
+                ],
+                "used_context": {
+                    "safe_text_used": False,
+                    "stage": "candidate_in_flow",
+                },
             }
         elif "city_candidate_recommendations_v1" in kind:
             candidate_ids: list[int] = []
