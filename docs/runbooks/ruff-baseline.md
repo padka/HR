@@ -112,3 +112,14 @@ ruff enforcement for those paths.
 Do not treat this baseline as permission to add new lint debt. New production
 code should pass at least `ruff check --select F,E9`, and preferably full ruff,
 before merge.
+
+## CI Gate
+
+Release branch/tag CI uses the same baseline-controlled critical gate:
+
+- compare changed Python files against `origin/main`;
+- exclude only the documented legacy bot wrapper modules listed above;
+- run `ruff check --select F,E9` on the remaining changed files.
+
+Full `pre-commit run --all-files` is still baseline-red for this repository and
+is not a release-branch truth signal until the legacy lint-debt task is closed.
