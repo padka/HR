@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable
 
 
 def load_env(path: Path | None = None) -> None:
@@ -24,11 +23,13 @@ def load_env(path: Path | None = None) -> None:
     if env_path.exists():
         _load_env_file(env_path, allow_override=False)
 
-    # Load .env.local for local overrides (if not using custom path)
-    # .env.local can override .env values, but not shell variables
+    # Load .env.local for local overrides (if not using custom path).
+    # Production services must not be affected by local override files.
     if path is None:
         local_env_path = env_path.parent / ".env.local"
-        if local_env_path.exists():
+        environment = (os.environ.get("ENVIRONMENT") or "").strip().lower()
+        allow_production_local = _truthy(os.environ.get("ALLOW_PRODUCTION_ENV_LOCAL"))
+        if local_env_path.exists() and (environment != "production" or allow_production_local):
             _load_env_file(local_env_path, allow_override=True, protected_keys=original_env_keys)
 
 
@@ -73,6 +74,10 @@ def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and ((value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'"))):
         return value[1:-1]
     return value
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 __all__ = ["load_env"]

@@ -199,22 +199,22 @@ async def test_environment_setting_validation():
             shutil.rmtree(temp_dir, ignore_errors=True)
         get_settings.cache_clear()
 
-    # Test invalid environment defaults to development
+    # Invalid environment must fail closed instead of silently becoming development.
     with patch.dict(os.environ, {
         "ENVIRONMENT": "invalid",
         "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
         "SESSION_SECRET": "test-secret-32chars-long-0123456789abcdef01234",
     }):
         get_settings.cache_clear()
-        settings = get_settings()
-        assert settings.environment == "development"
+        with pytest.raises(RuntimeError, match="ENVIRONMENT must be one of"):
+            get_settings()
 
-    # Test empty environment defaults to development
+    # Empty environment is explicit misconfiguration and must also fail closed.
     with patch.dict(os.environ, {
         "ENVIRONMENT": "",
         "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
         "SESSION_SECRET": "test-secret-32chars-long-0123456789abcdef01234",
     }):
         get_settings.cache_clear()
-        settings = get_settings()
-        assert settings.environment == "development"
+        with pytest.raises(RuntimeError, match="ENVIRONMENT must be one of"):
+            get_settings()

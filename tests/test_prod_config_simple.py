@@ -208,6 +208,47 @@ def test_dev_requires_postgresql(monkeypatch):
         settings_module.get_settings.cache_clear()
 
 
+def test_invalid_environment_value_is_rejected(monkeypatch):
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            settings_module.get_settings()
+        assert "ENVIRONMENT must be one of" in str(exc_info.value)
+    finally:
+        settings_module.get_settings.cache_clear()
+
+
+def test_development_environment_rejects_production_public_domain(monkeypatch):
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    temp_dir = tempfile.mkdtemp(prefix="test_dev_guard_")
+    try:
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/db")
+        monkeypatch.setenv("SESSION_SECRET", "dev-secret-32chars-long-0123456789abcdef01234")
+        monkeypatch.setenv("REDIS_URL", "")
+        monkeypatch.setenv("NOTIFICATION_BROKER", "memory")
+        monkeypatch.setenv("DATA_DIR", temp_dir)
+        monkeypatch.setenv("CRM_PUBLIC_URL", "https://admin.recruitsmart.ru")
+        monkeypatch.delenv("ALLOW_UNSAFE_DEV_ENV", raising=False)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            settings_module.get_settings()
+        assert "ENVIRONMENT=development is not allowed" in str(exc_info.value)
+        assert "CRM_PUBLIC_URL" in str(exc_info.value)
+    finally:
+        settings_module.get_settings.cache_clear()
+        import shutil
+
+        if Path(temp_dir).exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_prod_rejects_missing_session_secret(monkeypatch):
     """Production must fail if SESSION_SECRET is not explicitly set."""
     from backend.core import settings as settings_module

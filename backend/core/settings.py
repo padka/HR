@@ -38,6 +38,9 @@ class Settings:
     bot_autostart: bool
     bot_polling_runtime_enabled: bool
     bot_notification_runtime_enabled: bool
+    bot_polling_timeout_seconds: int
+    bot_polling_backoff_initial_seconds: float
+    bot_polling_backoff_max_seconds: float
     log_level: str
     log_json: bool
     log_file: str
@@ -107,7 +110,11 @@ class Settings:
     hh_oauth_state_ttl_seconds: int
     hh_webhook_base_url: str
     hh_auto_import_interval_seconds: int
+    hh_sync_done_retention_days: int
+    hh_sync_dead_retention_days: int
+    hh_sync_keep_last_dead_per_connection: int
     allow_destructive_admin_actions: bool
+    min_future_slots_warning: int
     candidate_create_dual_write_enabled: bool
     candidate_status_dual_write_enabled: bool
     test1_screening_decision_enabled: bool
@@ -481,12 +488,59 @@ def _validate_production_settings(settings: Settings) -> None:
         )
 
 
+def _validate_development_environment_guard(settings: Settings) -> None:
+    """Block accidental development mode on known public production domains."""
+    if settings.environment.lower() != "development":
+        return
+    if _get_bool("ALLOW_UNSAFE_DEV_ENV", default=False):
+        return
+
+    suffixes = [
+        item.strip().lower().lstrip(".")
+        for item in os.getenv(
+            "PRODUCTION_DOMAIN_SUFFIXES",
+            "recruitsmart.ru,candidate.recruitsmart.ru,admin.recruitsmart.ru",
+        ).split(",")
+        if item.strip()
+    ]
+    if not suffixes:
+        return
+
+    urls = {
+        "CRM_PUBLIC_URL": settings.crm_public_url,
+        "BOT_WEBHOOK_URL": settings.bot_webhook_url,
+        "MAX_MINIAPP_URL": settings.max_miniapp_url,
+        "MAX_WEBHOOK_URL": settings.max_webhook_url,
+        "HH_REDIRECT_URI": settings.hh_redirect_uri,
+        "HH_WEBHOOK_BASE_URL": settings.hh_webhook_base_url,
+    }
+    unsafe = []
+    for name, value in urls.items():
+        parsed = urlparse(str(value or "").strip())
+        hostname = str(parsed.hostname or "").strip().lower()
+        if not hostname:
+            continue
+        if any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes):
+            unsafe.append(name)
+
+    if unsafe:
+        raise RuntimeError(
+            "ENVIRONMENT=development is not allowed with production public domains "
+            f"({', '.join(sorted(unsafe))}). Set ENVIRONMENT=production for production "
+            "services. ALLOW_UNSAFE_DEV_ENV=true is only for explicit non-production drills."
+        )
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    # Determine environment (default to development for safety)
-    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    # Determine environment (default to development for local safety).
+    raw_environment = os.getenv("ENVIRONMENT", "development").strip()
+    environment = raw_environment.lower()
     if environment not in {"development", "production", "staging", "test"}:
-        environment = "development"
+        raise RuntimeError(
+            "ENVIRONMENT must be one of development, production, staging, test "
+            f"(got: {raw_environment!r})."
+        )
 
     data_dir = _default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -601,6 +655,19 @@ def get_settings() -> Settings:
         "BOT_NOTIFICATION_RUNTIME_ENABLED",
         default=True,
     )
+    bot_polling_timeout_seconds = _get_int("BOT_POLLING_TIMEOUT_SECONDS", 30, minimum=5)
+    bot_polling_backoff_initial_seconds = _get_float(
+        "BOT_POLLING_BACKOFF_INITIAL_SECONDS",
+        3.0,
+        minimum=0.1,
+    )
+    bot_polling_backoff_max_seconds = _get_float(
+        "BOT_POLLING_BACKOFF_MAX_SECONDS",
+        60.0,
+        minimum=1.0,
+    )
+    if bot_polling_backoff_max_seconds < bot_polling_backoff_initial_seconds:
+        bot_polling_backoff_max_seconds = bot_polling_backoff_initial_seconds
     admin_chat_id = int(os.getenv("ADMIN_CHAT_ID", "0") or 0)
     timezone = os.getenv("TZ", "Europe/Moscow")
     default_company_name = (
@@ -836,10 +903,18 @@ def get_settings() -> Settings:
     hh_auto_import_interval_seconds = _get_int(
         "HH_AUTO_IMPORT_INTERVAL_SECONDS", 900, minimum=60
     )
+    hh_sync_done_retention_days = _get_int("HH_SYNC_DONE_RETENTION_DAYS", 14, minimum=1)
+    hh_sync_dead_retention_days = _get_int("HH_SYNC_DEAD_RETENTION_DAYS", 30, minimum=1)
+    hh_sync_keep_last_dead_per_connection = _get_int(
+        "HH_SYNC_KEEP_LAST_DEAD_PER_CONNECTION",
+        50,
+        minimum=0,
+    )
     allow_destructive_admin_actions = _get_bool_with_fallback(
         "ALLOW_DESTRUCTIVE_ADMIN_ACTIONS",
         default=environment not in {"production", "staging"},
     )
+    min_future_slots_warning = _get_int("MIN_FUTURE_SLOTS_WARNING", 10, minimum=0)
     candidate_create_dual_write_enabled = _get_bool(
         "CANDIDATE_CREATE_DUAL_WRITE_ENABLED",
         default=False,
@@ -903,6 +978,9 @@ def get_settings() -> Settings:
         bot_autostart=bot_autostart,
         bot_polling_runtime_enabled=bot_polling_runtime_enabled,
         bot_notification_runtime_enabled=bot_notification_runtime_enabled,
+        bot_polling_timeout_seconds=bot_polling_timeout_seconds,
+        bot_polling_backoff_initial_seconds=bot_polling_backoff_initial_seconds,
+        bot_polling_backoff_max_seconds=bot_polling_backoff_max_seconds,
         log_level=log_level,
         log_json=log_json,
         log_file=log_file,
@@ -971,7 +1049,11 @@ def get_settings() -> Settings:
         hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
         hh_webhook_base_url=hh_webhook_base_url,
         hh_auto_import_interval_seconds=hh_auto_import_interval_seconds,
+        hh_sync_done_retention_days=hh_sync_done_retention_days,
+        hh_sync_dead_retention_days=hh_sync_dead_retention_days,
+        hh_sync_keep_last_dead_per_connection=hh_sync_keep_last_dead_per_connection,
         allow_destructive_admin_actions=allow_destructive_admin_actions,
+        min_future_slots_warning=min_future_slots_warning,
         candidate_create_dual_write_enabled=candidate_create_dual_write_enabled,
         candidate_status_dual_write_enabled=candidate_status_dual_write_enabled,
         test1_screening_decision_enabled=test1_screening_decision_enabled,
@@ -989,5 +1071,6 @@ def get_settings() -> Settings:
 
     # Validate production configuration (fails fast with clear error messages)
     _validate_production_settings(settings)
+    _validate_development_environment_guard(settings)
 
     return settings
