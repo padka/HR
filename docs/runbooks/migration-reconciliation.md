@@ -4,24 +4,26 @@ Date: 2026-04-25
 
 ## Summary
 
-Result: **not recovered**.
+Result: **recovered after freeze**.
 
-The local repository still ends at `0103_persistent_application_idempotency_keys`.
+The release branch originally ended at `0103_persistent_application_idempotency_keys`.
 The production audit states production is at `0105_unique_users_max_user_id` and has
 the unique index `uq_users_max_user_id_nonempty`.
 
-No `0104` or `0105` migration files were recovered from local files or fetched Git
-history. Production rollout remains blocked for any workflow that runs migrations
-until the missing migration history is recovered from the VPS/release artifact/backup
-or a formal reconstructed migration plan is approved.
+Actual `0104` and `0105` files were later recovered from the adjacent local
+worktree `/Users/mikhail/Projects/recruitsmart_admin_browser_candidate` and
+committed into the release branch. See
+`docs/MIGRATION_RECONCILIATION_0105.md` for the detailed recovery report,
+revision chain, index SQL, safety notes, and tests.
 
 ## Local Migration State
 
 - Migration runner package: `backend.migrations.versions`
 - Migration storage table: `alembic_version`
-- Local migration count: 107
+- Local migration count before recovery: 107
 - Local first revision: `0001_initial_schema`
-- Local head revision: `0103_persistent_application_idempotency_keys`
+- Local head revision before recovery: `0103_persistent_application_idempotency_keys`
+- Local head revision after recovery: `0105_unique_users_max_user_id`
 - Local tail:
   - `0098_tg_max_reliability_foundation`
   - `0099_add_users_phone_normalized`
@@ -29,6 +31,8 @@ or a formal reconstructed migration plan is approved.
   - `0101_add_hh_outbound_job_fields`
   - `0102_phase_a_schema_foundation`
   - `0103_persistent_application_idempotency_keys`
+  - `0104_candidate_web_public_intake`
+  - `0105_unique_users_max_user_id`
 
 ## Production Audit State
 
@@ -63,7 +67,7 @@ Evidence artifacts:
 - Tree grep outputs: `/tmp/recruitsmart-migration-treegrep-*.txt`
 - Filesystem search output: `/tmp/recruitsmart-migration-find.txt`
 
-## Findings
+## Findings Before Recovery
 
 - `0105_unique_users_max_user_id` was found only in `docs/runbooks/release-artifact-freeze-notes.md`.
 - `uq_users_max_user_id_nonempty` was found only in `docs/runbooks/production-hardening-candidate-scale.md`.
@@ -74,28 +78,26 @@ Evidence artifacts:
 - Migration discovery is linear: `backend/migrations/runner.py` sorts by `revision` and rejects out-of-order `down_revision` values.
 - The runner does not support multi-head reconciliation for unknown production revisions; an unknown `alembic_version` raises `Database is at unknown migration revision`.
 
+## Recovery Finding
+
+- `0104_candidate_web_public_intake.py` and `0105_unique_users_max_user_id.py`
+  were found in `/Users/mikhail/Projects/recruitsmart_admin_browser_candidate`.
+- The recovered `0105` creates `uq_users_max_user_id_nonempty` with PostgreSQL
+  predicate `max_user_id IS NOT NULL AND btrim(max_user_id) <> ''`.
+- ORM metadata now reflects the same unique partial index.
+
 ## Safe Deployment Interpretation
 
-Safe to deploy without migrations: **only if the deployment procedure explicitly skips migration execution** and code compatibility is validated against the production schema.
+Safe to deploy without migrations: **yes, if the deployment procedure explicitly skips migration execution** and code compatibility is validated against the production schema.
 
-Migration reconciliation required before deploy: **yes**, for any rollout path that runs the migration runner.
+Migration reconciliation required before deploy: **recovered locally, but still requires CI and staging migration proof** before any migration-enabled production rollout.
 
 ## Required Next Step
 
-Before production rollout, recover the missing migration files from one of:
+Before migration-enabled production rollout:
 
-- production VPS release directory;
-- previous deployment artifact;
-- backup/snapshot;
-- maintainer machine or branch not available in current refs.
-
-If the files cannot be recovered, prepare a separate approval request for formal reconstruction:
-
-- reconstruct `0104` only if its intended schema can be proven;
-- reconstruct `0105_unique_users_max_user_id` to match the audited production unique index;
-- keep operations idempotent;
-- use the exact revision id if production `alembic_version` requires it;
-- test on a clean DB and on a DB at `0103`;
-- verify duplicate identity checks before any unique-index creation.
-
-No fake migration, stamp, or production migration action is approved by this report.
+- run CI on the committed recovery;
+- run clean PostgreSQL migration proof;
+- run staging schema compatibility;
+- verify production duplicate checks before any unique-index creation path;
+- do not stamp or fake a revision without a separate approved reconciliation.

@@ -6,6 +6,46 @@ import pytest
 from sqlalchemy import create_engine, text
 
 
+def _drop_public_tables(engine):
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(
+                """
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'public'
+                """
+            )
+        )
+        tables = [row[0] for row in result]
+
+        for table in tables:
+            conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+        conn.commit()
+
+
+def _assert_0105_schema(conn):
+    result = conn.execute(text("SELECT version_num FROM alembic_version"))
+    version = result.scalar()
+    assert version == "0105_unique_users_max_user_id"
+
+    result = conn.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'users'
+              AND indexname = 'uq_users_max_user_id_nonempty'
+            """
+        )
+    )
+    indexdef = result.scalar()
+    assert indexdef is not None
+    assert "WHERE" in indexdef
+    assert "max_user_id IS NOT NULL" in indexdef
+    assert "btrim" in indexdef
+
+
 @pytest.mark.no_db_cleanup
 def test_migrations_on_clean_postgres():
     """
@@ -28,19 +68,7 @@ def test_migrations_on_clean_postgres():
     # Create engine and drop/recreate all tables to simulate clean DB
     engine = create_engine(sync_db_url)
 
-    # Drop all tables to ensure clean state
-    with engine.connect() as conn:
-        # Get all table names
-        result = conn.execute(text("""
-            SELECT tablename FROM pg_tables
-            WHERE schemaname = 'public'
-        """))
-        tables = [row[0] for row in result]
-
-        # Drop all tables (including alembic_version)
-        for table in tables:
-            conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
-        conn.commit()
+    _drop_public_tables(engine)
 
     # Now run migrations from scratch
     from backend.migrations.runner import _discover_migrations, upgrade_to_head
@@ -80,6 +108,8 @@ def test_migrations_on_clean_postgres():
             "ai_decision_records",
             "candidate_access_tokens",
             "candidate_access_sessions",
+            "candidate_web_campaigns",
+            "candidate_web_public_intakes",
             "message_threads",
             "messages",
             "message_deliveries",
@@ -98,11 +128,62 @@ def test_migrations_on_clean_postgres():
             """))
             assert result.scalar(), f"Core table '{table_name}' was not created"
 
-        # Verify current migration version
-        result = conn.execute(text("SELECT version_num FROM alembic_version"))
-        version = result.scalar()
-        assert version is not None, "No migration version recorded"
         latest_revision = _discover_migrations()[-1].revision
-        assert version == latest_revision, f"Unexpected migration version: {version}"
+        assert latest_revision == "0105_unique_users_max_user_id"
+        _assert_0105_schema(conn)
 
+    engine.dispose()
+
+
+@pytest.mark.no_db_cleanup
+def test_migrations_upgrade_from_0103_to_recovered_0105_postgres():
+    db_url = os.getenv("TEST_DATABASE_URL", "postgresql://rs:pass@localhost:5432/rs_test")
+    if not db_url.startswith("postgresql"):
+        pytest.skip("PostgreSQL is required for migration integration test")
+
+    sync_db_url = db_url.replace("+asyncpg", "")
+    engine = create_engine(sync_db_url)
+    _drop_public_tables(engine)
+
+    from backend.migrations.runner import (
+        _assert_schema_create_privilege,
+        _discover_migrations,
+        _ensure_version_storage,
+        _set_current_revision,
+        upgrade_to_head,
+    )
+
+    migrations = _discover_migrations()
+    with engine.begin() as conn:
+        _assert_schema_create_privilege(conn)
+        _ensure_version_storage(conn)
+
+    for migration in migrations:
+        if migration.revision in {"0104_candidate_web_public_intake", "0105_unique_users_max_user_id"}:
+            break
+        with engine.begin() as conn:
+            upgrade = getattr(migration.module, "upgrade")
+            upgrade(conn)
+            _set_current_revision(conn, migration.revision)
+
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        assert version == "0103_persistent_application_idempotency_keys"
+
+    upgrade_to_head(sync_db_url)
+
+    with engine.connect() as conn:
+        _assert_0105_schema(conn)
+        result = conn.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                    AND table_name = 'candidate_web_public_intakes'
+                )
+                """
+            )
+        )
+        assert result.scalar()
     engine.dispose()

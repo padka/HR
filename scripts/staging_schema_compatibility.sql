@@ -22,6 +22,33 @@ SELECT
   ) AS ok;
 
 SELECT
+  'candidate_web_tables_exist' AS check_name,
+  ARRAY_AGG(table_name ORDER BY table_name) AS present_tables
+FROM information_schema.tables
+WHERE table_schema = current_schema()
+  AND table_name IN (
+    'candidate_web_campaigns',
+    'candidate_web_public_intakes'
+  );
+
+SELECT
+  'candidate_web_public_intakes_indexes' AS check_name,
+  ARRAY_AGG(indexname ORDER BY indexname) AS present_indexes
+FROM pg_indexes
+WHERE schemaname = current_schema()
+  AND tablename = 'candidate_web_public_intakes'
+  AND indexname IN (
+    'uq_candidate_web_public_intakes_poll',
+    'uq_candidate_web_public_intakes_provider_token',
+    'uq_candidate_web_public_intakes_handoff',
+    'ix_candidate_web_public_intakes_campaign_id',
+    'ix_candidate_web_public_intakes_campaign_status',
+    'ix_candidate_web_public_intakes_provider_status',
+    'ix_candidate_web_public_intakes_candidate',
+    'ix_candidate_web_public_intakes_expires'
+  );
+
+SELECT
   'max_user_id_duplicate_groups' AS check_name,
   COUNT(*) AS duplicate_groups
 FROM (

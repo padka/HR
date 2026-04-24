@@ -38,6 +38,13 @@ class User(Base):
         Index("ix_users_workflow_status", "workflow_status"),
         Index("ix_users_responsible_recruiter", "responsible_recruiter_id"),
         Index("ix_users_phone_normalized", "phone_normalized"),
+        Index(
+            "uq_users_max_user_id_nonempty",
+            "max_user_id",
+            unique=True,
+            sqlite_where=text("max_user_id IS NOT NULL AND trim(max_user_id) <> ''"),
+            postgresql_where=text("max_user_id IS NOT NULL AND btrim(max_user_id) <> ''"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
