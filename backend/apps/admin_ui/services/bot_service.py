@@ -18,7 +18,10 @@ from backend.core.messenger.bootstrap import ensure_max_adapter
 from backend.core.messenger.protocol import InlineButton
 from backend.core.settings import get_settings
 from backend.domain.candidates.models import User
-from backend.domain.candidates.services import log_outbound_max_message
+from backend.domain.candidates.services import (
+    load_preferred_user_by_max_user_id,
+    log_outbound_max_message,
+)
 from backend.domain.repositories import get_city
 
 try:  # pragma: no cover - optional dependency handling
@@ -259,13 +262,25 @@ class BotService:
 
         normalized_candidate_public_id = str(candidate_public_id or "").strip() or None
         normalized_max_user_id = str(max_user_id or "").strip() or None
-        if normalized_candidate_public_id and not normalized_max_user_id:
+        resolved_max_candidate_id: int | None = None
+        if normalized_candidate_public_id or normalized_max_user_id:
             async with async_session() as session:
-                candidate = await session.scalar(
-                    select(User).where(User.candidate_id == normalized_candidate_public_id)
-                )
+                candidate = None
+                if normalized_candidate_public_id:
+                    candidate = await session.scalar(
+                        select(User).where(User.candidate_id == normalized_candidate_public_id)
+                    )
+                if candidate is None and normalized_max_user_id:
+                    candidate = await load_preferred_user_by_max_user_id(
+                        session,
+                        normalized_max_user_id,
+                        for_update=False,
+                    )
                 if candidate is not None:
-                    normalized_max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
+                    resolved_max_candidate_id = int(candidate.id)
+                    normalized_max_user_id = (
+                        str(getattr(candidate, "max_user_id", "") or "").strip() or normalized_max_user_id
+                    )
         if normalized_max_user_id:
             settings = get_settings()
             adapter = await ensure_max_adapter(settings=settings)
@@ -284,12 +299,18 @@ class BotService:
 
             async with async_session() as session:
                 async with session.begin():
-                    candidate = await session.scalar(
-                        select(User).where(User.max_user_id == normalized_max_user_id)
-                    )
+                    candidate = None
+                    if resolved_max_candidate_id is not None:
+                        candidate = await session.get(User, resolved_max_candidate_id)
                     if candidate is None and normalized_candidate_public_id:
                         candidate = await session.scalar(
                             select(User).where(User.candidate_id == normalized_candidate_public_id)
+                        )
+                    if candidate is None:
+                        candidate = await load_preferred_user_by_max_user_id(
+                            session,
+                            normalized_max_user_id,
+                            for_update=True,
                         )
                     if candidate is None:
                         return BotSendResult(
@@ -307,18 +328,35 @@ class BotService:
                         required=must_succeed,
                     )
 
-            miniapp_url = str(getattr(settings, "max_miniapp_url", "") or "").strip() or None
-            buttons: list[list[InlineButton]] = []
-            if miniapp_url:
-                buttons.append([InlineButton(text="Открыть Тест 2", url=miniapp_url, kind="web_app")])
-            buttons.append([InlineButton(text="Пройти в чате", callback_data="test2:start", kind="callback")])
-            message_text = "Поздравляем! Вы успешно прошли собеседование 🎉\n\nОткройте Тест 2 в mini app или продолжите здесь, в чате MAX."
+            buttons: list[list[InlineButton]] = [
+                [InlineButton(text="Пройти в чате", callback_data="test2:start", kind="callback")]
+            ]
+            message_text = (
+                "Поздравляем! Вы успешно прошли собеседование 🎉\n\n"
+                "Тест 2 уже доступен в mini app внутри MAX. "
+                "Если удобнее, продолжите его прямо здесь, в чате."
+            )
+            client_request_id = f"max:test2:{normalized_max_user_id}:{slot_id or 'none'}"
             result = await adapter.send_message(
                 normalized_max_user_id,
                 message_text,
                 buttons=buttons,
             )
             if not result.success:
+                failure_client_request_id = f"{client_request_id}:failed"
+                await log_outbound_max_message(
+                    normalized_max_user_id,
+                    text=message_text,
+                    payload={
+                        "origin_channel": "max",
+                        "kind": "test2_invite",
+                        "slot_id": slot_id,
+                    },
+                    provider_message_id=result.message_id,
+                    client_request_id=failure_client_request_id,
+                    status="failed",
+                    error=result.error or self.failure_message,
+                )
                 if must_succeed:
                     return BotSendResult(
                         ok=False,
@@ -339,7 +377,7 @@ class BotService:
                     "slot_id": slot_id,
                 },
                 provider_message_id=result.message_id,
-                client_request_id=f"max:test2:{normalized_max_user_id}:{slot_id or 'none'}",
+                client_request_id=client_request_id,
             )
             return BotSendResult(ok=True, status="sent_test2")
 

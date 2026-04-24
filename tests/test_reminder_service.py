@@ -716,6 +716,62 @@ async def test_intro_day_gets_three_hour_reminder(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_intro_day_reminder_is_sent_immediately_inside_three_hour_window(monkeypatch):
+    scheduler = create_scheduler(redis_url=None)
+    service = ReminderService(scheduler=scheduler)
+    service.start()
+    monkeypatch.setattr(
+        "backend.apps.bot.reminders._apply_quiet_hours",
+        lambda local_time, **kwargs: (local_time, None),
+    )
+
+    async def _default_policy():
+        return DEFAULT_REMINDER_POLICY, None
+
+    monkeypatch.setattr(
+        "backend.apps.bot.reminders.get_reminder_policy_config",
+        _default_policy,
+    )
+
+    async with async_session() as session:
+        recruiter = models.Recruiter(name="Intro Immediate", tz="Europe/Moscow", active=True)
+        city = models.City(name="Intro Immediate City", tz="Europe/Moscow", active=True)
+        session.add_all([recruiter, city])
+        await session.commit()
+        await session.refresh(recruiter)
+        await session.refresh(city)
+
+        slot = models.Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc) + timedelta(hours=2, minutes=30),
+            status=models.SlotStatus.BOOKED,
+            candidate_tg_id=4040,
+            candidate_tz="Europe/Moscow",
+            purpose="intro_day",
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+        slot_id = slot.id
+
+    triggered: list[tuple[int, ReminderKind]] = []
+
+    async def fake_execute(slot_id: int, kind: ReminderKind) -> None:
+        triggered.append((slot_id, kind))
+
+    monkeypatch.setattr(service, "_execute_job", fake_execute)
+
+    try:
+        await service.schedule_for_slot(slot_id)
+        kinds = {kind for _slot_id, kind in triggered if _slot_id == slot_id}
+        assert kinds == {ReminderKind.INTRO_REMIND_3H}
+        assert not scheduler.get_jobs()
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_schedule_can_skip_confirmation_prompts(monkeypatch):
     scheduler = create_scheduler(redis_url=None)
     service = ReminderService(scheduler=scheduler)

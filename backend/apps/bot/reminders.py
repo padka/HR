@@ -439,7 +439,15 @@ class ReminderService:
             start_local = slot.start_utc.astimezone(candidate_zone)
             time_until_meeting = start_local - now_local
             immediate_threshold = timedelta(
-                hours=min_time_before_immediate_hours(reminder_policy)
+                hours=self._immediate_threshold_hours(
+                    reminder_policy,
+                    purpose=purpose,
+                    city_intro_remind_3h_enabled=(
+                        city_policy_data.intro_remind_3h_enabled
+                        if city_policy_data and city_policy_data.is_custom
+                        else None
+                    ),
+                )
             )
 
             immediate_map: Dict[str, ReminderPlan] = {}
@@ -950,6 +958,34 @@ class ReminderService:
 
     def _job_id(self, slot_id: int, kind: ReminderKind) -> str:
         return f"slot:{slot_id}:{kind.value}"
+
+    def _immediate_threshold_hours(
+        self,
+        policy: Optional[Dict[str, Any]],
+        *,
+        purpose: str,
+        city_intro_remind_3h_enabled: Optional[bool] = None,
+    ) -> float:
+        normalized_purpose = (purpose or "interview").strip().lower() or "interview"
+        effective_policy = policy or {}
+        if normalized_purpose == "intro_day":
+            if city_intro_remind_3h_enabled is False:
+                return 0.0
+            if city_intro_remind_3h_enabled is True or is_reminder_kind_enabled(
+                effective_policy,
+                purpose=normalized_purpose,
+                kind=ReminderKind.INTRO_REMIND_3H.value,
+            ):
+                return max(
+                    0.0,
+                    reminder_kind_offset_hours(
+                        effective_policy,
+                        purpose=normalized_purpose,
+                        kind=ReminderKind.INTRO_REMIND_3H.value,
+                    ),
+                )
+            return 0.0
+        return max(0.0, min_time_before_immediate_hours(effective_policy))
 
     def health_snapshot(self) -> Dict[str, Any]:
         """Return lightweight scheduler diagnostics."""

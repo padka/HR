@@ -11,11 +11,11 @@ from backend.core.messenger.channel_state import (
     mark_messenger_channel_healthy,
     set_messenger_channel_degraded,
 )
-from backend.core.messenger.protocol import SendResult
+from backend.core.messenger.protocol import InlineButton, SendResult
 from backend.core.messenger.reliability import classify_delivery_failure
 from backend.core.db import async_session
 from backend.domain.candidates.models import User
-from backend.domain.models import Slot
+from backend.domain.models import Recruiter, Slot
 from sqlalchemy import select
 
 
@@ -28,6 +28,47 @@ def _uses_legacy_status_update_text(text: str) -> bool:
         or "{status}" in rendered
         or "{booking_id}" in rendered
     )
+
+
+def _build_max_interview_details_text(slot: Slot, *, meeting_link: str | None = None) -> str:
+    tz_name = getattr(slot, "candidate_tz", None) or getattr(slot, "tz_name", None) or DEFAULT_TZ
+    labels = slot_local_labels(slot.start_utc, str(tz_name))
+    candidate_name = str(getattr(slot, "candidate_fio", "") or "Кандидат").strip() or "Кандидат"
+    meeting_link = str(meeting_link or "").strip()
+    link_block = (
+        f"\n\nСсылка для подключения:\n{meeting_link}\n\nВся актуальная информация о встрече также доступна в личном кабинете mini app внутри MAX."
+        if meeting_link
+        else "\n\nВся актуальная информация о встрече доступна в личном кабинете mini app внутри MAX."
+    )
+    return (
+        f"{candidate_name}, здравствуйте!\n\n"
+        "Встречу предварительно подтвердили.\n\n"
+        f"🗓 {labels.get('slot_day_name_local', '')}, {labels.get('slot_time_local', '')} (по вашему времени)\n"
+        "💬 Формат: видеочат | 15–20 мин"
+        f"{link_block}"
+    ).strip()
+
+
+def _build_max_reminder_text(slot: Slot, reminder_kind: ReminderKind, recruiter: Any | None) -> str:
+    tz_name = getattr(slot, "candidate_tz", None) or getattr(slot, "tz_name", None) or DEFAULT_TZ
+    labels = slot_local_labels(slot.start_utc, str(tz_name))
+    slot_datetime = str(labels.get("slot_datetime_local", "") or "").strip()
+    purpose = "ознакомительный день" if str(getattr(slot, "purpose", "") or "").strip().lower() == "intro_day" else "собеседование"
+    recruiter_name = str(getattr(recruiter, "name", "") or "").strip()
+    details_suffix = "Ссылка и детали встречи доступны в личном кабинете mini app внутри MAX."
+    if reminder_kind is ReminderKind.REMIND_10M:
+        prefix = f"⏰ До {purpose} осталось 10 минут."
+        middle = f"🗓 {slot_datetime}" if slot_datetime else ""
+        return "\n".join(part for part in [prefix, middle, details_suffix] if part).strip()
+    prefix = f"⏰ Напоминаем: {purpose} сегодня."
+    middle = f"🗓 {slot_datetime}" if slot_datetime else ""
+    confirm = (
+        "Подтвердите участие в личном кабинете mini app внутри MAX, чтобы получить ссылку на подключение."
+        if purpose == "собеседование"
+        else "Подтвердите участие в личном кабинете mini app внутри MAX."
+    )
+    recruiter_line = f"Рекрутер: {recruiter_name}" if recruiter_name else ""
+    return "\n".join(part for part in [prefix, middle, recruiter_line, confirm, details_suffix] if part).strip()
 
 class NotificationService:
     """Minimal outbox worker for interview confirmation notifications."""
@@ -520,6 +561,7 @@ class NotificationService:
                 notification_type="candidate_reschedule_prompt",
                 booking_id=booking_id,
                 candidate_id=candidate_id,
+                candidate_external_id=candidate_external_id,
                 payload=payload,
                 snapshot=snapshot,
                 status_value=status_value,
@@ -531,6 +573,7 @@ class NotificationService:
                 notification_type="interview_confirmed_candidate",
                 booking_id=booking_id,
                 candidate_id=candidate_id,
+                candidate_external_id=candidate_external_id,
                 payload=payload,
                 snapshot=snapshot,
                 status_value=status_value,
@@ -563,10 +606,22 @@ class NotificationService:
         queued_reason: str,
         candidate_external_id: Optional[str] = None,
     ) -> NotificationResult:
-        if candidate_external_id:
+        resolved_candidate_external_id = str(candidate_external_id or "").strip() or None
+        if resolved_candidate_external_id is None:
+            resolved_candidate_external_id = (
+                str(getattr(snapshot, "candidate_external_id", "") or "").strip() or None
+            )
+        if resolved_candidate_external_id is None:
+            snapshot_payload = payload.get("snapshot") if isinstance(payload, dict) else None
+            if isinstance(snapshot_payload, dict):
+                resolved_candidate_external_id = (
+                    str(snapshot_payload.get("candidate_external_id") or "").strip() or None
+                )
+
+        if resolved_candidate_external_id:
             payload = dict(payload)
-            payload.setdefault("candidate_external_id", candidate_external_id)
-        messenger_channel = "max" if candidate_external_id else "telegram"
+            payload.setdefault("candidate_external_id", resolved_candidate_external_id)
+        messenger_channel = "max" if resolved_candidate_external_id else "telegram"
         outbox = await add_outbox_notification(
             notification_type=notification_type,
             booking_id=booking_id,
@@ -645,20 +700,46 @@ class NotificationService:
             return await _send_reschedule_prompt(snapshot)
         if status_value is BookingNotificationStatus.APPROVED:
             slot = await get_slot(snapshot.slot_id)
-            if not slot or not slot.candidate_tg_id:
+            if not slot:
                 return False
             rendered_text, _candidate_tz, _candidate_city, _template_key, _template_version = await _render_candidate_notification(
                 slot
             )
-            try:
-                await _send_with_retry(
-                    get_bot(),
-                    SendMessage(chat_id=slot.candidate_tg_id, text=rendered_text),
+            if snapshot.candidate_external_id:
+                adapter = await ensure_max_adapter(settings=get_settings())
+                if adapter is None:
+                    logger.warning(
+                        "MAX adapter unavailable; cannot send approved booking",
+                        extra={"slot_id": snapshot.slot_id, "candidate_id": snapshot.candidate_id},
+                    )
+                    return False
+                result = await adapter.send_message(
+                    snapshot.candidate_external_id,
+                    _build_max_interview_details_text(slot),
                     correlation_id=f"direct-approve:{slot.id}:{uuid.uuid4().hex}",
                 )
-            except Exception:
-                logger.exception("Failed direct delivery for approved booking", extra={"slot_id": slot.id})
-                return False
+                if not result.success:
+                    logger.warning(
+                        "MAX adapter rejected approval details",
+                        extra={
+                            "slot_id": slot.id,
+                            "candidate_id": snapshot.candidate_id,
+                            "error": result.error or "unknown",
+                        },
+                    )
+                    return False
+            else:
+                if not slot.candidate_tg_id:
+                    return False
+                try:
+                    await _send_with_retry(
+                        get_bot(),
+                        SendMessage(chat_id=slot.candidate_tg_id, text=rendered_text),
+                        correlation_id=f"direct-approve:{slot.id}:{uuid.uuid4().hex}",
+                    )
+                except Exception:
+                    logger.exception("Failed direct delivery for approved booking", extra={"slot_id": slot.id})
+                    return False
             try:
                 reminder_service = get_reminder_service()
             except RuntimeError:
@@ -1265,7 +1346,7 @@ class NotificationService:
             # Route non-telegram channels through the messenger adapter layer.
             # This renders the template the same way but sends via the platform
             # adapter instead of the aiogram Bot.
-            if self._is_non_telegram_channel(item):
+            if self._is_non_telegram_channel(item) and item.type not in {"slot_assignment_offer", "interview_confirmed_candidate"}:
                 await self._process_via_adapter(item)
                 return
 
@@ -1719,8 +1800,36 @@ class NotificationService:
         await record_notification_sent("reschedule_declined_candidate")
 
     async def _process_candidate_confirmation(self, item: OutboxItem) -> None:
+        payload = dict(item.payload or {})
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
         slot = await get_slot(item.booking_id) if item.booking_id is not None else None
-        if not slot or slot.candidate_tg_id != item.candidate_tg_id:
+        if slot is None:
+            await self._mark_failed(
+                item,
+                item.attempts,
+                "candidate_interview_confirmed",
+                "interview_confirmed_candidate",
+                "slot_missing",
+                None,
+                candidate_tg_id=item.candidate_tg_id,
+            )
+            return
+
+        candidate_id = slot.candidate_tg_id
+        candidate_external_id = str(payload.get("candidate_external_id") or "").strip() or None
+        snapshot_payload = dict(payload.get("snapshot") or {})
+        details_meeting_link = None
+        for key in ("join_link", "link", "meeting_link", "meeting_url", "interview_link", "slot_link"):
+            value = snapshot_payload.get(key)
+            if isinstance(value, str) and value.strip():
+                details_meeting_link = value.strip()
+                break
+        if details_meeting_link is None and getattr(slot, "recruiter_id", None) is not None:
+            async with async_session() as session:
+                recruiter = await session.get(Recruiter, int(slot.recruiter_id))
+                recruiter_link = str(getattr(recruiter, "telemost_url", "") or "").strip()
+                details_meeting_link = recruiter_link or None
+        if channel == "telegram" and slot.candidate_tg_id != item.candidate_tg_id:
             await self._mark_failed(
                 item,
                 item.attempts,
@@ -1731,8 +1840,10 @@ class NotificationService:
                 candidate_tg_id=item.candidate_tg_id,
             )
             return
+        if channel != "telegram" and candidate_external_id is None:
+            recipient = await self._resolve_adapter_recipient(item)
+            candidate_external_id = str(recipient).strip() if recipient is not None else None
 
-        candidate_id = slot.candidate_tg_id
         if await self._has_sent_log("candidate_interview_confirmed", slot.id, candidate_id):
             await update_outbox_entry(
                 item.id,
@@ -1775,6 +1886,53 @@ class NotificationService:
             return
 
         await self._throttle()
+
+        if channel == "max":
+            if candidate_external_id is None:
+                await self._mark_failed(
+                    item,
+                    attempt,
+                    "candidate_interview_confirmed",
+                    "interview_confirmed_candidate",
+                    "candidate_external_id_missing",
+                    rendered_payload,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+
+            details_result = await self._send_via_messenger_adapter(
+                item,
+                candidate_external_id,
+                _build_max_interview_details_text(slot, meeting_link=details_meeting_link),
+            )
+            if not details_result.success:
+                await self._schedule_retry(
+                    item,
+                    attempt=attempt,
+                    log_type="candidate_interview_confirmed",
+                    notification_type="interview_confirmed_candidate",
+                    error=details_result.error or "adapter_send_failed",
+                    rendered=rendered_payload,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+
+            await self._mark_sent(
+                item,
+                attempt,
+                "candidate_interview_confirmed",
+                "interview_confirmed_candidate",
+                rendered_payload,
+                candidate_id,
+                provider_message_id=details_result.message_id,
+            )
+            try:
+                reminder_service = get_reminder_service()
+            except RuntimeError:
+                reminder_service = None
+            if reminder_service is not None and item.booking_id is not None:
+                await reminder_service.schedule_for_slot(item.booking_id)
+            return
 
         bot = get_bot()
         reply_markup = None
@@ -2456,12 +2614,13 @@ class NotificationService:
                     candidate_tg_id=candidate_id,
                 )
                 return
+            reminder_text = _build_max_reminder_text(slot, reminder_kind, recruiter)
             send_result = await self._send_via_messenger_adapter(
                 item,
                 recipient,
-                rendered.text,
-                buttons=reply_markup.inline_keyboard if reply_markup else None,
-                parse_mode="HTML",
+                reminder_text,
+                buttons=None,
+                parse_mode=None,
             )
             if not send_result.success:
                 await self._schedule_retry(
@@ -2482,7 +2641,6 @@ class NotificationService:
                 rendered,
                 candidate_id,
             )
-            await record_slot_reminder_sent(reminder_kind)
             return
 
         bot = get_bot()
@@ -2552,7 +2710,9 @@ class NotificationService:
     async def _process_slot_assignment_offer(self, item: OutboxItem) -> None:
         payload = dict(item.payload or {})
         candidate_id = item.candidate_tg_id or payload.get("candidate_tg_id")
-        if not candidate_id:
+        channel = getattr(item, "messenger_channel", "telegram") or "telegram"
+        candidate_external_id = str(payload.get("candidate_external_id") or "").strip() or None
+        if not candidate_id and candidate_external_id is None:
             await self._mark_failed(
                 item,
                 item.attempts,
@@ -2604,29 +2764,99 @@ class NotificationService:
         city_name = payload.get("city_name") or ""
         comment = payload.get("comment")
         is_alternative = bool(payload.get("is_alternative"))
+        candidate_name = (payload.get("candidate_name") or "").strip() or "Здравствуйте"
+        offer_variant = str(payload.get("offer_variant") or "").strip().lower()
 
-        title = "🔁 Предлагаем другое время" if is_alternative else "📅 Предлагаем время собеседования"
-        text = f"{title}\n🗓 {dt_label}"
-        if recruiter_name:
-            text += f"\n👤 {escape_html(recruiter_name)}"
-        if city_name:
-            text += f"\n📍 {escape_html(city_name)}"
-        if comment:
-            text += f"\n\nКомментарий: {escape_html(str(comment))}"
-        if decline_token:
-            text += "\n\nПодтвердите, выберите другое время или откажитесь."
+        if offer_variant == "manual_confirmation":
+            local_labels = slot_local_labels(start_utc, candidate_tz)
+            slot_day_local = start_utc.astimezone(_safe_zone(candidate_tz)).strftime("%d.%m.%Y")
+            slot_time_local = local_labels["slot_time_local"]
+            format_label = str(payload.get("format_label") or "видео").strip()
+            duration_label = str(payload.get("duration_label") or "15–20 минут").strip()
+            lines = [
+                f"Здравствуйте, {escape_html(candidate_name)}.",
+                "",
+                "Мы предлагаем время для видео-собеседования с компанией SMART.",
+                "",
+                f"Дата: {escape_html(slot_day_local)}",
+                f"Время: {escape_html(slot_time_local)}",
+                f"Формат: {escape_html(format_label)}",
+                f"Длительность: {escape_html(duration_label)}",
+            ]
+            lines.extend(
+                [
+                    "",
+                    "Если это время подходит, подтвердите встречу в личном кабинете mini app внутри MAX.",
+                    "Сразу после подтверждения пришлём детали и ссылку в чат MAX.",
+                ]
+            )
+            if comment:
+                lines.extend(["", f"Комментарий: {escape_html(str(comment))}"])
+            text = "\n".join(lines)
         else:
-            text += "\n\nПодтвердите или выберите другое время."
+            title = "🔁 Предлагаем другое время" if is_alternative else "📅 Предлагаем время собеседования"
+            text = f"{title}\n🗓 {dt_label}"
+            if recruiter_name:
+                text += f"\n👤 {escape_html(recruiter_name)}"
+            if city_name:
+                text += f"\n📍 {escape_html(city_name)}"
+            if comment:
+                text += f"\n\nКомментарий: {escape_html(str(comment))}"
+            if decline_token:
+                text += "\n\nПодтвердите, выберите другое время или откажитесь."
+            else:
+                text += "\n\nПодтвердите или выберите другое время."
 
-        keyboard = kb_slot_assignment_offer(
-            int(assignment_id),
-            confirm_token=str(confirm_token),
-            reschedule_token=str(reschedule_token),
-            decline_token=str(decline_token) if decline_token else None,
-        )
+        keyboard = None
+        if not (offer_variant == "manual_confirmation" and channel != "telegram"):
+            keyboard = kb_slot_assignment_offer(
+                int(assignment_id),
+                confirm_token=str(confirm_token),
+                reschedule_token=str(reschedule_token),
+                decline_token=str(decline_token) if decline_token else None,
+            )
 
         attempt = item.attempts + 1
         await self._throttle()
+        if channel != "telegram":
+            recipient = await self._resolve_adapter_recipient(item)
+            if recipient is None:
+                await self._mark_failed(
+                    item,
+                    attempt,
+                    "slot_assignment_offer",
+                    "slot_assignment_offer",
+                    "recipient_missing",
+                    None,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            send_result = await self._send_via_messenger_adapter(
+                item,
+                recipient,
+                text,
+                buttons=keyboard.inline_keyboard if keyboard is not None else None,
+                parse_mode="HTML",
+            )
+            if not send_result.success:
+                await self._schedule_retry(
+                    item,
+                    attempt=attempt,
+                    log_type="slot_assignment_offer",
+                    notification_type="slot_assignment_offer",
+                    error=str(send_result.error or "adapter_send_failed"),
+                    rendered=None,
+                    candidate_tg_id=candidate_id,
+                )
+                return
+            await update_outbox_entry(
+                item.id,
+                status="sent",
+                attempts=attempt,
+                next_retry_at=None,
+                last_error=None,
+            )
+            return
         try:
             await get_bot().send_message(candidate_id, text, reply_markup=keyboard)
         except Exception as exc:

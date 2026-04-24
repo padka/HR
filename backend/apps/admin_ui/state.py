@@ -5,15 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import signal
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from aiogram.exceptions import TelegramUnauthorizedError
+from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 from fastapi import FastAPI
 
 from backend.apps.admin_ui.services.bot_service import (
@@ -23,26 +23,30 @@ from backend.apps.admin_ui.services.bot_service import (
     configure_bot_service,
 )
 from backend.apps.bot.app import create_dispatcher
+from backend.apps.bot.broker import InMemoryNotificationBroker, NotificationBroker
 from backend.apps.bot.config import DEFAULT_BOT_PROPERTIES
+from backend.apps.bot.notifications.bootstrap import (
+    configure_notification_service as bootstrap_notification_service,
+)
+from backend.apps.bot.notifications.bootstrap import (
+    reset_notification_service as reset_bootstrap_notification_service,
+)
 from backend.apps.bot.reminders import (
-    ReminderService,
     NullReminderService,
+    ReminderService,
     configure_reminder_service,
     create_scheduler,
 )
 from backend.apps.bot.services import (
     NotificationService,
     StateManager,
+)
+from backend.apps.bot.services import (
     configure as configure_bot_services,
 )
-from backend.apps.bot.notifications.bootstrap import (
-    configure_notification_service as bootstrap_notification_service,
-    reset_notification_service as reset_bootstrap_notification_service,
-)
 from backend.apps.bot.state_store import build_state_manager, can_connect_redis
-from backend.core.settings import get_settings
-from backend.apps.bot.broker import InMemoryNotificationBroker, NotificationBroker
 from backend.core.redis_factory import create_redis_client
+from backend.core.settings import get_settings
 
 try:  # pragma: no cover - redis is optional in some environments
     from redis.asyncio import Redis
@@ -68,7 +72,7 @@ async def _create_notification_broker(redis_url: str) -> NotificationBroker:
 
 async def _notification_health_watcher(
     app: FastAPI,
-    integration: "BotIntegration",
+    integration: BotIntegration,
     redis_url: str,
 ) -> None:
     if not redis_url:
@@ -112,7 +116,7 @@ async def _notification_health_watcher(
             backoff = min(backoff * 2, NOTIFICATION_RETRY_MAX)
 
 
-async def _initialize_redis_broker_with_retry(redis_url: str, attempts: int = 3) -> Optional[NotificationBroker]:
+async def _initialize_redis_broker_with_retry(redis_url: str, attempts: int = 3) -> NotificationBroker | None:
     delay = NOTIFICATION_RETRY_BASE
     for attempt in range(1, attempts + 1):
         try:
@@ -136,19 +140,19 @@ class BotIntegration:
     """Holds runtime bot integration objects for cleanup."""
 
     state_manager: StateManager
-    bot: Optional[Bot]
+    bot: Bot | None
     bot_service: BotService
     integration_switch: IntegrationSwitch
     reminder_service: ReminderService
     notification_service: NotificationService
-    notification_broker: Optional[object]
-    bot_runner_task: Optional[asyncio.Task] = None
-    bot_dispatcher: Optional[Dispatcher] = None
-    bot_runner_stop: Optional[asyncio.Event] = None
-    notification_watch_task: Optional[asyncio.Task] = None
+    notification_broker: object | None
+    bot_runner_task: asyncio.Task | None = None
+    bot_dispatcher: Dispatcher | None = None
+    bot_runner_stop: asyncio.Event | None = None
+    notification_watch_task: asyncio.Task | None = None
 
     @classmethod
-    def null_integration(cls) -> "BotIntegration":
+    def null_integration(cls) -> BotIntegration:
         settings = get_settings()
         state_manager = build_state_manager(
             redis_url=None,
@@ -215,7 +219,7 @@ class BotIntegration:
                 await self.notification_watch_task
 
 
-def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
+def _build_bot(settings) -> tuple[Bot | None, bool]:
     """Create bot runtime instance if configuration is valid."""
 
     if not settings.bot_enabled:
@@ -238,7 +242,7 @@ def _build_bot(settings) -> Tuple[Optional[Bot], bool]:
         missing.append("BOT_WEBHOOK_URL")
 
     if missing:
-        message = "Bot enabled but missing: %s" % ", ".join(missing)
+        message = f"Bot enabled but missing: {', '.join(missing)}"
         if settings.bot_failfast:
             raise RuntimeError(message)
         logger.warning("%s; running with NullBot", message)
@@ -283,9 +287,10 @@ async def _run_bot_polling(
     bot: Bot,
     dispatcher: Dispatcher,
     stop_event: asyncio.Event,
-    integration_switch: Optional[IntegrationSwitch] = None,
+    integration_switch: IntegrationSwitch | None = None,
 ) -> None:
-    backoff_seconds = 3
+    settings = get_settings()
+    backoff_seconds = settings.bot_polling_backoff_initial_seconds
     loop = asyncio.get_running_loop()
     registered_signals: list[int] = []
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -296,13 +301,17 @@ async def _run_bot_polling(
             continue
     while not stop_event.is_set():
         try:
-            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.delete_webhook(drop_pending_updates=False)
             me = await bot.get_me()
             logger.info(
                 "Bot polling loop started",
                 extra={"bot_id": me.id, "username": me.username},
             )
-            await dispatcher.start_polling(bot)
+            await dispatcher.start_polling(
+                bot,
+                polling_timeout=settings.bot_polling_timeout_seconds,
+            )
+            backoff_seconds = settings.bot_polling_backoff_initial_seconds
             if stop_event.is_set():
                 break
             logger.warning("Bot polling stopped unexpectedly; restarting in %s seconds", backoff_seconds)
@@ -323,9 +332,25 @@ async def _run_bot_polling(
                 )
             stop_event.set()
             break
+        except TelegramNetworkError as exc:
+            sleep_for = backoff_seconds + random.uniform(0, max(backoff_seconds * 0.25, 0.1))
+            logger.warning(
+                "Bot polling network error; retrying in %.1f seconds",
+                sleep_for,
+                extra={"error_type": exc.__class__.__name__},
+            )
+            await asyncio.sleep(sleep_for)
+            backoff_seconds = min(
+                backoff_seconds * 2,
+                settings.bot_polling_backoff_max_seconds,
+            )
         except Exception:
             logger.exception("Bot polling task crashed; retrying in %s seconds", backoff_seconds)
             await asyncio.sleep(backoff_seconds)
+            backoff_seconds = min(
+                backoff_seconds * 2,
+                settings.bot_polling_backoff_max_seconds,
+            )
     with suppress(Exception):
         await dispatcher.stop_polling()
     for sig in registered_signals:
@@ -368,7 +393,7 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     else:
         scheduler = create_scheduler(None if force_memory else redis_url) if settings.bot_enabled else None
 
-    broker_instance: Optional[object] = None
+    broker_instance: object | None = None
 
     app.state.notification_broker_status = "disabled"
     app.state.notification_broker_available = False
@@ -477,9 +502,9 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
     app.state.bot_integration_switch = switch
     app.state.reminder_service = reminder_service
     app.state.notification_service = notification_service
-    bot_runner_task: Optional[asyncio.Task] = None
-    dispatcher: Optional[Dispatcher] = None
-    bot_runner_stop: Optional[asyncio.Event] = None
+    bot_runner_task: asyncio.Task | None = None
+    dispatcher: Dispatcher | None = None
+    bot_runner_stop: asyncio.Event | None = None
 
     supervise_bot = (
         bot is not None

@@ -59,6 +59,7 @@ class _RecordingMaxAdapter(MessengerProtocol):
 
     def __init__(self) -> None:
         self.messages: list[tuple[int | str, str]] = []
+        self.calls: list[dict[str, object]] = []
 
     async def configure(self, **kwargs):
         return None
@@ -72,8 +73,16 @@ class _RecordingMaxAdapter(MessengerProtocol):
         parse_mode=None,
         correlation_id=None,
     ):
-        del buttons, parse_mode, correlation_id
         self.messages.append((chat_id, text))
+        self.calls.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "buttons": buttons,
+                "parse_mode": parse_mode,
+                "correlation_id": correlation_id,
+            }
+        )
         return SimpleNamespace(success=True, message_id="max-message-1", error=None)
 
 
@@ -149,7 +158,12 @@ async def _ensure_candidate_rejection_template() -> None:
 
 async def _seed_max_delivery_slot(*, purpose: str = "interview") -> dict[str, int | str]:
     async with async_session() as session:
-        recruiter = Recruiter(name="MAX Reminder Recruiter", tz="Europe/Moscow", active=True)
+        recruiter = Recruiter(
+            name="MAX Reminder Recruiter",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example/max-reminder-room",
+            active=True,
+        )
         session.add(recruiter)
         await session.flush()
 
@@ -481,6 +495,100 @@ async def test_schedule_for_slot_queues_max_reminder_without_telegram_identity()
 
 
 @pytest.mark.asyncio
+async def test_approved_booking_queues_max_confirmation_from_snapshot_identity():
+    seeded = await _seed_max_delivery_slot(purpose="interview")
+    broker = InMemoryNotificationBroker()
+    await broker.start()
+
+    async with async_session() as session:
+        slot = await session.get(Slot, int(seeded["slot_id"]))
+        assert slot is not None
+        snapshot = await capture_slot_snapshot(slot)
+
+    service = NotificationService(
+        broker=broker,
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+    )
+    result = await service.on_booking_status_changed(
+        int(seeded["slot_id"]),
+        BookingNotificationStatus.APPROVED,
+        snapshot=snapshot,
+    )
+
+    assert result.status == "queued"
+
+    async with async_session() as session:
+        outbox = await session.scalar(
+            select(OutboxNotification)
+            .where(OutboxNotification.booking_id == int(seeded["slot_id"]))
+            .where(OutboxNotification.type == "interview_confirmed_candidate")
+            .order_by(OutboxNotification.id.desc())
+        )
+
+    assert outbox is not None
+    assert outbox.messenger_channel == "max"
+    assert outbox.candidate_tg_id is None
+    assert outbox.payload_json is not None
+    assert outbox.payload_json["candidate_external_id"] == seeded["max_user_id"]
+    assert outbox.payload_json["snapshot"]["candidate_external_id"] == seeded["max_user_id"]
+    await broker.close()
+
+
+@pytest.mark.asyncio
+async def test_max_ten_minute_reminder_uses_plain_text_delivery():
+    seeded = await _seed_max_delivery_slot(purpose="interview")
+    adapter = _RecordingMaxAdapter()
+
+    import backend.core.messenger.registry as registry_module
+
+    registry_module.get_registry().register(adapter)
+
+    entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=int(seeded["slot_id"]),
+        candidate_tg_id=None,
+        messenger_channel="max",
+        payload={
+            "candidate_external_id": seeded["max_user_id"],
+            "reminder_kind": ReminderKind.REMIND_10M.value,
+        },
+    )
+    item = OutboxItem(
+        id=entry.id,
+        booking_id=entry.booking_id,
+        type=entry.type,
+        payload=entry.payload_json or {},
+        candidate_tg_id=entry.candidate_tg_id,
+        recruiter_tg_id=entry.recruiter_tg_id,
+        attempts=entry.attempts,
+        created_at=entry.created_at,
+        messenger_channel=entry.messenger_channel,
+    )
+
+    service = NotificationService(
+        broker=None,
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+    )
+
+    await service._process_interview_reminder(item)
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["chat_id"] == seeded["max_user_id"]
+    assert adapter.calls[0]["parse_mode"] is None
+    assert "mini app внутри MAX" in str(adapter.calls[0]["text"])
+    assert "<b>" not in str(adapter.calls[0]["text"])
+    assert adapter.calls[0]["buttons"] is None
+
+    async with async_session() as session:
+        outbox = await session.get(OutboxNotification, entry.id)
+
+    assert outbox is not None
+    assert outbox.status == "sent"
+
+
+@pytest.mark.asyncio
 async def test_intro_day_invitation_uses_max_adapter_without_telegram_identity():
     seeded = await _seed_max_delivery_slot(purpose="intro_day")
     adapter = _RecordingMaxAdapter()
@@ -525,3 +633,261 @@ async def test_intro_day_invitation_uses_max_adapter_without_telegram_identity()
 
     assert outbox is not None
     assert outbox.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_slot_assignment_offer_manual_confirmation_uses_requested_copy_for_max():
+    adapter = _RecordingMaxAdapter()
+
+    import backend.core.messenger.registry as registry_module
+
+    registry_module.get_registry().register(adapter)
+
+    async with async_session() as session:
+        recruiter = Recruiter(
+            name="MAX Manual Recruiter",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example/manual-room",
+            active=True,
+        )
+        candidate = User(
+            fio="Марина",
+            city="Москва",
+            source="max",
+            messenger_platform="max",
+            max_user_id="max-manual-confirm-user",
+            telegram_id=None,
+            telegram_user_id=None,
+            candidate_status=CandidateStatus.SLOT_PENDING,
+        )
+        session.add_all([recruiter, candidate])
+        await session.flush()
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            candidate_city_id=None,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+            start_utc=datetime(2032, 1, 16, 14, 0, tzinfo=UTC),
+            duration_min=20,
+            status=SlotStatus.PENDING,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=None,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.flush()
+
+        entry = await add_outbox_notification(
+            notification_type="slot_assignment_offer",
+            booking_id=slot.id,
+            candidate_tg_id=None,
+            messenger_channel="max",
+            payload={
+                "slot_assignment_id": 501,
+                "slot_id": slot.id,
+                "candidate_id": candidate.candidate_id,
+                "candidate_name": candidate.fio,
+                "candidate_tz": "Europe/Moscow",
+                "candidate_external_id": candidate.max_user_id,
+                "recruiter_id": recruiter.id,
+                "recruiter_name": recruiter.name,
+                "start_utc": slot.start_utc.isoformat(),
+                "duration_min": slot.duration_min,
+                "offer_variant": "manual_confirmation",
+                "meeting_link": recruiter.telemost_url,
+                "format_label": "видео",
+                "duration_label": "15–20 минут",
+                "action_tokens": {
+                    "confirm": "confirm-token",
+                    "reschedule": "reschedule-token",
+                },
+            },
+            session=session,
+        )
+        await session.commit()
+
+    service = NotificationService(
+        broker=None,
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+    )
+    item = OutboxItem(
+        id=entry.id,
+        booking_id=entry.booking_id,
+        type=entry.type,
+        payload=entry.payload_json or {},
+        candidate_tg_id=entry.candidate_tg_id,
+        recruiter_tg_id=entry.recruiter_tg_id,
+        attempts=entry.attempts,
+        created_at=entry.created_at,
+        messenger_channel=entry.messenger_channel,
+    )
+
+    await service._process_slot_assignment_offer(item)
+
+    assert len(adapter.messages) == 1
+    recipient, text = adapter.messages[0]
+    assert recipient == "max-manual-confirm-user"
+    assert "Здравствуйте, Марина." in text
+    assert "Мы предлагаем время для видео-собеседования с компанией SMART." in text
+    assert "Дата: 16.01.2032" in text
+    assert "Время: 17:00" in text
+    assert "Формат: видео" in text
+    assert "Длительность: 15–20 минут" in text
+    assert "подтвердите встречу в личном кабинете mini app внутри MAX" in text
+    assert "Сразу после подтверждения пришлём детали и ссылку в чат MAX." in text
+    assert "https://telemost.example/manual-room" not in text
+    assert adapter.calls[0]["buttons"] is None
+
+    async with async_session() as session:
+        outbox = await session.get(OutboxNotification, entry.id)
+
+    assert outbox is not None
+    assert outbox.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_interview_confirmed_candidate_for_max_sends_details_without_actions():
+    adapter = _RecordingMaxAdapter()
+
+    import backend.core.messenger.registry as registry_module
+
+    registry_module.get_registry().register(adapter)
+
+    async with async_session() as session:
+        recruiter = Recruiter(
+            name="MAX Approved Recruiter",
+            tz="Europe/Moscow",
+            telemost_url="https://telemost.example/approved-room",
+            active=True,
+        )
+        candidate = User(
+            fio="Макс Кандидат",
+            city="Махачкала",
+            source="max",
+            messenger_platform="max",
+            max_user_id="max-approved-user",
+            telegram_id=None,
+            telegram_user_id=None,
+            candidate_status=CandidateStatus.INTERVIEW_SCHEDULED,
+        )
+        session.add_all([recruiter, candidate])
+        await session.flush()
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=None,
+            candidate_city_id=None,
+            purpose="interview",
+            tz_name="Europe/Moscow",
+            start_utc=datetime(2032, 2, 20, 8, 0, tzinfo=UTC),
+            duration_min=20,
+            status=SlotStatus.BOOKED,
+            candidate_id=candidate.candidate_id,
+            candidate_tg_id=None,
+            candidate_fio=candidate.fio,
+            candidate_tz="Europe/Moscow",
+        )
+        session.add(slot)
+        await session.flush()
+
+        snapshot = await capture_slot_snapshot(slot)
+        entry = await add_outbox_notification(
+            notification_type="interview_confirmed_candidate",
+            booking_id=slot.id,
+            candidate_tg_id=None,
+            messenger_channel="max",
+            payload={
+                "event": BookingNotificationStatus.APPROVED.value,
+                "candidate_external_id": candidate.max_user_id,
+                "candidate_id": candidate.candidate_id,
+                "snapshot": bot_base_module._snapshot_payload(snapshot),
+            },
+            session=session,
+        )
+        await session.commit()
+
+    service = NotificationService(
+        broker=None,
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+    )
+    item = OutboxItem(
+        id=entry.id,
+        booking_id=entry.booking_id,
+        type=entry.type,
+        payload=entry.payload_json or {},
+        candidate_tg_id=entry.candidate_tg_id,
+        recruiter_tg_id=entry.recruiter_tg_id,
+        attempts=entry.attempts,
+        created_at=entry.created_at,
+        messenger_channel=entry.messenger_channel,
+    )
+
+    await service._process_candidate_confirmation(item)
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["chat_id"] == "max-approved-user"
+    assert adapter.calls[0]["parse_mode"] is None
+    assert "Макс Кандидат" in str(adapter.calls[0]["text"])
+    assert "Встречу предварительно подтвердили." in str(adapter.calls[0]["text"])
+    assert "Ссылка для подключения:" in str(adapter.calls[0]["text"])
+    assert "https://telemost.example/approved-room" in str(adapter.calls[0]["text"])
+    assert "mini app внутри MAX" in str(adapter.calls[0]["text"])
+    assert "<b>" not in str(adapter.calls[0]["text"])
+    assert adapter.calls[0]["buttons"] is None
+
+    async with async_session() as session:
+        outbox = await session.get(OutboxNotification, entry.id)
+
+    assert outbox is not None
+    assert outbox.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_max_confirm_2h_reminder_uses_plain_text_without_actions():
+    seeded = await _seed_max_delivery_slot(purpose="interview")
+    adapter = _RecordingMaxAdapter()
+
+    import backend.core.messenger.registry as registry_module
+
+    registry_module.get_registry().register(adapter)
+
+    entry = await add_outbox_notification(
+        notification_type="slot_reminder",
+        booking_id=int(seeded["slot_id"]),
+        candidate_tg_id=None,
+        messenger_channel="max",
+        payload={
+            "candidate_external_id": seeded["max_user_id"],
+            "reminder_kind": ReminderKind.CONFIRM_2H.value,
+        },
+    )
+    item = OutboxItem(
+        id=entry.id,
+        booking_id=entry.booking_id,
+        type=entry.type,
+        payload=entry.payload_json or {},
+        candidate_tg_id=entry.candidate_tg_id,
+        recruiter_tg_id=entry.recruiter_tg_id,
+        attempts=entry.attempts,
+        created_at=entry.created_at,
+        messenger_channel=entry.messenger_channel,
+    )
+
+    service = NotificationService(
+        broker=None,
+        poll_interval=0.05,
+        rate_limit_per_sec=10,
+    )
+
+    await service._process_interview_reminder(item)
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["chat_id"] == seeded["max_user_id"]
+    assert adapter.calls[0]["parse_mode"] is None
+    assert "подтвердите участие в личном кабинете mini app внутри max" in str(adapter.calls[0]["text"]).lower()
+    assert adapter.calls[0]["buttons"] is None

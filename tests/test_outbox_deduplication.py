@@ -248,6 +248,55 @@ async def test_add_outbox_notification_different_types_are_separate():
 
 
 @pytest.mark.asyncio
+async def test_add_outbox_notification_updates_channel_when_reusing_pending_entry():
+    async with async_session() as session:
+        city = City(name="Reuse Channel City", tz="UTC", active=True)
+        recruiter = Recruiter(name="Reuse Channel Recruiter", tz="UTC", active=True)
+        session.add_all([city, recruiter])
+        await session.commit()
+        await session.refresh(city)
+        await session.refresh(recruiter)
+
+        slot = Slot(
+            recruiter_id=recruiter.id,
+            city_id=city.id,
+            start_utc=datetime.now(timezone.utc),
+            duration_min=60,
+            status=SlotStatus.BOOKED,
+            candidate_tg_id=None,
+        )
+        session.add(slot)
+        await session.commit()
+        await session.refresh(slot)
+
+    first = await add_outbox_notification(
+        notification_type="interview_confirmed_candidate",
+        booking_id=slot.id,
+        candidate_tg_id=None,
+        messenger_channel="telegram",
+        payload={"snapshot": {"candidate_external_id": "max-user-old"}},
+    )
+
+    second = await add_outbox_notification(
+        notification_type="interview_confirmed_candidate",
+        booking_id=slot.id,
+        candidate_tg_id=None,
+        messenger_channel="max",
+        payload={"snapshot": {"candidate_external_id": "max-user-new"}},
+    )
+
+    assert second.id == first.id
+
+    async with async_session() as session:
+        entry = await session.get(OutboxNotification, first.id)
+
+    assert entry is not None
+    assert entry.messenger_channel == "max"
+    assert entry.last_channel_attempted == "max"
+    assert entry.payload_json == {"snapshot": {"candidate_external_id": "max-user-new"}}
+
+
+@pytest.mark.asyncio
 async def test_claim_outbox_item_by_id_is_single_consumer():
     """Claiming the same outbox id twice should only return one claim."""
 

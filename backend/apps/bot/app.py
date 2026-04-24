@@ -5,41 +5,46 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import Tuple
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
+from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 
-from backend.core.logging import configure_logging
-from backend.core.settings import get_settings
 from backend.core.content_updates import (
-    ContentUpdateEvent,
     KIND_QUESTIONS_CHANGED,
-    KIND_TEMPLATES_CHANGED,
     KIND_REMINDERS_CHANGED,
+    KIND_TEMPLATES_CHANGED,
+    ContentUpdateEvent,
     run_content_updates_subscriber,
 )
+from backend.core.logging import configure_logging
+from backend.core.settings import get_settings
 
 from .config import BOT_TOKEN, DEFAULT_BOT_PROPERTIES
 from .handlers import register_routers
 from .middleware import InboundChatLoggingMiddleware, TelegramIdentityMiddleware
-from .services import (
-    NotificationService,
-    StateManager,
-    configure as configure_services,
+from .notifications.bootstrap import (
+    configure_notification_service as bootstrap_notification_service,
+)
+from .notifications.bootstrap import (
+    reset_notification_service as reset_bootstrap_notification_service,
 )
 from .reminders import (
     ReminderService,
     configure_reminder_service,
     create_scheduler,
 )
-from .notifications.bootstrap import (
-    configure_notification_service as bootstrap_notification_service,
-    reset_notification_service as reset_bootstrap_notification_service,
+from .services import (
+    NotificationService,
+    StateManager,
+)
+from .services import (
+    configure as configure_services,
 )
 from .state_store import build_state_manager, can_connect_redis
 
@@ -71,7 +76,7 @@ async def _heartbeat_loop(stop_event: asyncio.Event, path: Path) -> None:
             logging.debug("bot.heartbeat_write_failed", exc_info=True)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 def create_bot(token: str | None = None) -> Bot:
@@ -108,7 +113,7 @@ def create_dispatcher() -> Dispatcher:
 
 async def create_application(
     token: str | None = None,
-) -> Tuple[Bot, Dispatcher, StateManager, ReminderService, NotificationService]:
+) -> tuple[Bot, Dispatcher, StateManager, ReminderService, NotificationService]:
     """Create and configure the bot application components."""
     bot = create_bot(token)
     dispatcher = create_dispatcher()
@@ -157,7 +162,13 @@ async def main() -> None:
     if redis_url:
         try:
             from urllib.parse import urlparse
-            from backend.core.cache import CacheConfig, init_cache, connect_cache, disconnect_cache
+
+            from backend.core.cache import (
+                CacheConfig,
+                connect_cache,
+                disconnect_cache,
+                init_cache,
+            )
 
             parsed = urlparse(redis_url)
             cache_config = CacheConfig(
@@ -253,14 +264,48 @@ async def main() -> None:
         if settings.redis_url:
             content_updates_task = asyncio.create_task(_content_updates_supervisor(settings.redis_url))
 
-        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.delete_webhook(drop_pending_updates=False)
         me = await bot.get_me()
         logging.warning("BOOT: using bot id=%s, username=@%s", me.id, me.username)
         _write_heartbeat(heartbeat_file)
         heartbeat_task = asyncio.create_task(_heartbeat_loop(heartbeat_stop, heartbeat_file))
         # NOTE: Database migrations should be run separately before starting the bot
         # Run: python scripts/run_migrations.py
-        await dispatcher.start_polling(bot)
+        polling_backoff = settings.bot_polling_backoff_initial_seconds
+        while True:
+            try:
+                await dispatcher.start_polling(
+                    bot,
+                    polling_timeout=settings.bot_polling_timeout_seconds,
+                )
+                polling_backoff = settings.bot_polling_backoff_initial_seconds
+                logging.warning(
+                    "bot.polling_stopped_unexpectedly retrying_in=%.1f",
+                    polling_backoff,
+                )
+                await asyncio.sleep(polling_backoff)
+            except asyncio.CancelledError:
+                with suppress(Exception):
+                    await dispatcher.stop_polling()
+                raise
+            except TelegramUnauthorizedError:
+                logging.error(
+                    "bot.polling_disabled_telegram_unauthorized; update BOT_TOKEN and restart"
+                )
+                raise
+            except TelegramNetworkError as exc:
+                delay = min(polling_backoff, settings.bot_polling_backoff_max_seconds)
+                sleep_for = delay + random.uniform(0, max(delay * 0.25, 0.1))
+                logging.warning(
+                    "bot.polling_network_error retrying_in=%.1f error_type=%s",
+                    sleep_for,
+                    exc.__class__.__name__,
+                )
+                await asyncio.sleep(sleep_for)
+                polling_backoff = min(
+                    polling_backoff * 2,
+                    settings.bot_polling_backoff_max_seconds,
+                )
     finally:
         heartbeat_stop.set()
         content_updates_stop.set()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from backend.apps.admin_ui.app import create_app
 from backend.apps.admin_ui.services.bot_service import (
@@ -8,7 +10,13 @@ from backend.apps.admin_ui.services.bot_service import (
     IntegrationSwitch,
 )
 from backend.apps.bot.state_store import build_state_manager
+from backend.core.db import async_session
+from backend.core.messenger.protocol import InlineButton
+from backend.domain.candidates import services as candidate_services
+from backend.domain.candidates.models import ChatMessage, ChatMessageStatus, User
+from backend.domain.candidates.status import CandidateStatus
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 def _login(client: TestClient, username: str, password: str) -> None:
@@ -51,6 +59,169 @@ async def test_bot_service_switch_blocks_dispatch(monkeypatch):
     )
 
     assert result.status == "skipped:disabled"
+
+    await state_manager.clear()
+    await state_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_bot_service_send_test2_logs_failed_max_delivery_when_required(monkeypatch):
+    state_manager = build_state_manager(redis_url=None, ttl_seconds=60)
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=901150,
+        fio="MAX Test2 Failure Candidate",
+        city="Москва",
+        username="max_test2_failure",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+    async with async_session() as session:
+        persisted = await session.get(User, candidate.id)
+        assert persisted is not None
+        persisted.telegram_id = None
+        persisted.telegram_user_id = None
+        persisted.max_user_id = "129613758"
+        await session.commit()
+
+    class _FailedAdapter:
+        async def send_message(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                success=False,
+                error="HTTP 403: error.dialog.suspended",
+                message_id=None,
+            )
+
+    async def _fake_mark_max_candidate_test2_ready(*_args, **_kwargs):
+        return None
+
+    async def _fake_ensure_max_adapter(**_kwargs):
+        return _FailedAdapter()
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.bot_service.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.bot_service.mark_max_candidate_test2_ready",
+        _fake_mark_max_candidate_test2_ready,
+    )
+
+    service = BotService(
+        state_manager=state_manager,
+        enabled=True,
+        configured=True,
+        integration_switch=IntegrationSwitch(initial=True),
+        required=False,
+    )
+
+    result = await service.send_test2(
+        candidate_id=0,
+        candidate_tz="Europe/Moscow",
+        candidate_city=1,
+        candidate_name="MAX Test2 Failure Candidate",
+        required=True,
+        candidate_public_id=candidate.candidate_id,
+        max_user_id="129613758",
+    )
+
+    assert result.ok is False
+    assert result.status == "skipped:error"
+    assert "error.dialog.suspended" in str(result.error)
+
+    async with async_session() as session:
+        message = await session.scalar(
+            select(ChatMessage)
+            .where(
+                ChatMessage.candidate_id == candidate.id,
+                ChatMessage.channel == "max",
+                ChatMessage.status == ChatMessageStatus.FAILED.value,
+            )
+            .order_by(ChatMessage.id.desc())
+        )
+    assert message is not None
+    assert message.error == "HTTP 403: error.dialog.suspended"
+    assert message.client_request_id == "max:test2:129613758:none:failed"
+
+    await state_manager.clear()
+    await state_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_bot_service_send_test2_prefers_candidate_public_id_and_uses_callback_only_for_max(monkeypatch):
+    state_manager = build_state_manager(redis_url=None, ttl_seconds=60)
+    duplicate_user_id = "129613759"
+    older_candidate = await candidate_services.create_or_update_user(
+        telegram_id=901151,
+        fio="MAX Duplicate Older",
+        city="Москва",
+        username="max_duplicate_older",
+        initial_status=CandidateStatus.INTERVIEW_DECLINED,
+    )
+    primary_candidate = await candidate_services.create_or_update_user(
+        telegram_id=901152,
+        fio="MAX Duplicate Primary",
+        city="Москва",
+        username="max_duplicate_primary",
+        initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
+    )
+    async with async_session() as session:
+        for candidate_id in (older_candidate.id, primary_candidate.id):
+            persisted = await session.get(User, candidate_id)
+            assert persisted is not None
+            persisted.telegram_id = None
+            persisted.telegram_user_id = None
+            persisted.max_user_id = duplicate_user_id
+        await session.commit()
+
+    observed: dict[str, object] = {}
+
+    class _SuccessfulAdapter:
+        async def send_message(self, chat_id, text, *, buttons=None, **_kwargs):
+            observed["chat_id"] = chat_id
+            observed["text"] = text
+            observed["buttons"] = buttons
+            return SimpleNamespace(success=True, error=None, message_id="mid.test2")
+
+    async def _fake_mark_max_candidate_test2_ready(_session, *, candidate, **_kwargs):
+        observed["candidate_id"] = candidate.id
+        return None
+
+    async def _fake_ensure_max_adapter(**_kwargs):
+        return _SuccessfulAdapter()
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.bot_service.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.bot_service.mark_max_candidate_test2_ready",
+        _fake_mark_max_candidate_test2_ready,
+    )
+
+    service = BotService(
+        state_manager=state_manager,
+        enabled=True,
+        configured=True,
+        integration_switch=IntegrationSwitch(initial=True),
+        required=False,
+    )
+
+    result = await service.send_test2(
+        candidate_id=0,
+        candidate_tz="Europe/Moscow",
+        candidate_city=1,
+        candidate_name="MAX Duplicate Primary",
+        required=True,
+        slot_id=2308,
+        candidate_public_id=primary_candidate.candidate_id,
+        max_user_id=duplicate_user_id,
+    )
+
+    assert result.ok is True
+    assert result.status == "sent_test2"
+    assert observed["candidate_id"] == primary_candidate.id
+    assert observed["chat_id"] == duplicate_user_id
+    assert isinstance(observed["buttons"], list)
+    assert observed["buttons"] == [[InlineButton(text="Пройти в чате", callback_data="test2:start", kind="callback")]]
 
     await state_manager.clear()
     await state_manager.close()
