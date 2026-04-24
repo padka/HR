@@ -74,6 +74,7 @@ export type IncomingCandidate = {
   name: string | null
   city: string | null
   city_id?: number | null
+  messenger_channel?: 'telegram' | 'max' | null
   status_display?: string | null
   status_slug?: string | null
   waiting_hours?: number | null
@@ -125,6 +126,7 @@ export type FetchDashboardIncomingParams = {
   search?: string
   cityId?: number | null
   status?: string
+  channel?: string
   owner?: string
   waiting?: string
   aiLevel?: string
@@ -151,6 +153,7 @@ export function fetchDashboardIncomingWindow(params: FetchDashboardIncomingParam
   if (params.search?.trim()) query.set('search', params.search.trim())
   if (typeof params.cityId === 'number') query.set('city_id', String(params.cityId))
   if (params.status) query.set('status', params.status)
+  if (params.channel) query.set('channel', params.channel)
   if (params.owner) query.set('owner', params.owner)
   if (params.waiting) query.set('waiting', params.waiting)
   if (params.aiLevel) query.set('ai_level', params.aiLevel)

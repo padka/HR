@@ -1336,6 +1336,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai/candidates/{candidate_id}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api Ai Candidate Facts */
+        get: operations["api_ai_candidate_facts_api_ai_candidates__candidate_id__facts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/candidates/{candidate_id}/facts/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Ai Candidate Facts Refresh */
+        post: operations["api_ai_candidate_facts_refresh_api_ai_candidates__candidate_id__facts_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/candidates/{candidate_id}/next-best-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api Ai Candidate Next Best Action */
+        get: operations["api_ai_candidate_next_best_action_api_ai_candidates__candidate_id__next_best_action_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/candidates/{candidate_id}/next-best-action/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Ai Candidate Next Best Action Refresh */
+        post: operations["api_ai_candidate_next_best_action_refresh_api_ai_candidates__candidate_id__next_best_action_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/candidates/{candidate_id}/next-best-action/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Ai Candidate Next Best Action Feedback */
+        post: operations["api_ai_candidate_next_best_action_feedback_api_ai_candidates__candidate_id__next_best_action_feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/candidates/{candidate_id}/contact/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Api Ai Candidate Contact Drafts */
+        post: operations["api_ai_candidate_contact_drafts_api_ai_candidates__candidate_id__contact_drafts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai/candidates/{candidate_id}/interview-script": {
         parameters: {
             query?: never;
@@ -2328,7 +2430,7 @@ export interface paths {
         };
         /**
          * Api Dashboard Incoming
-         * @description Unified incoming queue for candidates waiting on slot coordination or manual time resolution.
+         * @description Unified incoming queue with server-driven paging, filtering, and advisory AI signals.
          */
         get: operations["api_dashboard_incoming_api_dashboard_incoming_get"];
         put?: never;
@@ -6867,6 +6969,192 @@ export interface operations {
             };
         };
     };
+    api_ai_candidate_facts_api_ai_candidates__candidate_id__facts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_ai_candidate_facts_refresh_api_ai_candidates__candidate_id__facts_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_ai_candidate_next_best_action_api_ai_candidates__candidate_id__next_best_action_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_ai_candidate_next_best_action_refresh_api_ai_candidates__candidate_id__next_best_action_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_ai_candidate_next_best_action_feedback_api_ai_candidates__candidate_id__next_best_action_feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_ai_candidate_contact_drafts_api_ai_candidates__candidate_id__contact_drafts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     api_ai_candidate_interview_script_api_ai_candidates__candidate_id__interview_script_get: {
         parameters: {
             query?: never;
@@ -8793,7 +9081,17 @@ export interface operations {
     api_dashboard_incoming_api_dashboard_incoming_get: {
         parameters: {
             query?: {
-                limit?: number;
+                limit?: number | null;
+                page?: number;
+                page_size?: number | null;
+                search?: string | null;
+                city_id?: number | null;
+                status?: string;
+                channel?: string;
+                owner?: string;
+                waiting?: string;
+                ai_level?: string;
+                sort?: string;
             };
             header?: never;
             path?: never;

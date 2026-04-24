@@ -855,6 +855,77 @@ export type AICoachResponse = {
   coach: AICoach
 }
 
+export type AIFactItem = {
+  key: string
+  label: string
+  value: string
+  confidence?: 'high' | 'medium' | 'low'
+  source?: string
+  confirmed?: boolean
+  ambiguity_note?: string | null
+}
+
+export type AIFacts = {
+  summary: string
+  facts?: AIFactItem[]
+  confirmed_keys?: string[]
+  ambiguous_keys?: string[]
+  prefill_ready_keys?: string[]
+  clarification_question?: string | null
+}
+
+export type AIFactsResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  facts: AIFacts
+}
+
+export type AINextBestActionPlaybook = {
+  what_to_write: string
+  what_to_offer: string
+  likely_objection: string
+  best_cta: string
+}
+
+export type AINextBestAction = {
+  summary: string
+  ai_confidence?: 'high' | 'medium' | 'low'
+  recommended_action?: AINextActionItem | null
+  reasons?: AIEvidenceItem[]
+  risks?: AIRiskItem[]
+  interview_focus?: string[]
+  outreach_goal?: string
+  playbook?: AINextBestActionPlaybook | null
+  feedback_state?: 'pending' | 'accepted' | 'dismissed' | 'edited'
+}
+
+export type AINextBestActionResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  recommendation: AINextBestAction
+}
+
+export type AINextBestActionFeedbackResponse = {
+  ok: boolean
+  candidate_id?: number
+  feedback_state?: 'accepted' | 'dismissed' | 'edited'
+  action?: 'accept' | 'dismiss' | 'edit_and_send'
+  saved_at?: string
+}
+
+export type AIContactDraftsResponse = {
+  ok: boolean
+  cached: boolean
+  input_hash: string
+  analysis?: string | null
+  intent_key?: string
+  recommended_channel?: string
+  drafts: AIDraftItem[]
+  used_context?: Record<string, unknown>
+}
+
 export type CandidateAiResumeUpsertResponse = {
   ok: boolean
   normalized_resume?: Record<string, unknown>
@@ -1124,6 +1195,32 @@ export function refreshCandidateAiCoach(candidateId: number) {
   return apiFetch<AICoachResponse>(`/ai/candidates/${candidateId}/coach/refresh`, { method: 'POST' })
 }
 
+export function fetchCandidateAiFacts(candidateId: number) {
+  return apiFetch<AIFactsResponse>(`/ai/candidates/${candidateId}/facts`)
+}
+
+export function refreshCandidateAiFacts(candidateId: number) {
+  return apiFetch<AIFactsResponse>(`/ai/candidates/${candidateId}/facts/refresh`, { method: 'POST' })
+}
+
+export function fetchCandidateAiNextBestAction(candidateId: number) {
+  return apiFetch<AINextBestActionResponse>(`/ai/candidates/${candidateId}/next-best-action`)
+}
+
+export function refreshCandidateAiNextBestAction(candidateId: number) {
+  return apiFetch<AINextBestActionResponse>(`/ai/candidates/${candidateId}/next-best-action/refresh`, { method: 'POST' })
+}
+
+export function saveCandidateAiNextBestActionFeedback(
+  candidateId: number,
+  payload: { action: 'accept' | 'dismiss' | 'edit_and_send'; note?: string | null },
+) {
+  return apiFetch<AINextBestActionFeedbackResponse>(`/ai/candidates/${candidateId}/next-best-action/feedback`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function upsertCandidateAiResume(
   candidateId: number,
   payload: { format: 'json'; resume_json: Record<string, unknown> } | { format: 'raw_text'; resume_text: string },
@@ -1143,6 +1240,13 @@ export function fetchCandidateChatDrafts(candidateId: number, mode: 'short' | 'n
 
 export function fetchCandidateCoachDrafts(candidateId: number, mode: 'short' | 'neutral' | 'supportive') {
   return apiFetch<AIDraftsResponse>(`/ai/candidates/${candidateId}/coach/drafts`, {
+    method: 'POST',
+    body: JSON.stringify({ mode }),
+  })
+}
+
+export function fetchCandidateContactDrafts(candidateId: number, mode: 'short' | 'neutral' | 'supportive') {
+  return apiFetch<AIContactDraftsResponse>(`/ai/candidates/${candidateId}/contact/drafts`, {
     method: 'POST',
     body: JSON.stringify({ mode }),
   })

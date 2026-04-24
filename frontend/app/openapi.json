@@ -4213,6 +4213,276 @@
         }
       }
     },
+    "/api/ai/candidates/{candidate_id}/facts": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Facts",
+        "operationId": "api_ai_candidate_facts_api_ai_candidates__candidate_id__facts_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/candidates/{candidate_id}/facts/refresh": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Facts Refresh",
+        "operationId": "api_ai_candidate_facts_refresh_api_ai_candidates__candidate_id__facts_refresh_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/candidates/{candidate_id}/next-best-action": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Next Best Action",
+        "operationId": "api_ai_candidate_next_best_action_api_ai_candidates__candidate_id__next_best_action_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/candidates/{candidate_id}/next-best-action/refresh": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Next Best Action Refresh",
+        "operationId": "api_ai_candidate_next_best_action_refresh_api_ai_candidates__candidate_id__next_best_action_refresh_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/candidates/{candidate_id}/next-best-action/feedback": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Next Best Action Feedback",
+        "operationId": "api_ai_candidate_next_best_action_feedback_api_ai_candidates__candidate_id__next_best_action_feedback_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ai/candidates/{candidate_id}/contact/drafts": {
+      "post": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Api Ai Candidate Contact Drafts",
+        "operationId": "api_ai_candidate_contact_drafts_api_ai_candidates__candidate_id__contact_drafts_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ai/candidates/{candidate_id}/interview-script": {
       "get": {
         "tags": [
@@ -7078,6 +7348,16 @@
               "type": "string",
               "default": "all",
               "title": "Status"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Channel"
             }
           },
           {
