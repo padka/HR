@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from backend.apps.admin_ui.security import _is_csrf_dev_bypass_allowed
+from backend.apps.admin_ui.security import (
+    _is_csrf_dev_bypass_allowed,
+    _is_csrf_test_token_relaxation_allowed,
+)
 
 
 def _request(hostname: str):
@@ -29,3 +32,10 @@ def test_csrf_bypass_allows_explicit_allowlist(monkeypatch):
     assert _is_csrf_dev_bypass_allowed(_request("preview.crm.local"), _settings("development")) is True
     assert _is_csrf_dev_bypass_allowed(_request("remote.example"), _settings("development")) is False
     assert _is_csrf_dev_bypass_allowed(_request("dev.crm.local"), _settings("staging")) is False
+
+
+def test_csrf_test_token_relaxation_is_testserver_and_token_only():
+    assert _is_csrf_test_token_relaxation_allowed(_request("testserver"), _settings("test"), "token") is True
+    assert _is_csrf_test_token_relaxation_allowed(_request("testserver"), _settings("test"), "") is False
+    assert _is_csrf_test_token_relaxation_allowed(_request("testserver"), _settings("production"), "token") is False
+    assert _is_csrf_test_token_relaxation_allowed(_request("localhost"), _settings("test"), "token") is False
