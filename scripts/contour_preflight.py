@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+import warnings
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,11 @@ def _check_expected_revision(root: Path, contour: str) -> list[str]:
 def _check_imports(root: Path, contour: str) -> list[str]:
     problems: list[str] = []
     sys.path.insert(0, str(root))
+    warnings.filterwarnings(
+        "ignore",
+        message="'crypt' is deprecated and slated for removal in Python 3.13",
+        category=DeprecationWarning,
+    )
     try:
         for module_name in REQUIRED_IMPORTS[contour]:
             try:
