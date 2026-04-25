@@ -1,311 +1,132 @@
-# Database Migrations Guide
+# Migrations
 
-## Overview
+This document is the current RecruitSmart Maxpilot migration policy for the
+hardening release stream.
 
-Database migrations are managed using Alembic and should be run **separately** before starting any application services.
+## Tooling
 
-⚠️ **Important:** Migrations are no longer run automatically on application startup. This prevents race conditions in multi-instance deployments and follows production best practices.
+- Migration runner: [scripts/run_migrations.py](/Users/mikhail/Projects/recruitsmart_admin/scripts/run_migrations.py)
+- Alembic versions: [backend/migrations/versions](/Users/mikhail/Projects/recruitsmart_admin/backend/migrations/versions)
+- Staging schema check: [scripts/staging_schema_compatibility.sql](/Users/mikhail/Projects/recruitsmart_admin/scripts/staging_schema_compatibility.sql)
+- PostgreSQL proof gate: `make test-postgres-proof`
 
----
+Application startup must not apply schema changes. Migrations are a separate
+deploy step with explicit flags and a backup-first rollout plan.
 
-## Running Migrations
+## Current Chain
 
-### Local Development
+The hardening release restored the production-observed chain:
 
-```bash
-# Prefer dedicated migration URL (same DB, role with DDL grants)
-export MIGRATIONS_DATABASE_URL=postgresql+asyncpg://migrator:pass@localhost:5432/recruitsmart
-
-# Run migrations
-python scripts/run_migrations.py
-
-# Or use Python 3 explicitly
-python3 scripts/run_migrations.py
+```text
+0103_persistent_application_idempotency_keys
+  -> 0104_candidate_web_public_intake
+  -> 0105_unique_users_max_user_id
 ```
 
-### Docker/Docker Compose
+`0104_candidate_web_public_intake` is additive-only. It creates public candidate
+campaign and intake tables used by the browser candidate flow.
 
-Add a migration step before starting services:
+`0105_unique_users_max_user_id` aligns the repository with the production audit
+fact that `uq_users_max_user_id_nonempty` exists on `users(max_user_id)`.
 
-```yaml
-services:
-  # Migration job - runs once before other services
-  migrate:
-    build: .
-    command: python scripts/run_migrations.py
-    environment:
-      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
-      MIGRATIONS_DATABASE_URL: postgresql+asyncpg://migrator:pass@db:5432/dbname
-    depends_on:
-      - db
-
-  # Application services - start after migrations
-  admin_ui:
-    build: .
-    command: uvicorn backend.apps.admin_ui.app:app --host 0.0.0.0
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
-
-  bot:
-    build: .
-    command: python -m backend.apps.bot.app
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgresql+asyncpg://app_user:pass@db:5432/dbname
-```
-
-### Kubernetes
-
-Use an init container or a Job:
-
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: db-migrate
-spec:
-  template:
-    spec:
-      containers:
-      - name: migrate
-        image: your-app:latest
-        command: ["python", "scripts/run_migrations.py"]
-        env:
-        - name: MIGRATIONS_DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: db-credentials
-              key: migrator_url
-      restartPolicy: OnFailure
-```
-
-### CI/CD Pipeline
-
-Add a migration step to your pipeline:
-
-```yaml
-# GitHub Actions example
-jobs:
-  migrate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Run migrations
-        run: |
-          python scripts/run_migrations.py
-        env:
-          DATABASE_URL: ${{ secrets.APP_DATABASE_URL }}
-          MIGRATIONS_DATABASE_URL: ${{ secrets.MIGRATIONS_DATABASE_URL }}
-
-  deploy:
-    needs: migrate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy application
-        # ... deployment steps
-```
-
----
-
-## Creating New Migrations
-
-### Auto-generate from model changes
-
-```bash
-# After modifying SQLAlchemy models
-alembic revision --autogenerate -m "Add new field to User table"
-```
-
-### Create empty migration
-
-```bash
-alembic revision -m "Custom data migration"
-```
-
-### Review and edit
-
-Always review auto-generated migrations before applying:
-
-```bash
-# Check the generated migration file in backend/migrations/versions/
-cat backend/migrations/versions/XXXX_add_new_field.py
-```
-
----
-
-## Migration Best Practices
-
-### DO ✅
-
-1. **Run migrations before deployment**
-   - Migrations should complete before new code is deployed
-   - Use health checks to ensure migrations succeeded
-
-2. **Test migrations on staging first**
-   - Always test migrations on a copy of production data
-   - Verify rollback procedures work
-
-3. **Make migrations backward-compatible**
-   - New code should work with old schema temporarily
-   - Allows zero-downtime deployments
-
-4. **Use database transactions**
-   - Alembic uses transactions by default
-   - Failed migrations will rollback automatically
-
-5. **Keep migrations small and focused**
-   - One migration per logical change
-   - Easier to debug and rollback
-
-6. **Use dedicated migration role**
-   - Migration role must have DDL on target schema
-   - Runtime app role should remain DML-only
-
-### DON'T ❌
-
-1. **Don't run migrations in application startup**
-   - Causes race conditions with multiple instances
-   - Can lead to deadlocks
-
-2. **Don't modify applied migrations**
-   - Creates inconsistent state across environments
-   - Use new migrations to fix issues
-
-3. **Don't skip migrations**
-   - Always apply migrations in order
-   - Skipping can cause data corruption
-
-4. **Don't run migrations manually with SQL**
-   - Alembic tracks applied migrations
-   - Manual changes break migration history
-
----
-
-## Troubleshooting
-
-### Migration fails with "role does not have DDL rights"
-
-This means migration was started with an app-only role.
-
-Use `MIGRATIONS_DATABASE_URL` with a dedicated migration role.
-
-Example SQL contract:
+PostgreSQL index definition:
 
 ```sql
--- One-time setup (run as DB owner/admin)
-CREATE ROLE app_user LOGIN PASSWORD 'change-me';
-CREATE ROLE migrator LOGIN PASSWORD 'change-me';
-
-GRANT CONNECT ON DATABASE recruitsmart TO app_user, migrator;
-GRANT USAGE ON SCHEMA public TO app_user, migrator;
-GRANT CREATE ON SCHEMA public TO migrator;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO app_user;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO app_user;
+CREATE UNIQUE INDEX uq_users_max_user_id_nonempty
+ON users (max_user_id)
+WHERE max_user_id IS NOT NULL AND btrim(max_user_id) <> '';
 ```
 
-### Migration fails with "table already exists"
+The full recovery record is in
+[docs/MIGRATION_RECONCILIATION_0105.md](/Users/mikhail/Projects/recruitsmart_admin/docs/MIGRATION_RECONCILIATION_0105.md).
 
-This usually means migrations were partially applied:
+## Safety Rules
+
+- Never invent a migration revision to make a deployment pass.
+- Never stamp staging or production without an approved reconciliation plan.
+- Never run migrations against staging or production without a fresh DB backup.
+- Never embed duplicate cleanup in the `0105` migration. Duplicate identity
+  remediation is a separate, reviewed data operation.
+- Keep migrations small, reversible where possible, and backward-compatible with
+  the previous application version.
+- Prefer additive DDL before runtime cutover.
+
+## Environment Flags
+
+Migration-enabled deploy:
 
 ```bash
-# Check current migration version
-alembic current
-
-# If needed, stamp to specific version
-alembic stamp <revision>
+MIGRATION_HISTORY_RECONCILED=true
+RUN_MIGRATIONS=true
+AUTO_MIGRATE=false
 ```
 
-### Multiple instances trying to migrate
-
-Use a distributed lock or ensure only one instance runs migrations:
-
-```python
-# Example with PostgreSQL advisory lock
-from sqlalchemy import text
-
-with engine.begin() as conn:
-    # Acquire lock
-    conn.execute(text("SELECT pg_advisory_lock(123456)"))
-    try:
-        # Run migrations
-        alembic.command.upgrade(alembic_cfg, "head")
-    finally:
-        # Release lock
-        conn.execute(text("SELECT pg_advisory_unlock(123456)"))
-```
-
-### Rollback failed migration
+Code-only staging validation:
 
 ```bash
-# Rollback to previous version
-alembic downgrade -1
-
-# Or rollback to specific version
-alembic downgrade <revision>
+RUN_MIGRATIONS=false
+CODE_ONLY_DEPLOY_APPROVED=true
+AUTO_MIGRATE=false
 ```
 
----
+`CODE_ONLY_DEPLOY_APPROVED=true` is only valid for a documented validation pass.
+It is not a permanent production posture.
 
-## Migration Script Details
+## Local Validation
 
-The `scripts/run_migrations.py` script:
-
-- ✅ Loads environment configuration
-- ✅ Runs all pending Alembic migrations
-- ✅ Provides clear logging output
-- ✅ Returns proper exit codes for CI/CD
-- ✅ Handles errors gracefully
-
-### Exit Codes
-
-- `0` - Success, all migrations applied
-- `1` - Failure, migration error occurred
-
-### Environment Variables
-
-Required:
-- `MIGRATIONS_DATABASE_URL` in production (dedicated migration role)
-- `DATABASE_URL` runtime app connection URL
-
-Optional:
-- `SQL_ECHO` - Enable SQL logging (default: false)
-
----
-
-## Integration with Application Startup
-
-Applications **no longer** run migrations automatically. You will see this comment in the code:
-
-```python
-# backend/apps/admin_ui/app.py
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # NOTE: Database migrations should be run separately before starting the app
-    # Run: python scripts/run_migrations.py
-    # ... rest of startup code
+```bash
+make test-postgres-proof
+make openapi-check
 ```
 
-This ensures:
-- ✅ No race conditions in multi-instance deployments
-- ✅ Clear separation of concerns
-- ✅ Better control over deployment process
-- ✅ Proper error handling and monitoring
+`make test-postgres-proof` verifies migration behavior against a local
+PostgreSQL proof database. It is required after migration changes and before any
+staging migration-enabled validation.
 
----
+## Staging
 
-## See Also
+Staging may use one of two modes:
 
-- [Alembic Documentation](https://alembic.sqlalchemy.org/)
-- [SQLAlchemy Documentation](https://www.sqlalchemy.org/)
-- [Zero-Downtime Migrations](https://fly.io/blog/zero-downtime-postgres-migrations/)
+- Migration-enabled: preferred after staging backup and readonly compatibility
+  checks.
+- Code-only: allowed only when schema is already compatible and migration
+  execution is explicitly disabled.
+
+Before a migration-enabled staging pass, run:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/staging_schema_compatibility.sql
+```
+
+Do not use production or live-like hosts as staging.
+
+## Production
+
+Production migration preconditions:
+
+- staging smoke is green;
+- production DB backup completed and verified;
+- `MIGRATION_HISTORY_RECONCILED=true`;
+- duplicate groups for `max_user_id`, `telegram_id`, and `telegram_user_id` are
+  zero;
+- rollback release ref and backup path are recorded;
+- deploy window is approved.
+
+If production already reports `0105_unique_users_max_user_id`, the recovered
+files allow the migration runner to recognize the current head. If production
+has the `0105` index but an unexpected migration version, stop and reconcile
+explicitly.
+
+## Rollback And Compensating Plan
+
+Runtime rollback is the primary path:
+
+1. Stop application writes if the incident affects identity or scheduling.
+2. Restore previous release code.
+3. Restore env/nginx/systemd files from backup if they were changed.
+4. Restore DB from the pre-deploy backup only if the failed step mutated data or
+   schema in a way that cannot be safely compensated.
+
+The `0104` and `0105` downgrades intentionally avoid destructive drops. If an
+incident decision requires removing an index or table, that is a separate manual
+database change with explicit approval and backup confirmation.

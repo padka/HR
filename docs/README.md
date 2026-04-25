@@ -13,6 +13,18 @@ Canonical
 2026-03-25
 
 ## Source Paths
+- `docs/PROJECT_OVERVIEW.md`
+- `docs/ARCHITECTURE.md`
+- `docs/API_SPEC.md`
+- `docs/DATA_MODEL.md`
+- `docs/MIGRATIONS.md`
+- `docs/SECURITY.md`
+- `docs/OPERATIONS_RUNBOOK.md`
+- `docs/DEPLOYMENT.md`
+- `docs/OBSERVABILITY.md`
+- `docs/INTEGRATIONS.md`
+- `docs/STAGING_TARGET_REQUIREMENTS.md`
+- `docs/STAGING_HANDOFF.md`
 - `docs/architecture/*`
 - `docs/data/*`
 - `docs/frontend/*`
@@ -44,6 +56,7 @@ Canonical
 | QA | Test plan, RTM, environments, release gate, critical flows | `docs/qa/*` |
 | Runbooks | Operational failure handling | `docs/runbooks/*` |
 | ADR | Stable architectural and process decisions | `docs/adr/*` |
+| Release handoff | Current hardening release status, deployment gates, and staging handoff | top-level `docs/*.md` release package |
 
 ## Source-Of-Truth Rules
 - HTTP contracts: backend OpenAPI and live routers in `backend/apps/*`.
@@ -55,7 +68,7 @@ Canonical
 
 ## Historical Boundary
 - `docs/archive/*` is historical/reference-only and does not override canonical docs.
-- Legacy root docs such as `docs/MIGRATIONS.md`, `docs/TECHNICAL_OVERVIEW.md`, `docs/route-inventory.md` and similar are reference material unless they are explicitly linked from canonical pages as supporting context.
+- Legacy root docs such as `docs/TECHNICAL_OVERVIEW.md`, `docs/route-inventory.md` and similar are reference material unless they are explicitly linked from canonical pages as supporting context.
 - If a legacy document conflicts with live code or canonical docs, follow live code first, then canonical docs.
 
 ## Reading Order
@@ -70,3 +83,11 @@ Canonical
 9. `docs/qa/master-test-plan.md`
 10. `docs/qa/release-gate-v2.md`
 11. `docs/adr/README.md`
+
+For the hardening candidate-scale release handoff, read:
+
+1. `docs/STAGING_TARGET_REQUIREMENTS.md`
+2. `docs/STAGING_HANDOFF.md`
+3. `docs/DEPLOYMENT.md`
+4. `docs/OPERATIONS_RUNBOOK.md`
+5. `docs/MIGRATIONS.md`

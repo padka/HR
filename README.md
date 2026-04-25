@@ -1,11 +1,24 @@
-# Attila Recruiting
+# RecruitSmart Maxpilot
 
-Attila Recruiting is a production CRM/ATS repository for recruiting pipeline operations, candidate scheduling, recruiter coordination, messaging, and related admin workflows.
+RecruitSmart Maxpilot is a production CRM/ATS repository for recruiting pipeline operations, candidate scheduling, recruiter coordination, messaging, verification providers, and related admin workflows.
 
 The product is currently a FastAPI backend plus a React 18 SPA:
 - backend admin server: [backend/apps/admin_ui/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_ui/app.py)
+- public/candidate API host: [backend/apps/admin_api/main.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/admin_api/main.py)
+- Telegram bot runtime: [backend/apps/bot/app.py](/Users/mikhail/Projects/recruitsmart_admin/backend/apps/bot/app.py)
 - frontend SPA: [frontend/app](/Users/mikhail/Projects/recruitsmart_admin/frontend/app)
 - compiled frontend bundle served by backend: [frontend/dist](/Users/mikhail/Projects/recruitsmart_admin/frontend/dist)
+
+## Product Scope
+
+RecruitSmart Maxpilot supports:
+- candidate verification and candidate-access flows;
+- recruiter/admin CRM workflows;
+- Telegram messaging and bounded MAX pilot surfaces;
+- HH integration and sync jobs;
+- interview slots, slot reservations, manual scheduling, and manual availability fallback.
+
+The application-code hardening baseline is `rc/hardening-candidate-scale-20260425-19` on branch `release/hardening-artifact-freeze`. The docs-inclusive handoff candidate is `rc/hardening-candidate-scale-20260425-20` after this documentation package is committed and CI passes. Production remains NO-GO until staging smoke, production preflight, secret rotation, nginx/log verification, DB checks, and production smoke are completed.
 
 ## Architecture
 
@@ -17,8 +30,9 @@ The product is currently a FastAPI backend plus a React 18 SPA:
 Current supported runtime matrix lives in [docs/architecture/supported_channels.md](/Users/mikhail/Projects/recruitsmart_admin/docs/architecture/supported_channels.md).
 The short version:
 - supported: Admin SPA, Telegram bot/webapp, HH integration, n8n HH sync callbacks
-- unsupported historical implementations: legacy candidate portal implementation, historical MAX runtime
-- target state, not current runtime: future standalone candidate web flow, future MAX mini-app/channel adapter, SMS / voice fallback integration
+- supported bounded pilot: MAX launch/webhook/mini-app shell over shared candidate-access backend contracts
+- unsupported historical implementations: legacy candidate portal implementation, historical full MAX runtime
+- target state, not current runtime: full standalone browser candidate rollout and SMS / voice fallback integration
 
 ## Repository Layout
 
@@ -114,6 +128,14 @@ Start here in this order:
 
 1. [AGENTS.md](/Users/mikhail/Projects/recruitsmart_admin/AGENTS.md)
 2. [docs/README.md](/Users/mikhail/Projects/recruitsmart_admin/docs/README.md)
+3. [docs/PROJECT_OVERVIEW.md](/Users/mikhail/Projects/recruitsmart_admin/docs/PROJECT_OVERVIEW.md)
+4. [docs/ARCHITECTURE.md](/Users/mikhail/Projects/recruitsmart_admin/docs/ARCHITECTURE.md)
+5. [docs/API_SPEC.md](/Users/mikhail/Projects/recruitsmart_admin/docs/API_SPEC.md)
+6. [docs/DATA_MODEL.md](/Users/mikhail/Projects/recruitsmart_admin/docs/DATA_MODEL.md)
+7. [docs/DEPLOYMENT.md](/Users/mikhail/Projects/recruitsmart_admin/docs/DEPLOYMENT.md)
+8. [docs/OPERATIONS_RUNBOOK.md](/Users/mikhail/Projects/recruitsmart_admin/docs/OPERATIONS_RUNBOOK.md)
+9. [docs/STAGING_TARGET_REQUIREMENTS.md](/Users/mikhail/Projects/recruitsmart_admin/docs/STAGING_TARGET_REQUIREMENTS.md)
+10. [docs/STAGING_HANDOFF.md](/Users/mikhail/Projects/recruitsmart_admin/docs/STAGING_HANDOFF.md)
 
 Root policy changed on 2026-03-08:
 - closed task-specific markdown packages were removed from repo root
