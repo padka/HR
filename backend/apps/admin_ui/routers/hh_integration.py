@@ -43,6 +43,10 @@ from backend.domain.hh_integration.models import (
     CandidateExternalIdentity,
     HHNegotiation,
 )
+from backend.domain.hh_integration.oauth import (
+    parse_hh_candidate_oauth_state,
+    parse_hh_public_candidate_oauth_state,
+)
 
 router = APIRouter(prefix="/api/integrations/hh", tags=["hh-integration"])
 callback_router = APIRouter(tags=["hh-integration"])
@@ -241,6 +245,29 @@ async def hh_oauth_callback_compat(
     error: str | None = Query(default=None),
     session=AsyncSessionDep,
 ):
+    if state:
+        try:
+            parse_hh_candidate_oauth_state(state)
+            is_candidate_state = True
+        except ValueError:
+            try:
+                parse_hh_public_candidate_oauth_state(state)
+                is_candidate_state = True
+            except ValueError:
+                is_candidate_state = False
+        if is_candidate_state:
+            from backend.apps.admin_api.candidate_web import (
+                complete_candidate_web_hh_verification_callback,
+            )
+
+            return await complete_candidate_web_hh_verification_callback(
+                session=session,
+                settings=get_settings(),
+                code=code,
+                state=state,
+                error=error,
+            )
+
     return await _finalize_hh_oauth_callback(
         code=code,
         state=state,

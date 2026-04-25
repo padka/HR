@@ -6,16 +6,22 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from sqlalchemy import select
-
 from backend.apps.admin_ui.security import Principal, require_admin
 from backend.core.db import async_session
 from backend.domain.hh_integration.client import HHOAuthTokens
 from backend.domain.hh_integration.crypto import HHSecretCipher
-from backend.domain.hh_integration.models import HHConnection, HHSyncJob, HHWebhookDelivery
-from backend.domain.hh_integration.oauth import build_hh_authorize_url
+from backend.domain.hh_integration.models import (
+    HHConnection,
+    HHSyncJob,
+    HHWebhookDelivery,
+)
+from backend.domain.hh_integration.oauth import (
+    build_hh_authorize_url,
+    sign_hh_public_candidate_oauth_state,
+)
 from backend.domain.hh_integration.service import get_connection_for_principal
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 
 @pytest.fixture
@@ -218,6 +224,39 @@ class TestHHOAuthRoutes:
         resp = await asyncio.to_thread(_call)
         assert resp.status_code == 302
         assert resp.headers["location"] == "/app/system?hh=connected"
+
+    @pytest.mark.asyncio
+    async def test_compat_callback_delegates_candidate_hh_state(self, admin_app, monkeypatch):
+        monkeypatch.setenv("CANDIDATE_WEB_PILOT_ENABLED", "true")
+        monkeypatch.setenv("CANDIDATE_WEB_PUBLIC_INTAKE_ENABLED", "true")
+        monkeypatch.setenv("HH_CANDIDATE_OAUTH_ENABLED", "true")
+        monkeypatch.setenv("HH_CANDIDATE_CLIENT_ID", "candidate-client")
+        monkeypatch.setenv("HH_CANDIDATE_CLIENT_SECRET", "candidate-secret")
+        monkeypatch.setenv(
+            "HH_CANDIDATE_REDIRECT_URI",
+            "https://admin.example.com/rest/oauth2-credential/callback",
+        )
+        from backend.core import settings as settings_module
+
+        settings_module.get_settings.cache_clear()
+        state = sign_hh_public_candidate_oauth_state(
+            intake_id=42,
+            return_to="/candidate-flow/start?campaign=main",
+        )
+
+        def _call():
+            with TestClient(admin_app, follow_redirects=False) as client:
+                return client.get(
+                    "/rest/oauth2-credential/callback",
+                    params={"state": state},
+                )
+
+        try:
+            resp = await asyncio.to_thread(_call)
+        finally:
+            settings_module.get_settings.cache_clear()
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/candidate-flow?hh=error"
 
     @pytest.mark.asyncio
     async def test_refresh_tokens_route_updates_connection(self, admin_app):
