@@ -143,7 +143,17 @@ jobs:
       - name: Run tests
         env:
           ENVIRONMENT: test
-        run: pytest --cov=backend --cov=tests --cov-report=xml --cov-report=term
+          BACKEND_TEST_TIMEOUT_SECONDS: "1800"
+        run: >
+          python scripts/ci_pytest.py
+          --timeout-seconds "${BACKEND_TEST_TIMEOUT_SECONDS}"
+          --
+          -q
+          --maxfail=1
+          --cov=backend
+          --cov=tests
+          --cov-report=xml
+          --cov-report=term
 
       - name: Upload coverage report
         if: always()
