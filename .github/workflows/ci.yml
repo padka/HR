@@ -33,7 +33,6 @@ jobs:
           cache: "pip"
 
       - name: Set up Node.js
-        if: matrix.python-version == '3.12'
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -72,6 +71,11 @@ jobs:
         if: matrix.python-version == '3.12'
         working-directory: frontend/app
         run: npm ci
+
+      - name: Build UI bundle for backend shell tests
+        if: matrix.python-version != '3.12'
+        working-directory: frontend/app
+        run: npm ci && npm run build
 
       - name: Frontend typecheck
         if: matrix.python-version == '3.12'
