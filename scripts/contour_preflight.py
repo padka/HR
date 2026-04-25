@@ -23,8 +23,8 @@ REQUIRED_IMPORTS = {
     ],
 }
 EXPECTED_REVISIONS = {
-    "admin": "0103_persistent_application_idempotency_keys",
-    "maxpilot": "0103_persistent_application_idempotency_keys",
+    "admin": "0105_unique_users_max_user_id",
+    "maxpilot": "0105_unique_users_max_user_id",
 }
 
 

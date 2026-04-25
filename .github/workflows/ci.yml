@@ -117,6 +117,11 @@ jobs:
 
       - name: Run contour preflight
         if: matrix.python-version == '3.12'
+        env:
+          ENVIRONMENT: test
+          RUN_MIGRATIONS: "false"
+          AUTO_MIGRATE: "false"
+          BOT_AUTOSTART: "false"
         run: |
           python scripts/contour_preflight.py --contour maxpilot --root .
           python scripts/contour_preflight.py --contour admin --root .
