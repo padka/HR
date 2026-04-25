@@ -269,6 +269,36 @@ async def _seed_bound_candidate_without_start_param(
     )
 
 
+async def _seed_additional_bound_launch_token(
+    *,
+    candidate_id: int,
+    start_param: str,
+) -> int:
+    now = datetime.now(UTC)
+    async with async_session() as session:
+        next_token_id = int(
+            await session.scalar(select(func.coalesce(func.max(CandidateAccessToken.id), 0) + 1))
+            or 1
+        )
+        launch_token = CandidateAccessToken(
+            id=next_token_id,
+            token_hash=hashlib.sha256(f"token:{start_param}".encode()).hexdigest(),
+            candidate_id=candidate_id,
+            application_id=None,
+            token_kind=CandidateAccessTokenKind.LAUNCH.value,
+            journey_surface=CandidateJourneySurface.MAX_MINIAPP.value,
+            auth_method=CandidateAccessAuthMethod.MAX_INIT_DATA.value,
+            launch_channel=CandidateLaunchChannel.MAX.value,
+            start_param=start_param,
+            provider_user_id=None,
+            journey_session_id=None,
+            expires_at=now + timedelta(hours=1),
+        )
+        session.add(launch_token)
+        await session.commit()
+        return int(launch_token.id)
+
+
 def test_max_launch_bootstraps_access_session(max_api_client):
     seeded = asyncio.run(_seed_launch_context(with_application=True))
 
@@ -478,16 +508,16 @@ def test_max_launch_restarts_test1_for_inactive_bound_candidate(max_api_client):
     assert old_token.revoked_at is not None
 
 
-def test_max_launch_rejects_ambiguous_bound_candidate_context(max_api_client):
-    asyncio.run(
+def test_max_launch_rejects_ambiguous_bound_launch_token_context(max_api_client):
+    seeded = asyncio.run(
         _seed_bound_candidate_without_start_param(
             max_user_id="700120",
             start_param="ambiguous-ref-1",
         )
     )
     asyncio.run(
-        _seed_bound_candidate_without_start_param(
-            max_user_id="700120",
+        _seed_additional_bound_launch_token(
+            candidate_id=int(seeded["candidate_id"]),
             start_param="ambiguous-ref-2",
         )
     )

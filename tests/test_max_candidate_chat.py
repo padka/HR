@@ -357,16 +357,16 @@ async def _candidate_chat_messages(candidate_id: int) -> list[ChatMessage]:
         return list(result.scalars().all())
 
 
-async def _seed_inactive_duplicate_max_candidate(*, user_id: int) -> int:
+async def _seed_inactive_legacy_max_candidate(*, user_id: int) -> int:
     async with async_session() as session:
         candidate = User(
-            fio="MAX Duplicate Candidate",
-            username="max_duplicate",
+            fio="MAX Legacy Candidate",
+            username="max_legacy",
             city="Москва",
             messenger_platform="max",
             source="max",
             candidate_status=CandidateStatus.WAITING_SLOT,
-            max_user_id=str(user_id),
+            max_user_id=f"{user_id}:legacy",
             is_active=False,
             last_activity=datetime.now(UTC) - timedelta(days=2),
         )
@@ -376,7 +376,7 @@ async def _seed_inactive_duplicate_max_candidate(*, user_id: int) -> int:
         return int(candidate.id)
 
 
-async def _seed_recovery_gap_duplicate_max_candidate(*, user_id: int) -> dict[str, int]:
+async def _seed_recovery_gap_stale_session_candidate(*, user_id: int) -> dict[str, int]:
     now = datetime.now(UTC)
     async with async_session() as session:
         next_access_session_id = int(
@@ -390,7 +390,7 @@ async def _seed_recovery_gap_duplicate_max_candidate(*, user_id: int) -> dict[st
             messenger_platform="max",
             source="max",
             candidate_status=CandidateStatus.WAITING_SLOT,
-            max_user_id=str(user_id),
+            max_user_id=f"{user_id}:stale",
             is_active=False,
             last_activity=now - timedelta(days=2),
         )
@@ -442,7 +442,7 @@ async def _seed_recovery_gap_duplicate_max_candidate(*, user_id: int) -> dict[st
                 refreshed_at=now - timedelta(hours=1),
                 expires_at=now + timedelta(hours=6),
                 correlation_id=f"stale-gap-{user_id}",
-                metadata_json={"seeded": "stale_gap_duplicate"},
+                metadata_json={"seeded": "stale_gap"},
             )
         )
 
@@ -620,12 +620,12 @@ def test_max_webhook_message_created_advances_test1_in_chat_mode(
     assert any(message.direction == "outbound" for message in history)
 
 
-def test_max_webhook_message_created_advances_test1_with_duplicate_max_identity(
+def test_max_webhook_message_created_advances_test1_with_inactive_legacy_max_identity(
     monkeypatch: pytest.MonkeyPatch,
     max_chat_client: TestClient,
 ):
     seeded = asyncio.run(_seed_chat_candidate(start_param="webhook-chat-dup", user_id=730012))
-    asyncio.run(_seed_inactive_duplicate_max_candidate(user_id=int(seeded["user_id"])))
+    asyncio.run(_seed_inactive_legacy_max_candidate(user_id=int(seeded["user_id"])))
     adapter = _FakeMaxAdapter()
 
     async def _fake_adapter(*, settings=None):
@@ -664,11 +664,11 @@ def test_max_webhook_message_created_advances_test1_with_duplicate_max_identity(
     assert any(message.direction == "outbound" and message.channel == "max" for message in history)
 
 
-def test_max_webhook_message_created_recovers_when_latest_access_session_belongs_to_stale_duplicate(
+def test_max_webhook_message_created_recovers_when_latest_access_session_belongs_to_stale_candidate(
     monkeypatch: pytest.MonkeyPatch,
     max_chat_client: TestClient,
 ):
-    seeded = asyncio.run(_seed_recovery_gap_duplicate_max_candidate(user_id=730013))
+    seeded = asyncio.run(_seed_recovery_gap_stale_session_candidate(user_id=730013))
     adapter = _FakeMaxAdapter()
 
     async def _fake_adapter(*, settings=None):

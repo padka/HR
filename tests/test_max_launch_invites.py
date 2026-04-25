@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from itertools import count
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -23,6 +24,9 @@ from backend.domain.models import Application
 from sqlalchemy import func, select
 
 
+_MAX_USER_ID_SEQ = count(1)
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings_cache() -> None:
     settings_module.get_settings.cache_clear()
@@ -30,14 +34,18 @@ def _clear_settings_cache() -> None:
     settings_module.get_settings.cache_clear()
 
 
-async def _seed_candidate(*, name: str = "MAX Launch Candidate") -> User:
+async def _seed_candidate(
+    *,
+    name: str = "MAX Launch Candidate",
+    max_user_id: str | None = None,
+) -> User:
     async with async_session() as session:
         candidate = User(
             fio=name,
             city="Москва",
             source="max",
             messenger_platform="max",
-            max_user_id="max-user-1",
+            max_user_id=max_user_id or f"max-user-{next(_MAX_USER_ID_SEQ)}",
         )
         session.add(candidate)
         await session.commit()

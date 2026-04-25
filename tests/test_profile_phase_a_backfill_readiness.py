@@ -43,7 +43,7 @@ async def test_collect_backfill_readiness_report_classifies_conflicts() -> None:
         user_two = User(
             fio="Bob Candidate",
             phone_normalized="+79990000001",
-            max_user_id="max-shared",
+            max_user_id="max-second",
         )
         session.add_all([user_one, user_two])
         await session.flush()
@@ -113,7 +113,7 @@ async def test_collect_backfill_readiness_report_classifies_conflicts() -> None:
         report = await profiler.collect_backfill_readiness_report(session)
 
     assert report.counts["phone_normalized_duplicate_groups"] == 1
-    assert report.counts["max_user_id_duplicate_groups"] == 1
+    assert report.counts["max_user_id_duplicate_groups"] == 0
     assert report.counts["chat_messages_telegram_cross_candidate_groups"] == 1
     assert report.counts["slot_assignments_without_candidate_anchor"] == 1
     assert report.counts["outbox_mapping_gaps"] == 1

@@ -113,7 +113,7 @@ jobs:
 
       - name: Check OpenAPI drift
         if: matrix.python-version == '3.12'
-        run: make openapi-check
+        run: make openapi-check PYTHON=python
 
       - name: Run contour preflight
         if: matrix.python-version == '3.12'

@@ -148,28 +148,34 @@ async def test_bot_service_send_test2_logs_failed_max_delivery_when_required(mon
 @pytest.mark.asyncio
 async def test_bot_service_send_test2_prefers_candidate_public_id_and_uses_callback_only_for_max(monkeypatch):
     state_manager = build_state_manager(redis_url=None, ttl_seconds=60)
-    duplicate_user_id = "129613759"
+    stale_max_user_id = "129613759-old"
+    primary_max_user_id = "129613759-primary"
     older_candidate = await candidate_services.create_or_update_user(
         telegram_id=901151,
-        fio="MAX Duplicate Older",
+        fio="MAX Public Id Older",
         city="Москва",
-        username="max_duplicate_older",
+        username="max_public_id_older",
         initial_status=CandidateStatus.INTERVIEW_DECLINED,
     )
     primary_candidate = await candidate_services.create_or_update_user(
         telegram_id=901152,
-        fio="MAX Duplicate Primary",
+        fio="MAX Public Id Primary",
         city="Москва",
-        username="max_duplicate_primary",
+        username="max_public_id_primary",
         initial_status=CandidateStatus.INTERVIEW_CONFIRMED,
     )
     async with async_session() as session:
-        for candidate_id in (older_candidate.id, primary_candidate.id):
-            persisted = await session.get(User, candidate_id)
-            assert persisted is not None
-            persisted.telegram_id = None
-            persisted.telegram_user_id = None
-            persisted.max_user_id = duplicate_user_id
+        older_persisted = await session.get(User, older_candidate.id)
+        assert older_persisted is not None
+        older_persisted.telegram_id = None
+        older_persisted.telegram_user_id = None
+        older_persisted.max_user_id = stale_max_user_id
+
+        primary_persisted = await session.get(User, primary_candidate.id)
+        assert primary_persisted is not None
+        primary_persisted.telegram_id = None
+        primary_persisted.telegram_user_id = None
+        primary_persisted.max_user_id = primary_max_user_id
         await session.commit()
 
     observed: dict[str, object] = {}
@@ -209,17 +215,17 @@ async def test_bot_service_send_test2_prefers_candidate_public_id_and_uses_callb
         candidate_id=0,
         candidate_tz="Europe/Moscow",
         candidate_city=1,
-        candidate_name="MAX Duplicate Primary",
+        candidate_name="MAX Public Id Primary",
         required=True,
         slot_id=2308,
         candidate_public_id=primary_candidate.candidate_id,
-        max_user_id=duplicate_user_id,
+        max_user_id=stale_max_user_id,
     )
 
     assert result.ok is True
     assert result.status == "sent_test2"
     assert observed["candidate_id"] == primary_candidate.id
-    assert observed["chat_id"] == duplicate_user_id
+    assert observed["chat_id"] == primary_max_user_id
     assert isinstance(observed["buttons"], list)
     assert observed["buttons"] == [[InlineButton(text="Пройти в чате", callback_data="test2:start", kind="callback")]]
 
