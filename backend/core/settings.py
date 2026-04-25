@@ -112,6 +112,7 @@ class Settings:
     hh_candidate_client_secret: str
     hh_candidate_redirect_uri: str
     hh_candidate_user_agent: str
+    hh_candidate_oauth_state_secret: str
     hh_oauth_state_ttl_seconds: int
     hh_webhook_base_url: str
     hh_auto_import_interval_seconds: int
@@ -929,6 +930,10 @@ def get_settings() -> Settings:
         os.getenv("HH_CANDIDATE_USER_AGENT", "").strip()
         or hh_user_agent
     )
+    hh_candidate_oauth_state_secret = os.getenv(
+        "HH_CANDIDATE_OAUTH_STATE_SECRET",
+        "",
+    ).strip()
     hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
     hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
     hh_auto_import_interval_seconds = _get_int(
@@ -1112,6 +1117,7 @@ def get_settings() -> Settings:
         hh_candidate_client_secret=hh_candidate_client_secret,
         hh_candidate_redirect_uri=hh_candidate_redirect_uri,
         hh_candidate_user_agent=hh_candidate_user_agent,
+        hh_candidate_oauth_state_secret=hh_candidate_oauth_state_secret,
         hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
         hh_webhook_base_url=hh_webhook_base_url,
         hh_auto_import_interval_seconds=hh_auto_import_interval_seconds,

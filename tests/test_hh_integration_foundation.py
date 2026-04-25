@@ -227,6 +227,7 @@ class TestHHOAuthRoutes:
 
     @pytest.mark.asyncio
     async def test_compat_callback_delegates_candidate_hh_state(self, admin_app, monkeypatch):
+        monkeypatch.setenv("HH_CANDIDATE_OAUTH_STATE_SECRET", "shared-candidate-state-secret")
         monkeypatch.setenv("CANDIDATE_WEB_PILOT_ENABLED", "true")
         monkeypatch.setenv("CANDIDATE_WEB_PUBLIC_INTAKE_ENABLED", "true")
         monkeypatch.setenv("HH_CANDIDATE_OAUTH_ENABLED", "true")

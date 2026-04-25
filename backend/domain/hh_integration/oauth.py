@@ -42,12 +42,14 @@ def _serializer() -> URLSafeTimedSerializer:
 
 def _candidate_serializer() -> URLSafeTimedSerializer:
     settings = get_settings()
-    return URLSafeTimedSerializer(settings.session_secret, salt=_CANDIDATE_STATE_SALT)
+    secret = settings.hh_candidate_oauth_state_secret or settings.session_secret
+    return URLSafeTimedSerializer(secret, salt=_CANDIDATE_STATE_SALT)
 
 
 def _public_candidate_serializer() -> URLSafeTimedSerializer:
     settings = get_settings()
-    return URLSafeTimedSerializer(settings.session_secret, salt=_PUBLIC_CANDIDATE_STATE_SALT)
+    secret = settings.hh_candidate_oauth_state_secret or settings.session_secret
+    return URLSafeTimedSerializer(secret, salt=_PUBLIC_CANDIDATE_STATE_SALT)
 
 
 def sign_hh_oauth_state(principal: Principal, *, return_to: str | None = None) -> str:
