@@ -1,13 +1,35 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 
+def _seed_spa_dist(tmp_path: Path) -> Path:
+    dist_dir = tmp_path / "dist"
+    assets_dir = dist_dir / "assets"
+    icons_dir = dist_dir / "icons"
+    assets_dir.mkdir(parents=True)
+    icons_dir.mkdir()
+    (dist_dir / "index.html").write_text(
+        '<!doctype html><html><head><link rel="stylesheet" href="/assets/app.css">'
+        '</head><body><div id="root"></div><script type="module" src="/assets/app.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    (dist_dir / "manifest.json").write_text(
+        '{"name":"RecruitSmart","icons":[{"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png"}]}',
+        encoding="utf-8",
+    )
+    (assets_dir / "app.js").write_text("console.log('miniapp fixture')\n", encoding="utf-8")
+    (assets_dir / "app.css").write_text(":root{color-scheme:light;}\n", encoding="utf-8")
+    (icons_dir / "icon-192.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    return dist_dir
+
+
 @pytest.fixture
-def max_miniapp_client(monkeypatch: pytest.MonkeyPatch):
+def max_miniapp_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("BOT_ENABLED", "0")
@@ -26,9 +48,17 @@ def max_miniapp_client(monkeypatch: pytest.MonkeyPatch):
     from backend.core import settings as settings_module
 
     settings_module.get_settings.cache_clear()
-    from backend.apps.admin_api.main import create_app
+    dist_dir = _seed_spa_dist(tmp_path)
+    from backend.apps.admin_api import main as main_module
+    from backend.apps.admin_api import max_miniapp as max_miniapp_module
 
-    app = create_app()
+    monkeypatch.setattr(main_module, "SPA_DIST_DIR", dist_dir)
+    monkeypatch.setattr(main_module, "SPA_MANIFEST_FILE", dist_dir / "manifest.json")
+    monkeypatch.setattr(main_module, "SPA_ICONS_DIR", dist_dir / "icons")
+    monkeypatch.setattr(max_miniapp_module, "SPA_DIST_DIR", dist_dir)
+    monkeypatch.setattr(max_miniapp_module, "SPA_INDEX_FILE", dist_dir / "index.html")
+
+    app = main_module.create_app()
     try:
         with TestClient(app, base_url="https://example.test") as client:
             yield client
