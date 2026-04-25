@@ -554,6 +554,7 @@ class CandidateAccessAuthMethod(str, Enum):
 class CandidateLaunchChannel(str, Enum):
     TELEGRAM = "telegram"
     MAX = "max"
+    WEB = "web"
     SMS = "sms"
     EMAIL = "email"
     MANUAL = "manual"
@@ -811,6 +812,109 @@ class CandidateAccessSession(Base):
         return (
             f"<CandidateAccessSession {self.id} candidate={self.candidate_id} "
             f"surface={self.journey_surface} status={self.status}>"
+        )
+
+
+class CandidateWebCampaign(Base):
+    __tablename__ = "candidate_web_campaigns"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_candidate_web_campaigns_slug"),
+        Index("ix_candidate_web_campaigns_status", "status"),
+        Index("ix_candidate_web_campaigns_city", "city_id"),
+        Index("ix_candidate_web_campaigns_recruiter", "default_recruiter_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    city_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("cities.id", ondelete="SET NULL"), nullable=True
+    )
+    default_recruiter_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="SET NULL"), nullable=True
+    )
+    source_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    utm_defaults_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    allowed_providers_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return f"<CandidateWebCampaign {self.slug} status={self.status}>"
+
+
+class CandidateWebPublicIntake(Base):
+    __tablename__ = "candidate_web_public_intakes"
+    __table_args__ = (
+        UniqueConstraint("poll_token_hash", name="uq_candidate_web_public_intakes_poll"),
+        UniqueConstraint(
+            "provider_token_hash",
+            name="uq_candidate_web_public_intakes_provider_token",
+        ),
+        UniqueConstraint(
+            "handoff_code_hash",
+            name="uq_candidate_web_public_intakes_handoff",
+        ),
+        Index("ix_candidate_web_public_intakes_campaign_status", "campaign_id", "status"),
+        Index("ix_candidate_web_public_intakes_provider_status", "provider", "status"),
+        Index("ix_candidate_web_public_intakes_candidate", "candidate_id"),
+        Index("ix_candidate_web_public_intakes_expires", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("candidate_web_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    poll_token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_token_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    candidate_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    access_session_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("candidate_access_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    handoff_code_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    utm_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provider_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    def __repr__(self) -> str:  # pragma: no cover - repr helper
+        return (
+            f"<CandidateWebPublicIntake campaign={self.campaign_id} "
+            f"provider={self.provider} status={self.status}>"
         )
 
 

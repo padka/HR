@@ -1734,6 +1734,1750 @@
         }
       }
     },
+    "/api/candidate-web/public/campaigns/{slug}": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Public Candidate Campaign",
+        "operationId": "get_public_candidate_campaign_api_candidate_web_public_campaigns__slug__get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCampaignResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/campaigns/{slug}/verification/telegram/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Public Candidate Telegram Verification",
+        "operationId": "start_public_candidate_telegram_verification_api_candidate_web_public_campaigns__slug__verification_telegram_start_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicVerificationStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVerificationStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/campaigns/{slug}/verification/max/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Public Candidate Max Verification",
+        "operationId": "start_public_candidate_max_verification_api_candidate_web_public_campaigns__slug__verification_max_start_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicVerificationStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVerificationStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/campaigns/{slug}/verification/hh/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Public Candidate Hh Verification",
+        "operationId": "start_public_candidate_hh_verification_api_candidate_web_public_campaigns__slug__verification_hh_start_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicVerificationStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVerificationStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/verification/status": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Public Candidate Verification Status",
+        "operationId": "get_public_candidate_verification_status_api_candidate_web_public_verification_status_get",
+        "parameters": [
+          {
+            "name": "poll_token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Poll Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVerificationStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/verification/local-confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Locally Confirm Public Candidate Verification",
+        "operationId": "locally_confirm_public_candidate_verification_api_candidate_web_public_verification_local_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicLocalConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVerificationStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/public/session/exchange": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Exchange Public Candidate Session",
+        "operationId": "exchange_public_candidate_session_api_candidate_web_public_session_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicSessionExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateWebBootstrapResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/bootstrap": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Bootstrap Candidate Web",
+        "operationId": "bootstrap_candidate_web_api_candidate_web_bootstrap_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateWebBootstrapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateWebBootstrapResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/me": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Me",
+        "operationId": "get_candidate_web_me_api_candidate_web_me_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CandidateInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/journey": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Journey",
+        "operationId": "get_candidate_web_journey_api_candidate_web_journey_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateJourneyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Verification",
+        "operationId": "get_candidate_web_verification_api_candidate_web_verification_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/telegram/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Candidate Web Telegram Verification",
+        "operationId": "start_candidate_web_telegram_verification_api_candidate_web_verification_telegram_start_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/max/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Candidate Web Max Verification",
+        "operationId": "start_candidate_web_max_verification_api_candidate_web_verification_max_start_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/hh/start": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Start Candidate Web Hh Verification",
+        "operationId": "start_candidate_web_hh_verification_api_candidate_web_verification_hh_start_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/hh/callback": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Complete Candidate Web Hh Verification Callback",
+        "operationId": "complete_candidate_web_hh_verification_callback_api_candidate_web_verification_hh_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/telegram/local-confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Locally Confirm Candidate Web Telegram Verification",
+        "operationId": "locally_confirm_candidate_web_telegram_verification_api_candidate_web_verification_telegram_local_confirm_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/max/local-confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Locally Confirm Candidate Web Max Verification",
+        "operationId": "locally_confirm_candidate_web_max_verification_api_candidate_web_verification_max_local_confirm_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/verification/hh/local-confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Locally Confirm Candidate Web Hh Verification",
+        "operationId": "locally_confirm_candidate_web_hh_verification_api_candidate_web_verification_hh_local_confirm_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateVerificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/cities": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Cities",
+        "operationId": "get_candidate_web_cities_api_candidate_web_cities_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateBookingCityInfo"
+                  },
+                  "title": "Response Get Candidate Web Cities Api Candidate Web Cities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/recruiters": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Recruiters",
+        "operationId": "get_candidate_web_recruiters_api_candidate_web_recruiters_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "City Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateBookingRecruiterInfo"
+                  },
+                  "title": "Response Get Candidate Web Recruiters Api Candidate Web Recruiters Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/booking-context": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Booking Context",
+        "operationId": "get_candidate_web_booking_context_api_candidate_web_booking_context_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateBookingContextInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Save Candidate Web Booking Context",
+        "operationId": "save_candidate_web_booking_context_api_candidate_web_booking_context_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateBookingContextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateBookingContextInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/manual-availability": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Save Candidate Web Manual Availability",
+        "operationId": "save_candidate_web_manual_availability_api_candidate_web_manual_availability_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateManualAvailabilityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateManualAvailabilityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/test1": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Test1",
+        "operationId": "get_candidate_web_test1_api_candidate_web_test1_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/test1/answers": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Save Candidate Web Test1 Answers",
+        "operationId": "save_candidate_web_test1_answers_api_candidate_web_test1_answers_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateTest1AnswersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/test1/complete": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Complete Candidate Web Test1",
+        "operationId": "complete_candidate_web_test1_api_candidate_web_test1_complete_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest1Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/test2": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Test2",
+        "operationId": "get_candidate_web_test2_api_candidate_web_test2_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest2Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/test2/answers": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Submit Candidate Web Test2 Answer",
+        "operationId": "submit_candidate_web_test2_answer_api_candidate_web_test2_answers_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateTest2AnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateTest2Response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/intro-day": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Intro Day",
+        "operationId": "get_candidate_web_intro_day_api_candidate_web_intro_day_get",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateIntroDayResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/intro-day/confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Confirm Candidate Web Intro Day",
+        "operationId": "confirm_candidate_web_intro_day_api_candidate_web_intro_day_confirm_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateIntroDayResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/slots": {
+      "get": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Get Candidate Web Slots",
+        "operationId": "get_candidate_web_slots_api_candidate_web_slots_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "City Id"
+            }
+          },
+          {
+            "name": "recruiter_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Recruiter Id"
+            }
+          },
+          {
+            "name": "from_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From Date"
+            }
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To Date"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__SlotInfo"
+                  },
+                  "title": "Response Get Candidate Web Slots Api Candidate Web Slots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/bookings": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Create Candidate Web Booking",
+        "operationId": "create_candidate_web_booking_api_candidate_web_bookings_post",
+        "parameters": [
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CreateBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/bookings/{booking_id}/confirm": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Confirm Candidate Web Booking",
+        "operationId": "confirm_candidate_web_booking_api_candidate_web_bookings__booking_id__confirm_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/bookings/{booking_id}/reschedule": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Reschedule Candidate Web Booking",
+        "operationId": "reschedule_candidate_web_booking_api_candidate_web_bookings__booking_id__reschedule_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__RescheduleBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__BookingInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/candidate-web/bookings/{booking_id}/cancel": {
+      "post": {
+        "tags": [
+          "candidate-web",
+          "candidate-web"
+        ],
+        "summary": "Cancel Candidate Web Booking",
+        "operationId": "cancel_candidate_web_booking_api_candidate_web_bookings__booking_id__cancel_post",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Booking Id"
+            }
+          },
+          {
+            "name": "X-Candidate-Access-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "X-Candidate-Access-Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/backend__apps__admin_api__candidate_access__router__CancelBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/webapp/recruiter/dashboard": {
       "get": {
         "tags": [
@@ -2738,6 +4482,84 @@
         ],
         "title": "CandidateDetailResponse"
       },
+      "CandidateHHResumeInfo": {
+        "properties": {
+          "resume_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "synced_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At"
+          },
+          "import_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Status"
+          },
+          "contact_available": {
+            "type": "boolean",
+            "title": "Contact Available",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CandidateHHResumeInfo"
+      },
       "CandidateIntroDayResponse": {
         "properties": {
           "booking_id": {
@@ -3445,6 +5267,282 @@
         ],
         "title": "CandidateTest2Response"
       },
+      "CandidateVerificationChannelInfo": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified",
+            "default": false
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "start_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Param"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "local_confirm_available": {
+            "type": "boolean",
+            "title": "Local Confirm Available",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "status",
+          "label"
+        ],
+        "title": "CandidateVerificationChannelInfo"
+      },
+      "CandidateVerificationResponse": {
+        "properties": {
+          "verified": {
+            "type": "boolean",
+            "title": "Verified"
+          },
+          "booking_ready": {
+            "type": "boolean",
+            "title": "Booking Ready",
+            "default": false
+          },
+          "required_before": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Before"
+          },
+          "available_channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available Channels"
+          },
+          "telegram": {
+            "$ref": "#/components/schemas/CandidateVerificationChannelInfo"
+          },
+          "max": {
+            "$ref": "#/components/schemas/CandidateVerificationChannelInfo"
+          },
+          "hh": {
+            "$ref": "#/components/schemas/CandidateVerificationChannelInfo"
+          },
+          "hh_resume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateHHResumeInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "verified",
+          "telegram",
+          "max",
+          "hh"
+        ],
+        "title": "CandidateVerificationResponse"
+      },
+      "CandidateWebBootstrapRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 16,
+            "title": "Token"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "utm": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 12,
+            "title": "Utm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "CandidateWebBootstrapRequest"
+      },
+      "CandidateWebBootstrapResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "surface": {
+            "type": "string",
+            "title": "Surface",
+            "default": "standalone_web"
+          },
+          "auth_method": {
+            "type": "string",
+            "title": "Auth Method",
+            "default": "signed_link"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/CandidateWebCandidateSummary"
+          },
+          "session": {
+            "$ref": "#/components/schemas/CandidateWebSessionSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate",
+          "session"
+        ],
+        "title": "CandidateWebBootstrapResponse"
+      },
+      "CandidateWebCandidateSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "application_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "candidate_id"
+        ],
+        "title": "CandidateWebCandidateSummary"
+      },
+      "CandidateWebSessionSummary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "journey_session_id": {
+            "type": "integer",
+            "title": "Journey Session Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "surface": {
+            "type": "string",
+            "title": "Surface"
+          },
+          "auth_method": {
+            "type": "string",
+            "title": "Auth Method"
+          },
+          "launch_channel": {
+            "type": "string",
+            "title": "Launch Channel"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "reused": {
+            "type": "boolean",
+            "title": "Reused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "journey_session_id",
+          "status",
+          "surface",
+          "auth_method",
+          "launch_channel",
+          "expires_at",
+          "reused"
+        ],
+        "title": "CandidateWebSessionSummary"
+      },
       "DashboardResponse": {
         "properties": {
           "waiting_candidates_total": {
@@ -3927,6 +6025,296 @@
           "text"
         ],
         "title": "NoteRequest"
+      },
+      "PublicCampaignResponse": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "allowed_providers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Providers"
+          },
+          "city_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Label"
+          },
+          "source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Label"
+          },
+          "copy": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Copy"
+          },
+          "availability_flags": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Availability Flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "title",
+          "status",
+          "available",
+          "allowed_providers"
+        ],
+        "title": "PublicCampaignResponse"
+      },
+      "PublicLocalConfirmRequest": {
+        "properties": {
+          "poll_token": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 16,
+            "title": "Poll Token"
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 24,
+            "title": "Provider",
+            "default": "telegram"
+          }
+        },
+        "type": "object",
+        "required": [
+          "poll_token"
+        ],
+        "title": "PublicLocalConfirmRequest"
+      },
+      "PublicSessionExchangeRequest": {
+        "properties": {
+          "handoff_code": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 16,
+            "title": "Handoff Code"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "default": "web"
+          },
+          "utm": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 12,
+            "title": "Utm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handoff_code"
+        ],
+        "title": "PublicSessionExchangeRequest"
+      },
+      "PublicVerificationStartRequest": {
+        "properties": {
+          "utm": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 12,
+            "title": "Utm"
+          }
+        },
+        "type": "object",
+        "title": "PublicVerificationStartRequest"
+      },
+      "PublicVerificationStartResponse": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "poll_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Token"
+          },
+          "start_param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Param"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "local_confirm_available": {
+            "type": "boolean",
+            "title": "Local Confirm Available",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "available"
+        ],
+        "title": "PublicVerificationStartResponse"
+      },
+      "PublicVerificationStatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified",
+            "default": false
+          },
+          "handoff_available": {
+            "type": "boolean",
+            "title": "Handoff Available",
+            "default": false
+          },
+          "handoff_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handoff Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PublicVerificationStatusResponse"
       },
       "ResolveCallbackRequest": {
         "properties": {

@@ -17,6 +17,12 @@ from backend.apps.admin_api.admin import mount_admin
 from backend.apps.admin_api.candidate_access.router import (
     router as candidate_access_router,
 )
+from backend.apps.admin_api.candidate_web import (
+    api_router as candidate_web_api_router,
+)
+from backend.apps.admin_api.candidate_web import (
+    shell_router as candidate_web_shell_router,
+)
 from backend.apps.admin_api.hh_integration import router as hh_integration_router
 from backend.apps.admin_api.hh_sync import router as hh_sync_router
 from backend.apps.admin_api.max_launch import router as max_launch_router
@@ -179,6 +185,12 @@ def create_app() -> FastAPI:
     # Mount shared candidate-access API for candidate-facing surfaces
     app.include_router(candidate_access_router, prefix="/api/candidate-access", tags=["candidate-access"])
     logger.info("Candidate access API router mounted at /api/candidate-access")
+
+    # Mount bounded browser candidate pilot surface. The shell and API stay
+    # separate from legacy /candidate* and Telegram/MAX contracts.
+    app.include_router(candidate_web_shell_router)
+    app.include_router(candidate_web_api_router, prefix="/api/candidate-web", tags=["candidate-web"])
+    logger.info("Browser candidate pilot mounted at /candidate-flow and /api/candidate-web")
 
     # Mount Recruiter WebApp API endpoints for Telegram Mini App
     app.include_router(recruiter_webapp_router, prefix="/api/webapp/recruiter", tags=["webapp-recruiter"])

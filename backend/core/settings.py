@@ -107,6 +107,11 @@ class Settings:
     hh_client_secret: str
     hh_redirect_uri: str
     hh_user_agent: str
+    hh_candidate_oauth_enabled: bool
+    hh_candidate_client_id: str
+    hh_candidate_client_secret: str
+    hh_candidate_redirect_uri: str
+    hh_candidate_user_agent: str
     hh_oauth_state_ttl_seconds: int
     hh_webhook_base_url: str
     hh_auto_import_interval_seconds: int
@@ -128,6 +133,11 @@ class Settings:
     max_webhook_secret: str
     max_webhook_url: str
     max_init_data_max_age_seconds: int
+    candidate_web_pilot_enabled: bool
+    candidate_web_public_intake_enabled: bool
+    candidate_web_public_intake_allowed_providers: tuple[str, ...]
+    candidate_web_public_intake_token_ttl_seconds: int
+    candidate_web_public_handoff_ttl_seconds: int
 
 def _get_int(name: str, default: int, *, minimum: int | None = None) -> int:
     raw = os.getenv(name)
@@ -469,6 +479,16 @@ def _validate_production_settings(settings: Settings) -> None:
 
     if settings.session_cookie_secure is False:
         errors.append("SESSION_COOKIE_SECURE must be enabled in production.")
+    if settings.candidate_web_pilot_enabled and not settings.rate_limit_enabled:
+        errors.append(
+            "CANDIDATE_WEB_PILOT_ENABLED=true in production requires RATE_LIMIT_ENABLED=true "
+            "for browser candidate bootstrap abuse controls."
+        )
+    if settings.candidate_web_public_intake_enabled and not settings.rate_limit_enabled:
+        errors.append(
+            "CANDIDATE_WEB_PUBLIC_INTAKE_ENABLED=true in production requires "
+            "RATE_LIMIT_ENABLED=true for public campaign abuse controls."
+        )
 
     # Print warnings to stderr
     if warnings:
@@ -898,6 +918,17 @@ def get_settings() -> Settings:
         ).strip()
         or "Attila Recruiting/1.0 (engineering@attila.local)"
     )
+    hh_candidate_oauth_enabled = _get_bool(
+        "HH_CANDIDATE_OAUTH_ENABLED",
+        default=False,
+    )
+    hh_candidate_client_id = os.getenv("HH_CANDIDATE_CLIENT_ID", "").strip()
+    hh_candidate_client_secret = os.getenv("HH_CANDIDATE_CLIENT_SECRET", "").strip()
+    hh_candidate_redirect_uri = os.getenv("HH_CANDIDATE_REDIRECT_URI", "").strip()
+    hh_candidate_user_agent = (
+        os.getenv("HH_CANDIDATE_USER_AGENT", "").strip()
+        or hh_user_agent
+    )
     hh_oauth_state_ttl_seconds = _get_int("HH_OAUTH_STATE_TTL_SECONDS", 900, minimum=60)
     hh_webhook_base_url = os.getenv("HH_WEBHOOK_BASE_URL", "").strip()
     hh_auto_import_interval_seconds = _get_int(
@@ -952,6 +983,36 @@ def get_settings() -> Settings:
     max_init_data_max_age_seconds = _get_int(
         "MAX_INIT_DATA_MAX_AGE_SECONDS",
         86400,
+        minimum=60,
+    )
+    candidate_web_pilot_enabled = _get_bool(
+        "CANDIDATE_WEB_PILOT_ENABLED",
+        default=False,
+    )
+    candidate_web_public_intake_enabled = _get_bool(
+        "CANDIDATE_WEB_PUBLIC_INTAKE_ENABLED",
+        default=False,
+    )
+    allowed_public_providers_raw = os.getenv(
+        "CANDIDATE_WEB_PUBLIC_INTAKE_ALLOWED_PROVIDERS",
+        "telegram,hh,max",
+    )
+    allowed_public_providers = tuple(
+        provider
+        for provider in (
+            str(item or "").strip().lower()
+            for item in allowed_public_providers_raw.split(",")
+        )
+        if provider in {"telegram", "max", "hh"}
+    ) or ("telegram", "hh", "max")
+    candidate_web_public_intake_token_ttl_seconds = _get_int(
+        "CANDIDATE_WEB_PUBLIC_INTAKE_TOKEN_TTL_SECONDS",
+        900,
+        minimum=60,
+    )
+    candidate_web_public_handoff_ttl_seconds = _get_int(
+        "CANDIDATE_WEB_PUBLIC_HANDOFF_TTL_SECONDS",
+        300,
         minimum=60,
     )
 
@@ -1046,6 +1107,11 @@ def get_settings() -> Settings:
         hh_client_secret=hh_client_secret,
         hh_redirect_uri=hh_redirect_uri,
         hh_user_agent=hh_user_agent,
+        hh_candidate_oauth_enabled=hh_candidate_oauth_enabled,
+        hh_candidate_client_id=hh_candidate_client_id,
+        hh_candidate_client_secret=hh_candidate_client_secret,
+        hh_candidate_redirect_uri=hh_candidate_redirect_uri,
+        hh_candidate_user_agent=hh_candidate_user_agent,
         hh_oauth_state_ttl_seconds=hh_oauth_state_ttl_seconds,
         hh_webhook_base_url=hh_webhook_base_url,
         hh_auto_import_interval_seconds=hh_auto_import_interval_seconds,
@@ -1067,6 +1133,13 @@ def get_settings() -> Settings:
         max_webhook_secret=max_webhook_secret,
         max_webhook_url=max_webhook_url,
         max_init_data_max_age_seconds=max_init_data_max_age_seconds,
+        candidate_web_pilot_enabled=candidate_web_pilot_enabled,
+        candidate_web_public_intake_enabled=candidate_web_public_intake_enabled,
+        candidate_web_public_intake_allowed_providers=allowed_public_providers,
+        candidate_web_public_intake_token_ttl_seconds=(
+            candidate_web_public_intake_token_ttl_seconds
+        ),
+        candidate_web_public_handoff_ttl_seconds=candidate_web_public_handoff_ttl_seconds,
     )
 
     # Validate production configuration (fails fast with clear error messages)

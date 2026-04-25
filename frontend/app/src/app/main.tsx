@@ -60,6 +60,7 @@ const TgDashboardPage = lazy(() => import('./routes/tg-app/index').then(m => ({ 
 const TgIncomingPage = lazy(() => import('./routes/tg-app/incoming').then(m => ({ default: m.TgIncomingPage })))
 const TgCandidatePage = lazy(() => import('./routes/tg-app/candidate').then(m => ({ default: m.TgCandidatePage })))
 const MaxMiniAppPage = lazy(() => import('./routes/miniapp').then(m => ({ default: m.MaxMiniAppPage })))
+const CandidateFlowPage = lazy(() => import('./routes/candidate-flow').then(m => ({ default: m.CandidateFlowPage })))
 
 // Wrap lazy components with Suspense
 function withSuspense<P extends object>(Component: React.ComponentType<P>) {
@@ -281,6 +282,24 @@ const maxMiniAppRoute = createRoute({
   component: withSuspense(MaxMiniAppPage),
 })
 
+const candidateFlowRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/candidate-flow',
+  component: withSuspense(CandidateFlowPage),
+})
+
+const candidateFlowStartRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/candidate-flow/start',
+  component: withSuspense(CandidateFlowPage),
+})
+
+const applyCampaignRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/apply/$slug',
+  component: withSuspense(CandidateFlowPage),
+})
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
@@ -312,6 +331,9 @@ const routeTree = rootRoute.addChildren([
   candidateNewRoute,
   candidateDetailRoute,
   maxMiniAppRoute,
+  candidateFlowRoute,
+  candidateFlowStartRoute,
+  applyCampaignRoute,
   tgAppLayoutRoute.addChildren([
     tgDashboardRoute,
     tgIncomingRoute,
