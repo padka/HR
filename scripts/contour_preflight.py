@@ -66,17 +66,14 @@ def _check_expected_revision(root: Path, contour: str) -> list[str]:
 def _check_imports(root: Path, contour: str) -> list[str]:
     problems: list[str] = []
     sys.path.insert(0, str(root))
-    warnings.filterwarnings(
-        "ignore",
-        message="'crypt' is deprecated and slated for removal in Python 3.13",
-        category=DeprecationWarning,
-    )
     try:
-        for module_name in REQUIRED_IMPORTS[contour]:
-            try:
-                importlib.import_module(module_name)
-            except Exception as exc:  # noqa: BLE001 - preflight needs exact import failures
-                problems.append(f"import failed: {module_name}: {exc}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for module_name in REQUIRED_IMPORTS[contour]:
+                try:
+                    importlib.import_module(module_name)
+                except Exception as exc:  # noqa: BLE001 - preflight needs exact import failures
+                    problems.append(f"import failed: {module_name}: {exc}")
     finally:
         try:
             sys.path.remove(str(root))
