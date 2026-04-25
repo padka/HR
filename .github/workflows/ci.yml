@@ -119,6 +119,7 @@ jobs:
         if: matrix.python-version == '3.12'
         env:
           ENVIRONMENT: test
+          RECRUITSMART_OPENAPI_MODE: "1"
           RUN_MIGRATIONS: "false"
           AUTO_MIGRATE: "false"
           BOT_AUTOSTART: "false"
