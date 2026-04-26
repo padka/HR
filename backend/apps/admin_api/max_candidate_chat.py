@@ -42,6 +42,10 @@ from backend.apps.admin_api.candidate_access.services import (
 from backend.apps.admin_api.max_launch import bootstrap_max_global_intake_token
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.max_recovery import (
+    compute_max_delivery_next_retry_at,
+    serialize_inline_buttons,
+)
 from backend.core.messenger.protocol import InlineButton
 from backend.core.settings import Settings
 from backend.domain.candidates.models import (
@@ -58,7 +62,9 @@ from backend.domain.candidates.models import (
 )
 from backend.domain.candidates.services import (
     load_preferred_user_by_max_user_id,
-    log_outbound_max_message,
+    mark_max_message_retryable_failure,
+    mark_max_message_sent,
+    reserve_outbound_max_message,
 )
 from backend.domain.candidates.test1_shared import (
     BOOKING_STEP_KEY,
@@ -67,6 +73,7 @@ from backend.domain.candidates.test1_shared import (
     NEXT_ACTION_HUMAN_DECLINE_REVIEW,
     NEXT_ACTION_SELECT_INTERVIEW_SLOT,
 )
+from backend.domain.idempotency import max_chat_prompt_key
 from backend.domain.models import Slot
 from backend.domain.repositories import confirm_slot_by_candidate, reject_slot
 
@@ -145,6 +152,15 @@ def wants_max_chat_handoff(text: str | None) -> bool:
     if not normalized:
         return False
     return any(phrase in normalized for phrase in _CHAT_START_PHRASES)
+
+
+def _stable_prompt_request_id(
+    client_request_id: str,
+    *,
+    state: str,
+    booking_id: int | None,
+) -> str:
+    return max_chat_prompt_key(client_request_id, state=state, booking_id=booking_id)
 
 
 async def resolve_max_chat_context(
@@ -1103,23 +1119,69 @@ async def send_max_chat_prompt(
     client_request_id: str,
     payload: dict[str, Any] | None = None,
 ) -> bool:
-    adapter = await ensure_max_adapter(settings=settings)
-    if adapter is None:
-        return False
-    result = await adapter.send_message(max_user_id, prompt.text, buttons=prompt.buttons or None)
-    if not result.success:
-        return False
-    await log_outbound_max_message(
+    prompt_request_id = _stable_prompt_request_id(
+        client_request_id,
+        state=prompt.state,
+        booking_id=prompt.booking_id,
+    )
+
+    message, created = await reserve_outbound_max_message(
         max_user_id,
         text=prompt.text,
         payload={
             "origin_channel": "max",
             "kind": "candidate_chat_prompt",
             "state": prompt.state,
+            "buttons": serialize_inline_buttons(prompt.buttons or None),
             **dict(payload or {}),
         },
+        client_request_id=prompt_request_id,
+    )
+    if not created or message is None:
+        return True
+
+    adapter = await ensure_max_adapter(settings=settings)
+    if adapter is None:
+        attempted_at = _utcnow()
+        await mark_max_message_retryable_failure(
+            message.id,
+            attempted_at=attempted_at,
+            error="adapter_unavailable",
+            next_retry_at=compute_max_delivery_next_retry_at(
+                attempt=1,
+                retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                now=attempted_at,
+            ),
+            attempts=1,
+        )
+        return False
+
+    result = await adapter.send_message(
+        max_user_id,
+        prompt.text,
+        buttons=prompt.buttons or None,
+        correlation_id=prompt_request_id,
+    )
+    if not result.success:
+        attempted_at = _utcnow()
+        await mark_max_message_retryable_failure(
+            message.id,
+            attempted_at=attempted_at,
+            error=result.error,
+            next_retry_at=compute_max_delivery_next_retry_at(
+                attempt=1,
+                retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                now=attempted_at,
+            ),
+            attempts=1,
+        )
+        return False
+    await mark_max_message_sent(
+        message.id,
         provider_message_id=result.message_id,
-        client_request_id=client_request_id,
+        attempted_at=_utcnow(),
     )
     return True
 

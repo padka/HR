@@ -351,6 +351,7 @@ class ChatMessageStatus(str, Enum):
     QUEUED = "queued"
     SENT = "sent"
     FAILED = "failed"
+    DEAD = "dead"
     RECEIVED = "received"
 
 
@@ -372,6 +373,11 @@ class ChatMessage(Base):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     author_label: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     client_request_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    delivery_locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_dead_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

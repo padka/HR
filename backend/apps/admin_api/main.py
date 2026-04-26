@@ -48,6 +48,7 @@ from backend.core.cache import (
 from backend.core.db import async_engine, async_session
 from backend.core.logging import configure_logging
 from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.max_recovery import MaxDeliveryRecoveryWorker
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import unregister_adapter
 from backend.core.settings import get_settings
@@ -109,13 +110,23 @@ async def lifespan(app: FastAPI):
         logger.info("Cache disabled (no REDIS_URL)")
 
     max_adapter = None
+    recovery_worker = None
     try:
         try:
             max_adapter = await ensure_max_adapter(settings=settings)
         except Exception:
             logger.exception("admin_api.max_adapter_bootstrap_failed")
+        if settings.max_adapter_enabled and settings.max_delivery_recovery_admin_api_enabled:
+            recovery_worker = MaxDeliveryRecoveryWorker(settings=settings)
+            recovery_worker.start()
+            app.state.max_delivery_recovery_worker = recovery_worker
         yield
     finally:
+        if recovery_worker is not None:
+            try:
+                await recovery_worker.shutdown()
+            except Exception:
+                logger.debug("admin_api.max_delivery_recovery_shutdown_error", exc_info=True)
         if max_adapter is not None:
             try:
                 await max_adapter.close()

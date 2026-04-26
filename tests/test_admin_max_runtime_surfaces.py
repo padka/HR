@@ -565,6 +565,9 @@ def test_max_rollout_issue_reuses_token_and_skips_duplicate_send(
     assert adapter.calls[0]["chat_id"] == "max-user-702"
     tokens = asyncio.run(_load_rollout_tokens(candidate.id))
     assert len(tokens) == 1
+    messages = asyncio.run(_load_chat_messages(candidate.id))
+    assert len(messages) == 1
+    assert messages[0].client_request_id == f"max:invite-send:{tokens[0].id}"
 
 
 def test_max_rollout_dry_run_preview_hides_token_and_persists_safe_audit_trail(
@@ -780,6 +783,9 @@ def test_max_rollout_send_failure_records_message_failed_event_and_audit(
     assert len(messages) == 1
     assert messages[0].status == "failed"
     assert messages[0].error == "provider_down"
+    assert messages[0].delivery_attempts == 1
+    assert messages[0].delivery_next_retry_at is not None
+    assert messages[0].delivery_dead_at is None
 
     events = asyncio.run(_load_rollout_events(candidate.id))
     assert [event.event_type for event in events] == [

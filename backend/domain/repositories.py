@@ -3,8 +3,10 @@ import logging
 import re
 import uuid
 import asyncio
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from dataclasses import MISSING, dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 from sqlalchemy import and_, delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -12,8 +14,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from dataclasses import MISSING, dataclass
-from typing import Literal
 
 
 from backend.core.db import async_session
@@ -63,9 +63,9 @@ _RESERVATION_LOCKS: dict[str, asyncio.Lock] = {}
 
 def _reservation_lock_key(
     *,
-    candidate_id: Optional[str],
-    candidate_tg_id: Optional[int],
-) -> Optional[str]:
+    candidate_id: str | None,
+    candidate_tg_id: int | None,
+) -> str | None:
     normalized_candidate_id = str(candidate_id or "").strip()
     if normalized_candidate_id:
         return f"candidate:{normalized_candidate_id}"
@@ -85,11 +85,11 @@ def slot_status_free_sql(alias: str = "s") -> str:
 
 def _to_aware_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-async def get_active_recruiters() -> List[Recruiter]:
+async def get_active_recruiters() -> list[Recruiter]:
     async with async_session() as session:
         res = await session.scalars(
             select(Recruiter).where(Recruiter.active.is_(True)).order_by(Recruiter.name.asc())
@@ -97,7 +97,7 @@ async def get_active_recruiters() -> List[Recruiter]:
         return list(res)
 
 
-async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
+async def get_active_recruiters_for_city(city_id: int) -> list[Recruiter]:
     """Return recruiters that can process candidates from the given city.
 
     A recruiter may be linked to the city explicitly (as the responsible
@@ -109,7 +109,7 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
     candidate after Test 1.
     """
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     rc = recruiter_city_association.alias("rc")
     city_alias = aliased(City)
@@ -147,7 +147,7 @@ async def get_active_recruiters_for_city(city_id: int) -> List[Recruiter]:
         return list(res)
 
 
-async def get_candidate_cities() -> List[City]:
+async def get_candidate_cities() -> list[City]:
     """Return active cities for the bot city picker.
 
     We still compute "available" cities (with responsible recruiters or future
@@ -155,7 +155,7 @@ async def get_candidate_cities() -> List[City]:
     city configured in the system. Available cities are sorted first.
     """
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     rc = recruiter_city_association.alias("rc")
     responsible = aliased(Recruiter)
@@ -216,12 +216,12 @@ async def get_candidate_cities() -> List[City]:
         ]
 
 
-async def get_recruiter(recruiter_id: int) -> Optional[Recruiter]:
+async def get_recruiter(recruiter_id: int) -> Recruiter | None:
     async with async_session() as session:
         return await session.get(Recruiter, recruiter_id)
 
 
-async def get_recruiter_by_chat_id(chat_id: int) -> Optional[Recruiter]:
+async def get_recruiter_by_chat_id(chat_id: int) -> Recruiter | None:
     """Return recruiter record by Telegram chat id, if any."""
     async with async_session() as session:
         return await session.scalar(
@@ -235,7 +235,7 @@ async def get_recruiter_agenda_by_chat_id(
     start_utc: datetime,
     end_utc: datetime,
     limit: int = 30,
-) -> List[Slot]:
+) -> list[Slot]:
     """Return slots for recruiter by tg chat id within time window."""
     async with async_session() as session:
         stmt = (
@@ -263,7 +263,7 @@ async def get_recruiter_agenda_by_chat_id(
         return list(rows.all())
 
 
-async def get_city_by_name(name: str) -> Optional[City]:
+async def get_city_by_name(name: str) -> City | None:
     async with async_session() as session:
         res = await session.scalars(select(City).where(City.name.ilike(name.strip())))
         return res.first()
@@ -285,7 +285,7 @@ def _normalize_city_part(value: str) -> str:
     return plain.casefold()
 
 
-def _city_variants(value: Optional[str]) -> List[str]:
+def _city_variants(value: str | None) -> list[str]:
     if not value:
         return []
     parts = {value}
@@ -300,7 +300,7 @@ def _city_variants(value: Optional[str]) -> List[str]:
     return normalized
 
 
-async def find_city_by_plain_name(name: Optional[str]) -> Optional[City]:
+async def find_city_by_plain_name(name: str | None) -> City | None:
     """Case-insensitive lookup tolerant к приставкам (“г.”) и составным названиям."""
 
     city_id, _tz = await resolve_city_id_and_tz_by_plain_name(name)
@@ -312,11 +312,11 @@ async def find_city_by_plain_name(name: Optional[str]) -> Optional[City]:
 
 _CITY_LOOKUP_TTL = timedelta(minutes=10)
 _CITY_LOOKUP_LOCK = asyncio.Lock()
-_CITY_LOOKUP_EXPIRES_AT: Optional[datetime] = None
-_CITY_LOOKUP: Optional[dict[str, tuple[int, Optional[str]]]] = None
+_CITY_LOOKUP_EXPIRES_AT: datetime | None = None
+_CITY_LOOKUP: dict[str, tuple[int, str | None]] | None = None
 
 
-async def _get_city_lookup() -> dict[str, tuple[int, Optional[str]]]:
+async def _get_city_lookup() -> dict[str, tuple[int, str | None]]:
     """Build and cache a normalized lookup map for city variants -> (city_id, tz).
 
     This avoids scanning all cities on every call to find_city_by_plain_name(), which
@@ -331,7 +331,7 @@ async def _get_city_lookup() -> dict[str, tuple[int, Optional[str]]]:
     if is_test_mode:
         async with async_session() as session:
             rows = (await session.execute(select(City.id, City.name, City.tz))).all()
-        lookup: dict[str, tuple[int, Optional[str]]] = {}
+        lookup: dict[str, tuple[int, str | None]] = {}
         for city_id, stored_name, stored_tz in rows:
             stored_plain = html.unescape(stored_name or "")
             for variant in _city_variants(stored_plain):
@@ -339,19 +339,19 @@ async def _get_city_lookup() -> dict[str, tuple[int, Optional[str]]]:
         return lookup
 
     global _CITY_LOOKUP, _CITY_LOOKUP_EXPIRES_AT
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if _CITY_LOOKUP is not None and _CITY_LOOKUP_EXPIRES_AT and _CITY_LOOKUP_EXPIRES_AT > now:
         return _CITY_LOOKUP
 
     async with _CITY_LOOKUP_LOCK:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if _CITY_LOOKUP is not None and _CITY_LOOKUP_EXPIRES_AT and _CITY_LOOKUP_EXPIRES_AT > now:
             return _CITY_LOOKUP
 
         async with async_session() as session:
             rows = (await session.execute(select(City.id, City.name, City.tz))).all()
 
-        lookup: dict[str, tuple[int, Optional[str]]] = {}
+        lookup: dict[str, tuple[int, str | None]] = {}
         for city_id, stored_name, stored_tz in rows:
             stored_plain = html.unescape(stored_name or "")
             for variant in _city_variants(stored_plain):
@@ -376,8 +376,8 @@ async def invalidate_city_lookup_cache() -> None:
 
 
 async def resolve_city_id_and_tz_by_plain_name(
-    name: Optional[str],
-) -> tuple[Optional[int], Optional[str]]:
+    name: str | None,
+) -> tuple[int | None, str | None]:
     """Resolve a city by fuzzy plain-name match without loading ORM entities.
 
     Returns (city_id, tz) or (None, None) when not found.
@@ -395,10 +395,10 @@ async def resolve_city_id_and_tz_by_plain_name(
     return (None, None)
 
 
-async def city_has_available_slots(city_id: int, *, now_utc: Optional[datetime] = None) -> bool:
+async def city_has_available_slots(city_id: int, *, now_utc: datetime | None = None) -> bool:
     """Return True if there is at least one free future slot for the city."""
 
-    now_utc = now_utc or datetime.now(timezone.utc)
+    now_utc = now_utc or datetime.now(UTC)
     async with async_session() as session:
         total = await session.scalar(
             select(func.count())
@@ -414,7 +414,7 @@ async def city_has_available_slots(city_id: int, *, now_utc: Optional[datetime] 
         return bool(total)
 
 
-async def get_city(city_id: int) -> Optional[City]:
+async def get_city(city_id: int) -> City | None:
     async with async_session() as session:
         result = await session.execute(
             select(City)
@@ -426,11 +426,11 @@ async def get_city(city_id: int) -> Optional[City]:
 
 async def get_free_slots_by_recruiter(
     recruiter_id: int,
-    now_utc: Optional[datetime] = None,
+    now_utc: datetime | None = None,
     *,
-    city_id: Optional[int] = None,
-) -> List[Slot]:
-    now_utc = now_utc or datetime.now(timezone.utc)
+    city_id: int | None = None,
+) -> list[Slot]:
+    now_utc = now_utc or datetime.now(UTC)
     async with async_session() as session:
         query = (
             select(Slot)
@@ -453,15 +453,15 @@ async def get_free_slots_by_recruiter(
 
 async def get_recruiters_free_slots_summary(
     recruiter_ids: Iterable[int],
-    now_utc: Optional[datetime] = None,
+    now_utc: datetime | None = None,
     *,
-    city_id: Optional[int] = None,
-) -> Dict[int, Tuple[datetime, int]]:
+    city_id: int | None = None,
+) -> dict[int, tuple[datetime, int]]:
     ids = {int(rid) for rid in recruiter_ids if rid is not None}
     if not ids:
         return {}
 
-    now_utc = now_utc or datetime.now(timezone.utc)
+    now_utc = now_utc or datetime.now(UTC)
 
     async with async_session() as session:
         rows = (
@@ -485,7 +485,7 @@ async def get_recruiters_free_slots_summary(
             )
         ).all()
 
-    summary: Dict[int, Tuple[datetime, int]] = {}
+    summary: dict[int, tuple[datetime, int]] = {}
     for recruiter_id, next_start, total in rows:
         if next_start is None:
             continue
@@ -493,7 +493,7 @@ async def get_recruiters_free_slots_summary(
     return summary
 
 
-async def get_slot(slot_id: int) -> Optional[Slot]:
+async def get_slot(slot_id: int) -> Slot | None:
     async with async_session() as session:
         slot = await session.get(Slot, slot_id)
         if slot:
@@ -509,8 +509,8 @@ async def get_message_template(
     *,
     locale: str = "ru",
     channel: str = "tg",
-    city_id: Optional[int] = None,
-) -> Optional[MessageTemplate]:
+    city_id: int | None = None,
+) -> MessageTemplate | None:
     async with async_session() as session:
         base = (
             select(MessageTemplate)
@@ -540,7 +540,7 @@ async def get_message_template(
 @dataclass
 class ReservationResult:
     status: Literal["reserved", "slot_taken", "duplicate_candidate", "already_reserved"]
-    slot: Optional[Slot] = None
+    slot: Slot | None = None
 
 
 @dataclass
@@ -548,24 +548,24 @@ class OutboxItem:
     """Lightweight representation of a pending outbox notification."""
 
     id: int
-    booking_id: Optional[int]
+    booking_id: int | None
     type: str
-    payload: Dict[str, Any]
-    candidate_tg_id: Optional[int]
-    recruiter_tg_id: Optional[int]
+    payload: dict[str, Any]
+    candidate_tg_id: int | None
+    recruiter_tg_id: int | None
     attempts: int
     created_at: datetime
-    next_retry_at: Optional[datetime] = None
+    next_retry_at: datetime | None = None
     messenger_channel: str = "telegram"
-    failure_class: Optional[str] = None
-    failure_code: Optional[str] = None
-    provider_message_id: Optional[str] = None
+    failure_class: str | None = None
+    failure_code: str | None = None
+    provider_message_id: str | None = None
 
 
 @dataclass
 class CandidateConfirmationResult:
     status: Literal["not_found", "invalid_status", "already_confirmed", "confirmed"]
-    slot: Optional[Slot] = None
+    slot: Slot | None = None
 
 
 async def register_callback(callback_id: str) -> bool:
@@ -573,30 +573,27 @@ async def register_callback(callback_id: str) -> bool:
         return True
 
     async with async_session() as session:
-        async with session.begin():
-            exists = await session.scalar(
-                select(TelegramCallbackLog.id)
-                .where(TelegramCallbackLog.callback_id == callback_id)
-                .with_for_update()
+        session.add(
+            TelegramCallbackLog(
+                callback_id=callback_id,
+                created_at=datetime.now(UTC),
             )
-            if exists:
-                return False
-            session.add(
-                TelegramCallbackLog(
-                    callback_id=callback_id,
-                    created_at=datetime.now(timezone.utc),
-                )
-            )
+        )
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False
     return True
 
 
-def _log_candidate_clause(candidate_tg_id: Optional[int]):
+def _log_candidate_clause(candidate_tg_id: int | None):
     if candidate_tg_id is None:
         return NotificationLog.candidate_tg_id.is_(None)
     return NotificationLog.candidate_tg_id == candidate_tg_id
 
 
-def _outbox_candidate_clause(candidate_tg_id: Optional[int]):
+def _outbox_candidate_clause(candidate_tg_id: int | None):
     if candidate_tg_id is None:
         return OutboxNotification.candidate_tg_id.is_(None)
     return OutboxNotification.candidate_tg_id == candidate_tg_id
@@ -606,7 +603,7 @@ async def notification_log_exists(
     notification_type: str,
     booking_id: int,
     *,
-    candidate_tg_id: Optional[int] = None,
+    candidate_tg_id: int | None = None,
 ) -> bool:
     async with async_session() as session:
         if candidate_tg_id is None:
@@ -627,9 +624,9 @@ async def get_notification_log(
     notification_type: str,
     booking_id: int,
     *,
-    candidate_tg_id: Optional[int] = None,
+    candidate_tg_id: int | None = None,
     for_update: bool = False,
-) -> Optional[NotificationLog]:
+) -> NotificationLog | None:
     async with async_session() as session:
         if candidate_tg_id is None:
             candidate_tg_id = await session.scalar(
@@ -649,7 +646,7 @@ async def get_notification_log_by_id(
     log_id: int,
     *,
     for_update: bool = False,
-) -> Optional[NotificationLog]:
+) -> NotificationLog | None:
     async with async_session() as session:
         query = select(NotificationLog).where(NotificationLog.id == log_id)
         if for_update:
@@ -661,19 +658,19 @@ async def add_notification_log(
     notification_type: str,
     booking_id: int,
     *,
-    candidate_tg_id: Optional[int] = None,
+    candidate_tg_id: int | None = None,
     channel: str = "telegram",
-    payload: Optional[str] = None,
+    payload: str | None = None,
     delivery_status: str = "sent",
     attempts: int = 1,
-    attempt_no: Optional[int] = None,
-    last_error: Optional[str] = None,
-    failure_class: Optional[str] = None,
-    provider_message_id: Optional[str] = None,
-    next_retry_at: Optional[datetime] = None,
+    attempt_no: int | None = None,
+    last_error: str | None = None,
+    failure_class: str | None = None,
+    provider_message_id: str | None = None,
+    next_retry_at: datetime | None = None,
     overwrite: bool = False,
-    template_key: Optional[str] = None,
-    template_version: Optional[int] = None,
+    template_key: str | None = None,
+    template_version: int | None = None,
 ) -> bool:
     async with async_session() as session:
         async with session.begin():
@@ -696,7 +693,7 @@ async def add_notification_log(
                 "next_retry_at": next_retry_at,
                 "template_key": template_key,
                 "template_version": template_version,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             }
             bind = session.get_bind()
             dialect_name = bind.dialect.name if bind is not None else ""
@@ -771,9 +768,9 @@ async def add_notification_log(
 async def add_bot_message_log(
     message_type: str,
     *,
-    candidate_tg_id: Optional[int] = None,
-    slot_id: Optional[int] = None,
-    payload: Optional[Dict[str, Any]] = None,
+    candidate_tg_id: int | None = None,
+    slot_id: int | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> None:
     async with async_session() as session:
         session.add(
@@ -782,7 +779,7 @@ async def add_bot_message_log(
                 candidate_tg_id=candidate_tg_id,
                 slot_id=slot_id,
                 payload_json=payload,
-                sent_at=datetime.now(timezone.utc),
+                sent_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -792,9 +789,9 @@ async def add_message_log(
     message_type: str,
     *,
     recipient_type: str,
-    recipient_id: Optional[int] = None,
-    slot_assignment_id: Optional[int] = None,
-    payload: Optional[Dict[str, Any]] = None,
+    recipient_id: int | None = None,
+    slot_assignment_id: int | None = None,
+    payload: dict[str, Any] | None = None,
     status: str = "sent",
     channel: str = "tg",
 ) -> None:
@@ -808,7 +805,7 @@ async def add_message_log(
                 message_type=message_type,
                 payload_json=payload,
                 delivery_status=status,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -818,10 +815,10 @@ async def update_notification_log_fields(
     log_id: int,
     *,
     channel: object = _UNSET,
-    delivery_status: Optional[str] = None,
+    delivery_status: str | None = None,
     payload: object = _UNSET,
-    attempts: Optional[int] = None,
-    attempt_no: Optional[int] = None,
+    attempts: int | None = None,
+    attempt_no: int | None = None,
     last_error: object = _UNSET,
     failure_class: object = _UNSET,
     provider_message_id: object = _UNSET,
@@ -861,16 +858,16 @@ async def update_notification_log_fields(
 async def add_outbox_notification(
     *,
     notification_type: str,
-    booking_id: Optional[int],
-    payload: Optional[Dict[str, Any]] = None,
-    candidate_tg_id: Optional[int] = None,
-    recruiter_tg_id: Optional[int] = None,
-    correlation_id: Optional[str] = None,
+    booking_id: int | None,
+    payload: dict[str, Any] | None = None,
+    candidate_tg_id: int | None = None,
+    recruiter_tg_id: int | None = None,
+    correlation_id: str | None = None,
     messenger_channel: str = "telegram",
     session=None,
 ) -> OutboxNotification:
     payload = payload or {}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async def _add(sess) -> OutboxNotification:
         # First, check if entry exists (regardless of status) to ensure idempotency
@@ -943,8 +940,8 @@ async def claim_outbox_batch(
     *,
     batch_size: int,
     lock_timeout: timedelta = timedelta(seconds=30),
-) -> List[OutboxItem]:
-    now = datetime.now(timezone.utc)
+) -> list[OutboxItem]:
+    now = datetime.now(UTC)
     stale_before = now - lock_timeout
     from backend.core.messenger.channel_state import get_messenger_channel_health
 
@@ -991,7 +988,7 @@ async def claim_outbox_batch(
             if rows:
                 await session.flush()
 
-            items: List[OutboxItem] = []
+            items: list[OutboxItem] = []
             for row in rows:
                 items.append(
                     OutboxItem(
@@ -1017,10 +1014,10 @@ async def claim_outbox_item_by_id(
     outbox_id: int,
     *,
     lock_timeout: timedelta = timedelta(seconds=30),
-) -> Optional[OutboxItem]:
+) -> OutboxItem | None:
     """Claim a single outbox entry by id with the same lock semantics as batch claims."""
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stale_before = now - lock_timeout
     from backend.core.messenger.channel_state import get_messenger_channel_health
 
@@ -1078,8 +1075,8 @@ async def claim_outbox_item_by_id(
 async def update_outbox_entry(
     outbox_id: int,
     *,
-    status: Optional[str] = None,
-    attempts: Optional[int] = None,
+    status: str | None = None,
+    attempts: int | None = None,
     next_retry_at: object = _UNSET,
     last_error: object = _UNSET,
     failure_class: object = _UNSET,
@@ -1087,9 +1084,9 @@ async def update_outbox_entry(
     provider_message_id: object = _UNSET,
     dead_lettered_at: object = _UNSET,
     last_channel_attempted: object = _UNSET,
-    correlation_id: Optional[str] = None,
+    correlation_id: str | None = None,
 ) -> None:
-    values: Dict[str, Any] = {"locked_at": None}
+    values: dict[str, Any] = {"locked_at": None}
     if status is not None:
         values["status"] = status
     if attempts is not None:
@@ -1123,9 +1120,9 @@ async def update_outbox_entry(
 
 async def mark_outbox_notification_sent(
     notification_type: str,
-    booking_id: Optional[int],
+    booking_id: int | None,
     *,
-    candidate_tg_id: Optional[int] = None,
+    candidate_tg_id: int | None = None,
 ) -> int:
     async with async_session() as session:
         async with session.begin():
@@ -1162,7 +1159,7 @@ async def get_outbox_queue_depth() -> int:
         return int(count or 0)
 
 
-async def get_outbox_item(outbox_id: int) -> Optional[OutboxItem]:
+async def get_outbox_item(outbox_id: int) -> OutboxItem | None:
     async with async_session() as session:
         entry = await session.get(OutboxNotification, outbox_id)
         if entry is None:
@@ -1207,8 +1204,8 @@ async def _confirm_slot_by_candidate_in_session(
     *,
     update_candidate_status: bool = True,
 ) -> CandidateConfirmationResult:
-    status_update_candidate_tg_id: Optional[int] = None
-    status_update_candidate_id: Optional[str] = None
+    status_update_candidate_tg_id: int | None = None
+    status_update_candidate_id: str | None = None
     status_update_is_intro_day = False
     slot = await session.scalar(
         select(Slot)
@@ -1248,13 +1245,13 @@ async def _confirm_slot_by_candidate_in_session(
         assignment = matching_assignments[0]
         if assignment.status == SlotAssignmentStatus.OFFERED:
             assignment.status = SlotAssignmentStatus.CONFIRMED
-            assignment.confirmed_at = datetime.now(timezone.utc)
+            assignment.confirmed_at = datetime.now(UTC)
             return True
         if assignment.status in {
             SlotAssignmentStatus.CONFIRMED,
             SlotAssignmentStatus.RESCHEDULE_CONFIRMED,
         }:
-            assignment.confirmed_at = assignment.confirmed_at or datetime.now(timezone.utc)
+            assignment.confirmed_at = assignment.confirmed_at or datetime.now(UTC)
         return False
 
     if status_value == SlotStatus.CONFIRMED_BY_CANDIDATE:
@@ -1315,7 +1312,7 @@ async def _confirm_slot_by_candidate_in_session(
                     booking_id=slot.id,
                     candidate_tg_id=candidate_tg_id,
                     type="candidate_confirm",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                 )
             )
 
@@ -1535,16 +1532,16 @@ async def confirm_slot_by_candidate(
 
 async def reserve_slot(
     slot_id: int,
-    candidate_tg_id: Optional[int],
+    candidate_tg_id: int | None,
     candidate_fio: str,
     candidate_tz: str,
     *,
-    candidate_id: Optional[str] = None,
-    candidate_city_id: Optional[int] = None,
-    candidate_username: Optional[str] = None,
+    candidate_id: str | None = None,
+    candidate_city_id: int | None = None,
+    candidate_username: str | None = None,
     purpose: str = "interview",
-    expected_recruiter_id: Optional[int] = None,
-    expected_city_id: Optional[int] = None,
+    expected_recruiter_id: int | None = None,
+    expected_city_id: int | None = None,
     allow_candidate_replace: bool = False,
 ) -> ReservationResult:
     lock_key = _reservation_lock_key(
@@ -1585,24 +1582,24 @@ async def reserve_slot(
 
 async def _reserve_slot_impl(
     slot_id: int,
-    candidate_tg_id: Optional[int],
+    candidate_tg_id: int | None,
     candidate_fio: str,
     candidate_tz: str,
     *,
-    candidate_id: Optional[str] = None,
-    candidate_city_id: Optional[int] = None,
-    candidate_username: Optional[str] = None,
+    candidate_id: str | None = None,
+    candidate_city_id: int | None = None,
+    candidate_username: str | None = None,
     purpose: str = "interview",
-    expected_recruiter_id: Optional[int] = None,
-    expected_city_id: Optional[int] = None,
+    expected_recruiter_id: int | None = None,
+    expected_city_id: int | None = None,
     allow_candidate_replace: bool = False,
 ) -> ReservationResult:
     """Attempt to reserve the slot and describe the outcome."""
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
-    city_name: Optional[str] = None
-    candidate_uuid: Optional[str] = None
-    slot_recruiter_id: Optional[int] = None
+    city_name: str | None = None
+    candidate_uuid: str | None = None
+    slot_recruiter_id: int | None = None
     slot_purpose = (purpose or "interview").strip().lower()
 
     async with async_session() as session:
@@ -1817,7 +1814,7 @@ async def _reserve_slot_impl(
     return ReservationResult(status="reserved", slot=slot)
 
 
-async def approve_slot(slot_id: int) -> Optional[Slot]:
+async def approve_slot(slot_id: int) -> Slot | None:
     async with async_session() as session:
         async with session.begin():
             slot = await session.get(Slot, slot_id, with_for_update=True)
@@ -1837,9 +1834,9 @@ async def approve_slot(slot_id: int) -> Optional[Slot]:
                 return slot
 
             slot.status = SlotStatus.BOOKED
-            candidate: Optional[User] = None
+            candidate: User | None = None
             messenger_channel = "telegram"
-            outbox_candidate_external_id: Optional[str] = None
+            outbox_candidate_external_id: str | None = None
             if slot.candidate_id:
                 candidate = await session.scalar(
                     select(User).where(User.candidate_id == slot.candidate_id)
@@ -1918,19 +1915,19 @@ async def _reject_slot_in_session(
     session: AsyncSession,
     slot_id: int,
     *,
-    outbox_type: Optional[str] = None,
-    outbox_payload: Optional[Dict[str, Any]] = None,
+    outbox_type: str | None = None,
+    outbox_payload: dict[str, Any] | None = None,
     update_candidate_status: bool = True,
-) -> Optional[Slot]:
+) -> Slot | None:
     slot = await session.get(Slot, slot_id, with_for_update=True)
     if not slot:
         return None
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     reservation_date = _to_aware_utc(slot.start_utc).date()
     candidate_tg_id = slot.candidate_tg_id
     candidate_id = slot.candidate_id
     recruiter_id = slot.recruiter_id
-    candidate: Optional[User] = None
+    candidate: User | None = None
     if candidate_id is not None:
         candidate = await session.scalar(select(User).where(User.candidate_id == candidate_id))
     elif candidate_tg_id is not None:
@@ -2099,11 +2096,11 @@ async def _reject_slot_in_session(
 async def reject_slot(
     slot_id: int,
     *,
-    outbox_type: Optional[str] = None,
-    outbox_payload: Optional[Dict[str, Any]] = None,
+    outbox_type: str | None = None,
+    outbox_payload: dict[str, Any] | None = None,
     session: AsyncSession | None = None,
     update_candidate_status: bool = True,
-) -> Optional[Slot]:
+) -> Slot | None:
     if session is not None:
         return await _reject_slot_in_session(
             session,
@@ -2129,7 +2126,7 @@ async def reject_slot(
         return slot
 
 
-async def set_recruiter_chat_id_by_command(name_hint: str, chat_id: int) -> Optional[Recruiter]:
+async def set_recruiter_chat_id_by_command(name_hint: str, chat_id: int) -> Recruiter | None:
     async with async_session() as session:
         rec = await session.scalar(select(Recruiter).where(Recruiter.name.ilike(name_hint)))
         if not rec:

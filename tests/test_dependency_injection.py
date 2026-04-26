@@ -1,8 +1,8 @@
 """Tests for FastAPI Dependency Injection."""
 
 import pytest
-from unittest.mock import AsyncMock, Mock
 from sqlalchemy.ext.asyncio import AsyncSession
+from unittest.mock import AsyncMock
 
 from backend.core.dependencies import get_async_session, get_uow
 from backend.core.uow import UnitOfWork
@@ -152,3 +152,16 @@ async def test_uow_no_auto_commit():
 
         # Should be None because we didn't commit
         assert found is None, "UoW should not auto-commit"
+
+
+@pytest.mark.asyncio
+async def test_uow_is_single_use():
+    mock_session = AsyncMock(spec=AsyncSession)
+    uow = UnitOfWork(session=mock_session)
+
+    async with uow:
+        pass
+
+    with pytest.raises(RuntimeError, match="single-use"):
+        async with uow:
+            pass

@@ -4,9 +4,8 @@ import asyncio
 import logging
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from redis.exceptions import RedisError
@@ -17,6 +16,7 @@ from backend.apps.admin_ui.services.bot_service import BotService
 from backend.apps.admin_ui.services.chat_meta import derive_chat_message_kind
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.max_recovery import compute_max_delivery_next_retry_at
 from backend.core.messenger.protocol import MessengerPlatform
 from backend.core.messenger.registry import get_registry
 from backend.core.redis_factory import create_redis_client
@@ -31,8 +31,16 @@ from backend.domain.candidates.services import (
     list_chat_messages as domain_list_chat_messages,
 )
 from backend.domain.candidates.services import (
+    mark_max_message_retryable_failure,
+    mark_max_message_sent,
+    reset_max_message_for_manual_retry,
     set_conversation_mode,
     update_chat_message_status,
+)
+from backend.domain.idempotency import (
+    has_max_provider_boundary,
+    max_admin_chat_key,
+    max_provider_message_id,
 )
 from backend.domain.models import Recruiter, Slot
 
@@ -44,12 +52,12 @@ CHAT_RATE_LIMIT_WINDOW_SECONDS = 3600  # 1 hour window
 
 # In-memory rate limit store (candidate_id -> list of timestamps)
 # In production, consider using Redis for persistence across workers
-_rate_limit_store: Dict[int, List[float]] = defaultdict(list)
+_rate_limit_store: dict[int, list[float]] = defaultdict(list)
 _rate_limit_redis_client = None
 _rate_limit_redis_url = ""
 _rate_limit_redis_failed = False
 
-CHAT_TEMPLATES: List[Dict[str, str]] = [
+CHAT_TEMPLATES: list[dict[str, str]] = [
     {
         "key": "reminder",
         "label": "Напоминание",
@@ -86,7 +94,7 @@ CHAT_MODE_TTL_MINUTES = 45
 CHAT_RATE_LIMIT_REDIS_TTL_SECONDS = CHAT_RATE_LIMIT_WINDOW_SECONDS + 60
 
 
-def get_chat_templates() -> List[Dict[str, str]]:
+def get_chat_templates() -> list[dict[str, str]]:
     return CHAT_TEMPLATES
 
 
@@ -134,13 +142,13 @@ async def _get_rate_limit_redis_client():
     return client
 
 
-def _check_rate_limit(candidate_id: int) -> Tuple[bool, int]:
+def _check_rate_limit(candidate_id: int) -> tuple[bool, int]:
     """Check if sending to this candidate is allowed within rate limits.
 
     Returns:
         Tuple of (is_allowed, remaining_count)
     """
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     window_start = now - CHAT_RATE_LIMIT_WINDOW_SECONDS
 
     # Clean up old entries
@@ -155,16 +163,16 @@ def _check_rate_limit(candidate_id: int) -> Tuple[bool, int]:
 
 def _record_message_sent(candidate_id: int) -> None:
     """Record that a message was sent for rate limiting."""
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     _rate_limit_store[candidate_id].append(now)
 
 
-async def _check_rate_limit_async(candidate_id: int) -> Tuple[bool, int]:
+async def _check_rate_limit_async(candidate_id: int) -> tuple[bool, int]:
     client = await _get_rate_limit_redis_client()
     if client is None:
         return _check_rate_limit(candidate_id)
 
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     window_start = now - CHAT_RATE_LIMIT_WINDOW_SECONDS
     key = _chat_rate_limit_key(candidate_id)
     try:
@@ -187,7 +195,7 @@ async def _record_message_sent_async(candidate_id: int) -> None:
         _record_message_sent(candidate_id)
         return
 
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     key = _chat_rate_limit_key(candidate_id)
     member = f"{now:.6f}:{uuid.uuid4().hex}"
     try:
@@ -201,18 +209,26 @@ async def _record_message_sent_async(candidate_id: int) -> None:
         _record_message_sent(candidate_id)
 
 
-def _delivery_stage(status_value: Optional[str]) -> str:
-    normalized = (status_value or "").strip().lower()
+def _delivery_stage(message: ChatMessage) -> str:
+    normalized = (message.status or "").strip().lower()
     if normalized == ChatMessageStatus.QUEUED.value:
         return "queued"
     if normalized == ChatMessageStatus.SENT.value:
         return "provider_accepted"
+    if normalized == ChatMessageStatus.DEAD.value:
+        return "dead_letter"
     if normalized == ChatMessageStatus.FAILED.value:
+        if (
+            str(message.channel or "").strip().lower() == "max"
+            and message.direction == ChatMessageDirection.OUTBOUND.value
+            and message.delivery_next_retry_at is not None
+        ):
+            return "retry_scheduled"
         return "terminal_failed"
     return normalized or "unknown"
 
 
-def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
+def serialize_chat_message(message: ChatMessage) -> dict[str, object]:
     payload = dict(message.payload_json or {}) if isinstance(message.payload_json, dict) else {}
     delivery_channels_raw = payload.get("delivery_channels")
     if isinstance(delivery_channels_raw, list):
@@ -238,17 +254,37 @@ def serialize_chat_message(message: ChatMessage) -> Dict[str, object]:
         ),
         "text": message.text or "",
         "status": message.status,
-        "delivery_stage": _delivery_stage(message.status),
+        "delivery_stage": _delivery_stage(message),
         "error": message.error,
         "telegram_message_id": message.telegram_message_id,
         "provider_message_id": payload.get("provider_message_id"),
+        "delivery_attempts": int(message.delivery_attempts or 0),
+        "delivery_next_retry_at": (
+            message.delivery_next_retry_at.isoformat()
+            if message.delivery_next_retry_at is not None
+            else None
+        ),
+        "delivery_dead_at": (
+            message.delivery_dead_at.isoformat()
+            if message.delivery_dead_at is not None
+            else None
+        ),
         "created_at": message.created_at.isoformat(),
         "author": message.author_label,
-        "can_retry": message.direction == ChatMessageDirection.OUTBOUND.value and message.status == ChatMessageStatus.FAILED.value,
+        "can_retry": (
+            message.direction == ChatMessageDirection.OUTBOUND.value
+            and (
+                message.status == ChatMessageStatus.FAILED.value
+                or (
+                    str(message.channel or "").strip().lower() == "max"
+                    and message.status == ChatMessageStatus.DEAD.value
+                )
+            )
+        ),
     }
 
 
-async def list_chat_history(candidate_id: int, limit: int, before: Optional[datetime]) -> Dict[str, object]:
+async def list_chat_history(candidate_id: int, limit: int, before: datetime | None) -> dict[str, object]:
     fetch_limit = min(limit, 200)
     messages = await domain_list_chat_messages(candidate_id, limit=fetch_limit + 1, before=before)
     has_more = len(messages) > fetch_limit
@@ -261,7 +297,7 @@ async def list_chat_history(candidate_id: int, limit: int, before: Optional[date
     }
 
 
-async def _latest_chat_message_at(candidate_id: int) -> Optional[datetime]:
+async def _latest_chat_message_at(candidate_id: int) -> datetime | None:
     async with async_session() as session:
         row = await session.execute(
             select(ChatMessage.created_at)
@@ -271,19 +307,19 @@ async def _latest_chat_message_at(candidate_id: int) -> Optional[datetime]:
         )
         created_at = row.scalar_one_or_none()
     if created_at and created_at.tzinfo is None:
-        return created_at.replace(tzinfo=timezone.utc)
+        return created_at.replace(tzinfo=UTC)
     return created_at
 
 
 async def wait_for_chat_history_updates(
     candidate_id: int,
     *,
-    since: Optional[datetime],
+    since: datetime | None,
     timeout: int = 25,
     limit: int = 80,
-) -> Dict[str, object]:
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=max(timeout, 5))
-    since_utc = since if since is None or since.tzinfo is not None else since.replace(tzinfo=timezone.utc)
+) -> dict[str, object]:
+    deadline = datetime.now(UTC) + timedelta(seconds=max(timeout, 5))
+    since_utc = since if since is None or since.tzinfo is not None else since.replace(tzinfo=UTC)
 
     while True:
         latest_message_at = await _latest_chat_message_at(candidate_id)
@@ -291,7 +327,7 @@ async def wait_for_chat_history_updates(
             payload = await list_chat_history(candidate_id, limit=limit, before=None)
             payload["updated"] = True
             return payload
-        if datetime.now(timezone.utc) >= deadline:
+        if datetime.now(UTC) >= deadline:
             return {
                 "messages": [],
                 "has_more": False,
@@ -313,7 +349,7 @@ async def _load_candidate(candidate_id: int) -> User:
         return user
 
 
-async def _existing_message(candidate_id: int, client_request_id: Optional[str]) -> Optional[ChatMessage]:
+async def _existing_message(candidate_id: int, client_request_id: str | None) -> ChatMessage | None:
     if not client_request_id:
         return None
     async with async_session() as session:
@@ -335,8 +371,8 @@ async def _recent_inbound_channel(
     candidate_id: int,
     *,
     horizon: timedelta = timedelta(days=14),
-) -> Optional[str]:
-    cutoff = datetime.now(timezone.utc) - horizon
+) -> str | None:
+    cutoff = datetime.now(UTC) - horizon
     async with async_session() as session:
         row = await session.execute(
             select(ChatMessage.channel)
@@ -356,8 +392,8 @@ async def _recent_inbound_channel(
 def _resolve_delivery_channel(
     candidate: User,
     *,
-    preferred_channel: Optional[str] = None,
-) -> tuple[str, Optional[int | str]]:
+    preferred_channel: str | None = None,
+) -> tuple[str, int | str | None]:
     requested = str(preferred_channel or "").strip().lower()
     telegram_user_id = candidate.telegram_user_id or candidate.telegram_id
     max_user_id = str(getattr(candidate, "max_user_id", "") or "").strip() or None
@@ -398,8 +434,8 @@ def _resolve_delivery_channel(
 async def _resolve_reply_channel(
     candidate: User,
     *,
-    preferred_channel: Optional[str] = None,
-) -> tuple[str, Optional[int | str]]:
+    preferred_channel: str | None = None,
+) -> tuple[str, int | str | None]:
     recent_inbound = await _recent_inbound_channel(candidate.id)
     return _resolve_delivery_channel(
         candidate,
@@ -412,8 +448,9 @@ async def _dispatch_chat_message(
     *,
     text: str,
     bot_service: BotService,
-    reply_markup: Optional[object] = None,
-    preferred_channel: Optional[str] = None,
+    reply_markup: object | None = None,
+    preferred_channel: str | None = None,
+    correlation_id: str | None = None,
 ):
     channel, recipient_id = _resolve_delivery_channel(
         candidate,
@@ -443,11 +480,19 @@ async def _dispatch_chat_message(
         if adapter is None or not bool(getattr(adapter, "is_configured", True)):
             adapter = await ensure_max_adapter(settings=get_settings())
         if adapter is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"message": "MAX adapter is not configured"},
+            return channel, recipient_id, SimpleNamespace(
+                ok=False,
+                success=False,
+                status="failed",
+                error="adapter_unavailable",
+                message=None,
+                message_id=None,
             )
-        send_result = await adapter.send_message(str(recipient_id), text)
+        send_result = await adapter.send_message(
+            str(recipient_id),
+            text,
+            correlation_id=correlation_id,
+        )
         return channel, recipient_id, SimpleNamespace(
             ok=bool(getattr(send_result, "success", False)),
             success=bool(getattr(send_result, "success", False)),
@@ -486,13 +531,15 @@ async def send_chat_message(
     candidate_id: int,
     *,
     text: str,
-    client_request_id: Optional[str],
-    author_label: Optional[str],
+    client_request_id: str | None,
+    author_label: str | None,
     bot_service: BotService,
-    reply_markup: Optional[object] = None,
-) -> Dict[str, object]:
+    reply_markup: object | None = None,
+) -> dict[str, object]:
     candidate = await _load_candidate(candidate_id)
     channel, recipient_id = await _resolve_reply_channel(candidate)
+    if channel == "max":
+        client_request_id = max_admin_chat_key(candidate_id, client_request_id)
 
     duplicate = await _existing_message(candidate_id, client_request_id)
     if duplicate:
@@ -515,20 +562,27 @@ async def send_chat_message(
     text = await _fill_dynamic_fields(text, candidate)
 
     async with async_session() as session:
+        now = datetime.now(UTC)
+        payload_json = {
+            "origin_channel": "crm",
+            "delivery_channels": ["web"] if channel == "web" else ["web", channel],
+            "author_role": "recruiter",
+        }
         message = ChatMessage(
             candidate_id=candidate.id,
             telegram_user_id=int(recipient_id) if channel == "telegram" and recipient_id is not None else None,
             direction=ChatMessageDirection.OUTBOUND.value,
             channel=channel,
             text=text,
-            payload_json={
-                "origin_channel": "crm",
-                "delivery_channels": ["web"] if channel == "web" else ["web", channel],
-                "author_role": "recruiter",
-            },
+            payload_json=payload_json,
             status=ChatMessageStatus.QUEUED.value,
             author_label=author_label,
             client_request_id=client_request_id,
+            delivery_attempts=0,
+            delivery_locked_at=now if channel == "max" else None,
+            delivery_next_retry_at=None,
+            delivery_last_attempt_at=None,
+            delivery_dead_at=None,
         )
         session.add(message)
         await session.commit()
@@ -541,25 +595,28 @@ async def send_chat_message(
         bot_service=bot_service,
         reply_markup=reply_markup,
         preferred_channel=channel,
+        correlation_id=client_request_id,
     )
     if _send_result_ok(send_result):
         await _record_message_sent_async(candidate_id)
-
-        await update_chat_message_status(
-            message_id,
-            status=ChatMessageStatus.SENT,
-            telegram_message_id=(
-                getattr(send_result, "telegram_message_id", None)
-                if delivery_channel == "telegram"
-                else None
-            ),
-            provider_message_id=(
-                getattr(send_result, "message_id", None)
-                if delivery_channel == "max"
-                else None
-            ),
-            error=None,
-        )
+        if delivery_channel == "max":
+            await mark_max_message_sent(
+                message_id,
+                provider_message_id=getattr(send_result, "message_id", None),
+                attempted_at=datetime.now(UTC),
+            )
+        else:
+            await update_chat_message_status(
+                message_id,
+                status=ChatMessageStatus.SENT,
+                telegram_message_id=(
+                    getattr(send_result, "telegram_message_id", None)
+                    if delivery_channel == "telegram"
+                    else None
+                ),
+                provider_message_id=None,
+                error=None,
+            )
         if delivery_channel == "telegram":
             try:
                 await set_conversation_mode(
@@ -570,11 +627,26 @@ async def send_chat_message(
             except Exception:  # pragma: no cover - non-critical
                 pass
     else:
-        await update_chat_message_status(
-            message_id,
-            status=ChatMessageStatus.FAILED,
-            error=_send_result_error(send_result),
-        )
+        if delivery_channel == "max":
+            attempted_at = datetime.now(UTC)
+            await mark_max_message_retryable_failure(
+                message_id,
+                attempted_at=attempted_at,
+                error=_send_result_error(send_result),
+                next_retry_at=compute_max_delivery_next_retry_at(
+                    attempt=1,
+                    retry_base_seconds=get_settings().max_delivery_recovery_retry_base_seconds,
+                    retry_max_seconds=get_settings().max_delivery_recovery_retry_max_seconds,
+                    now=attempted_at,
+                ),
+                attempts=1,
+            )
+        else:
+            await update_chat_message_status(
+                message_id,
+                status=ChatMessageStatus.FAILED,
+                error=_send_result_error(send_result),
+            )
 
     updated = await _existing_message(candidate_id, client_request_id) or await _fetch_message_by_id(message_id)
     return {
@@ -583,7 +655,7 @@ async def send_chat_message(
     }
 
 
-async def _resolve_recruiter_link(candidate: User) -> Optional[str]:
+async def _resolve_recruiter_link(candidate: User) -> str | None:
     tg_id = candidate.telegram_user_id or candidate.telegram_id
     tg_filter = Slot.candidate_tg_id == tg_id if tg_id else false()
     async with async_session() as session:
@@ -617,7 +689,7 @@ async def _fill_dynamic_fields(text: str, candidate: User) -> str:
     return text.replace("{link}", link).replace("<ссылка>", link)
 
 
-async def _fetch_message_by_id(message_id: int) -> Optional[ChatMessage]:
+async def _fetch_message_by_id(message_id: int) -> ChatMessage | None:
     async with async_session() as session:
         message = await session.get(ChatMessage, message_id)
         if message:
@@ -630,7 +702,7 @@ async def retry_chat_message(
     message_id: int,
     *,
     bot_service: BotService,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     async with async_session() as session:
         message = await session.get(ChatMessage, message_id)
         if not message or message.candidate_id != candidate_id:
@@ -643,18 +715,49 @@ async def retry_chat_message(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"message": "Повторно можно отправить только исходящее сообщение"},
             )
-        if message.status != ChatMessageStatus.FAILED.value:
+        is_max_channel = str(message.channel or "").strip().lower() == "max"
+        retryable_statuses = {ChatMessageStatus.FAILED.value}
+        if is_max_channel:
+            retryable_statuses.add(ChatMessageStatus.DEAD.value)
+        if message.status not in retryable_statuses:
+            detail_message = "Можно повторно отправить только сообщения со статусом failed"
+            if is_max_channel:
+                detail_message = "Можно повторно отправить только сообщения со статусом failed или dead"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"message": "Можно повторно отправить только сообщения со статусом failed"},
+                detail={"message": detail_message},
             )
-        message.status = ChatMessageStatus.QUEUED.value
-        message.error = None
-        await session.commit()
-        await session.refresh(message)
         text = message.text or ""
         channel = message.channel or "telegram"
         candidate = await session.get(User, candidate_id)
+        queued_message_id = int(message.id)
+        client_request_id = message.client_request_id
+        provider_boundary_payload = dict(message.payload_json or {})
+        provider_boundary = is_max_channel and has_max_provider_boundary(
+            status=message.status,
+            payload_json=provider_boundary_payload,
+        )
+
+    if provider_boundary:
+        refreshed = await mark_max_message_sent(
+            queued_message_id,
+            provider_message_id=max_provider_message_id(provider_boundary_payload),
+            attempted_at=datetime.now(UTC),
+            record_attempt=False,
+        )
+        return {
+            "message": serialize_chat_message(refreshed),
+            "status": "sent",
+        }
+
+    if is_max_channel:
+        await reset_max_message_for_manual_retry(queued_message_id)
+    else:
+        await update_chat_message_status(
+            queued_message_id,
+            status=ChatMessageStatus.QUEUED,
+            error=None,
+        )
 
     if candidate is None:
         raise HTTPException(
@@ -676,32 +779,51 @@ async def retry_chat_message(
         text=text,
         bot_service=bot_service,
         preferred_channel=channel,
+        correlation_id=client_request_id,
     )
     if _send_result_ok(send_result):
         await _record_message_sent_async(candidate_id)
-        await update_chat_message_status(
-            message_id,
-            status=ChatMessageStatus.SENT,
-            telegram_message_id=(
-                getattr(send_result, "telegram_message_id", None)
-                if delivery_channel == "telegram"
-                else None
-            ),
-            provider_message_id=(
-                getattr(send_result, "message_id", None)
-                if delivery_channel == "max"
-                else None
-            ),
-            error=None,
-        )
+        if delivery_channel == "max":
+            await mark_max_message_sent(
+                queued_message_id,
+                provider_message_id=getattr(send_result, "message_id", None),
+                attempted_at=datetime.now(UTC),
+            )
+        else:
+            await update_chat_message_status(
+                queued_message_id,
+                status=ChatMessageStatus.SENT,
+                telegram_message_id=(
+                    getattr(send_result, "telegram_message_id", None)
+                    if delivery_channel == "telegram"
+                    else None
+                ),
+                provider_message_id=None,
+                error=None,
+            )
     else:
-        await update_chat_message_status(
-            message_id,
-            status=ChatMessageStatus.FAILED,
-            error=_send_result_error(send_result),
-        )
+        if delivery_channel == "max":
+            attempted_at = datetime.now(UTC)
+            await mark_max_message_retryable_failure(
+                queued_message_id,
+                attempted_at=attempted_at,
+                error=_send_result_error(send_result),
+                next_retry_at=compute_max_delivery_next_retry_at(
+                    attempt=1,
+                    retry_base_seconds=get_settings().max_delivery_recovery_retry_base_seconds,
+                    retry_max_seconds=get_settings().max_delivery_recovery_retry_max_seconds,
+                    now=attempted_at,
+                ),
+                attempts=1,
+            )
+        else:
+            await update_chat_message_status(
+                queued_message_id,
+                status=ChatMessageStatus.FAILED,
+                error=_send_result_error(send_result),
+            )
 
-    refreshed = await _fetch_message_by_id(message_id)
+    refreshed = await _fetch_message_by_id(queued_message_id)
     return {
         "message": serialize_chat_message(refreshed),
         "status": _send_result_status(send_result) if _send_result_ok(send_result) else "failed",

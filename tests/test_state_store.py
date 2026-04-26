@@ -1,8 +1,6 @@
 import asyncio
-from typing import Dict, Optional
 
 import pytest
-
 from backend.apps.bot.state_store import (
     InMemoryStateStore,
     RedisStateStore,
@@ -23,7 +21,7 @@ async def test_state_store_roundtrip(store_factory: str) -> None:
         assert await store.get(1) is None
         assert store.metrics.state_misses == 1
 
-        payload: Dict[str, object] = {"foo": "bar"}
+        payload: dict[str, object] = {"foo": "bar"}
         await store.set(1, payload)
 
         loaded = await store.get(1)
@@ -48,6 +46,57 @@ async def test_state_store_ttl_eviction(store_factory: str) -> None:
         await store.close()
 
 
+@pytest.mark.asyncio
+async def test_redis_state_store_repairs_stale_index_after_ttl_expiry() -> None:
+    store = await _make_store("redis", ttl_seconds=1)
+    try:
+        await store.set(1, {"value": 42})
+        await asyncio.sleep(1.2)
+
+        assert await store._redis.sismember(store._index_key, 1) == 1
+        assert await store.get(1) is None
+        assert store.metrics.state_evictions == 1
+        assert await store._redis.sismember(store._index_key, 1) == 0
+
+        assert await store.get(1) is None
+        assert store.metrics.state_evictions == 1
+        assert store.metrics.state_misses == 2
+    finally:
+        await store.clear()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_redis_state_store_get_many_repairs_all_stale_index_entries() -> None:
+    store = await _make_store("redis", ttl_seconds=1)
+    try:
+        await store.set(1, {"value": 1})
+        await store.set(2, {"value": 2})
+        await asyncio.sleep(1.2)
+
+        assert await store._redis.sismember(store._index_key, 1) == 1
+        assert await store._redis.sismember(store._index_key, 2) == 1
+        assert await store.get_many([1, 2, 1]) == {}
+        assert store.metrics.state_evictions == 2
+        assert await store._redis.sismember(store._index_key, 1) == 0
+        assert await store._redis.sismember(store._index_key, 2) == 0
+
+        assert await store.get_many([1, 2]) == {}
+        assert store.metrics.state_evictions == 2
+        assert store.metrics.state_misses == 4
+    finally:
+        await store.clear()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_redis_state_store_atomic_update_preserves_pipeline_bootstrap_error() -> None:
+    store = RedisStateStore(_BrokenPipelineBootstrapRedis(), ttl_seconds=5)
+
+    with pytest.raises(RuntimeError, match="pipeline bootstrap failed"):
+        await store.atomic_update(1, _increment_counter)
+
+
 @pytest.mark.parametrize("store_factory", ["memory", "redis"])
 @pytest.mark.asyncio
 async def test_atomic_update_parallel(store_factory: str) -> None:
@@ -70,7 +119,7 @@ async def test_atomic_update_parallel(store_factory: str) -> None:
         await manager.close()
 
 
-def _increment_counter(state: Dict[str, int]):
+def _increment_counter(state: dict[str, int]):
     counter = int(state.get("counter", 0)) + 1
     state["counter"] = counter
     return state, counter
@@ -85,3 +134,16 @@ async def _make_store(kind: str, ttl_seconds: int = 5):
 
     fake = fakeredis_aioredis.FakeRedis()
     return RedisStateStore(fake, ttl_seconds=ttl_seconds)
+
+
+class _BrokenPipelineBootstrapRedis:
+    def pipeline(self, transaction: bool = True):
+        return _BrokenPipeline()
+
+
+class _BrokenPipeline:
+    async def __aenter__(self):
+        raise RuntimeError("pipeline bootstrap failed")
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False

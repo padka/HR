@@ -25,7 +25,10 @@ from backend.domain.candidates.models import (
     ChatMessage,
     User,
 )
+from backend.domain.candidates.services import log_inbound_max_message
 from backend.domain.candidates.status import CandidateStatus
+from backend.domain.models import TelegramCallbackLog
+from backend.domain.repositories import register_callback
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -269,6 +272,7 @@ def test_max_webhook_bot_started_binds_candidate_and_sends_welcome(
     assert len(history) == 1
     assert history[0].channel == "max"
     assert history[0].direction == "outbound"
+    assert history[0].client_request_id == "max:bot-started:700101:max-start-ref"
 
 
 def test_max_webhook_generic_bot_started_sends_orientation_message(
@@ -302,6 +306,51 @@ def test_max_webhook_generic_bot_started_sends_orientation_message(
     assert "Добро пожаловать в RecruitSmart." in str(adapter.messages[0]["text"])
     assert "Тестирование и запись на слот проходят только в mini app внутри MAX." in str(adapter.messages[0]["text"])
     assert adapter.messages[0]["buttons"] == []
+    assert asyncio.run(_get_candidate_by_max_user_id("700102")) is None
+
+
+def test_max_webhook_different_users_same_generic_bot_started_are_not_collapsed(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    headers = {"X-Max-Bot-Api-Secret": "test-max-secret"}
+    first = max_webhook_client.post(
+        "/api/max/webhook",
+        headers=headers,
+        json={
+            "update_type": "bot_started",
+            "timestamp": 1,
+            "chat_id": "chat-generic-a",
+            "user": {"user_id": 700201, "username": "generic_a", "name": "Generic A"},
+        },
+    )
+    second = max_webhook_client.post(
+        "/api/max/webhook",
+        headers=headers,
+        json={
+            "update_type": "bot_started",
+            "timestamp": 1,
+            "chat_id": "chat-generic-b",
+            "user": {"user_id": 700202, "username": "generic_b", "name": "Generic B"},
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["handled"] is True
+    assert second.json()["handled"] is True
+    assert len(adapter.messages) == 2
+    assert {message["chat_id"] for message in adapter.messages} == {"700201", "700202"}
 
 
 def test_max_webhook_global_bot_started_bootstraps_chat_flow_when_rollout_enabled(
@@ -353,7 +402,7 @@ def test_max_webhook_global_bot_started_bootstraps_chat_flow_when_rollout_enable
     assert history[0].channel == "max"
 
 
-def test_max_webhook_repeated_bot_started_with_new_timestamp_repeats_welcome(
+def test_max_webhook_repeated_bot_started_with_new_timestamp_dedupes_welcome(
     monkeypatch: pytest.MonkeyPatch,
     max_webhook_client,
 ):
@@ -398,11 +447,67 @@ def test_max_webhook_repeated_bot_started_with_new_timestamp_repeats_welcome(
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["duplicate"] is False
-    assert len(adapter.messages) == 2
+    assert len(adapter.messages) == 1
     assert "Тестирование и запись на слот проходят только в mini app внутри MAX." in str(adapter.messages[0]["text"])
-    assert "Тестирование и запись на слот проходят только в mini app внутри MAX." in str(adapter.messages[1]["text"])
     history = asyncio.run(_chat_messages(candidate_id))
-    assert len(history) == 2
+    assert len(history) == 1
+    assert history[0].client_request_id == "max:bot-started:700199:max-start-ref"
+
+
+def test_max_webhook_global_bot_started_reentry_is_deduped_per_user_session(
+    monkeypatch: pytest.MonkeyPatch,
+    max_webhook_client,
+):
+    monkeypatch.setenv("MAX_INVITE_ROLLOUT_ENABLED", "1")
+
+    from backend.core import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    adapter = _FakeMaxAdapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_webhook.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+    monkeypatch.setattr(
+        "backend.apps.admin_api.max_candidate_chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    headers = {"X-Max-Bot-Api-Secret": "test-max-secret"}
+    first = max_webhook_client.post(
+        "/api/max/webhook",
+        headers=headers,
+        json={
+            "update_type": "bot_started",
+            "timestamp": 10,
+            "chat_id": "chat-global-reentry",
+            "user": {"user_id": 700204, "username": "global_reentry", "name": "Global Reentry"},
+        },
+    )
+    second = max_webhook_client.post(
+        "/api/max/webhook",
+        headers=headers,
+        json={
+            "update_type": "bot_started",
+            "timestamp": 11,
+            "chat_id": "chat-global-reentry",
+            "user": {"user_id": 700204, "username": "global_reentry", "name": "Global Reentry"},
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(adapter.messages) == 1
+    candidate = asyncio.run(_get_candidate_by_max_user_id("700204"))
+    assert candidate is not None
+    assert asyncio.run(_count_chat_sessions("700204")) == 1
+    history = asyncio.run(_chat_messages(candidate.id))
+    assert len(history) == 1
+    assert history[0].client_request_id == "max:bot-started:700204:generic"
 
 
 def test_max_webhook_global_bot_started_reissues_welcome_for_bound_non_self_serve_candidate(
@@ -639,6 +744,51 @@ def test_max_webhook_message_created_is_idempotent(
     assert len(history) == 1
     assert history[0].direction == "inbound"
     assert history[0].channel == "max"
+
+
+@pytest.mark.asyncio
+async def test_register_callback_concurrent_duplicates_are_collapsed():
+    results = await asyncio.gather(
+        register_callback("cb-concurrent"),
+        register_callback("cb-concurrent"),
+    )
+
+    assert sorted(results) == [False, True]
+    async with async_session() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(TelegramCallbackLog).where(
+                TelegramCallbackLog.callback_id == "cb-concurrent"
+            )
+        )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_log_inbound_max_message_concurrent_duplicates_are_collapsed():
+    candidate_id = await _seed_max_candidate("max-user-concurrent")
+
+    results = await asyncio.gather(
+        log_inbound_max_message(
+            "max-user-concurrent",
+            text="Добрый день",
+            provider_message_id="mid-concurrent",
+            client_request_id="max:message:concurrent-1",
+        ),
+        log_inbound_max_message(
+            "max-user-concurrent",
+            text="Добрый день",
+            provider_message_id="mid-concurrent",
+            client_request_id="max:message:concurrent-1",
+        ),
+    )
+
+    created_flags = sorted(created for _message, created in results)
+    assert created_flags == [False, True]
+    history = await _chat_messages(candidate_id)
+    assert len(history) == 1
+    assert history[0].client_request_id == "max:message:concurrent-1"
+    assert history[0].direction == "inbound"
+
 
 
 def test_max_webhook_manual_time_message_accepts_single_time_phrase(

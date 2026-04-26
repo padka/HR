@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from backend.apps.admin_api.max_candidate_chat import (
     activate_max_chat_handoff,
@@ -29,19 +27,31 @@ from backend.apps.bot.services.broadcast import notify_recruiters_manual_availab
 from backend.apps.bot.services.slot_flow import _parse_manual_availability_window
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.max_recovery import (
+    compute_max_delivery_next_retry_at,
+    serialize_inline_buttons,
+)
 from backend.core.messenger.protocol import InlineButton
 from backend.core.settings import Settings, get_settings
-from backend.domain.candidates.models import ChatMessage, User
+from backend.domain.candidates.models import User
 from backend.domain.candidates.services import (
     bind_max_to_candidate,
     get_user_by_max_user_id,
     log_inbound_max_message,
-    log_outbound_max_message,
     mark_manual_slot_requested_for_candidate,
+    mark_max_message_retryable_failure,
+    mark_max_message_sent,
+    reserve_outbound_max_message,
     save_manual_slot_response_for_user,
 )
 from backend.domain.candidates.status import CandidateStatus
 from backend.domain.candidates.status_service import apply_candidate_status
+from backend.domain.idempotency import (
+    max_bot_started_key,
+    max_bot_started_session_id,
+    max_webhook_inbound_message_key,
+    max_webhook_outbound_key,
+)
 from backend.domain.repositories import find_city_by_plain_name, register_callback
 
 logger = logging.getLogger(__name__)
@@ -83,24 +93,16 @@ def _verify_max_webhook_secret(
 
 
 def _stable_client_request_id(prefix: str, raw_value: str | None) -> str:
-    normalized = f"max:{prefix}:{str(raw_value or '').strip()}"
-    if len(normalized) <= 64 and normalized.rstrip(":") != "max":
-        return normalized
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    base_prefix = f"max:{prefix}:"
-    max_digest_len = max(8, 64 - len(base_prefix))
-    return f"{base_prefix}{digest[:max_digest_len]}"
+    return max_webhook_outbound_key(prefix, raw_value)
 
 
-def _bot_started_request_id(payload: dict[str, Any], *, start_param: str | None, max_user_id: str) -> str:
-    timestamp = str(
-        payload.get("timestamp")
-        or payload.get("event_time")
-        or payload.get("created_at")
-        or ""
-    ).strip()
-    request_seed = f"{start_param or max_user_id}:{timestamp}" if timestamp else (start_param or max_user_id)
-    return _stable_client_request_id("welcome", request_seed)
+def _bot_started_request_id(
+    _payload: dict[str, Any],
+    *,
+    start_param: str | None,
+    max_user_id: str,
+) -> str:
+    return max_bot_started_key(max_user_id=max_user_id, start_param=start_param)
 
 
 def _update_type(payload: dict[str, Any]) -> str:
@@ -231,14 +233,6 @@ def _build_startapp_url(settings: Settings, *, start_param: str) -> str | None:
     return urlunsplit(parsed._replace(query=urlencode(query)))
 
 
-async def _chat_message_exists(client_request_id: str) -> bool:
-    async with async_session() as session:
-        existing = await session.scalar(
-            select(ChatMessage.id).where(ChatMessage.client_request_id == client_request_id)
-        )
-        return existing is not None
-
-
 def _start_chat_callback_payload(start_param: str | None = None) -> str:
     normalized = str(start_param or "").strip()
     if not normalized:
@@ -328,26 +322,77 @@ async def _send_max_message(
     client_request_id: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> None:
+    normalized_request_id = str(client_request_id or "").strip()
+    reserved_message = None
+    if normalized_request_id:
+        reserved_message, created = await reserve_outbound_max_message(
+            max_user_id,
+            text=text,
+            payload={
+                **dict(payload or {}),
+                "buttons": serialize_inline_buttons(buttons),
+            },
+            client_request_id=normalized_request_id,
+        )
+        if not created and reserved_message is not None:
+            logger.info(
+                "max.webhook.send_skipped_duplicate",
+                extra={"max_user_id": max_user_id, "client_request_id": normalized_request_id},
+            )
+            return
+
     adapter = await ensure_max_adapter(settings=settings)
     if adapter is None:
+        if reserved_message is not None:
+            attempted_at = datetime.now(UTC)
+            await mark_max_message_retryable_failure(
+                reserved_message.id,
+                attempted_at=attempted_at,
+                error="adapter_unavailable",
+                next_retry_at=compute_max_delivery_next_retry_at(
+                    attempt=1,
+                    retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                    retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                    now=attempted_at,
+                ),
+                attempts=1,
+            )
         logger.info("max.webhook.send_skipped_adapter_disabled")
         return
 
-    result = await adapter.send_message(max_user_id, text, buttons=buttons)
+    result = await adapter.send_message(
+        max_user_id,
+        text,
+        buttons=buttons,
+        correlation_id=normalized_request_id or None,
+    )
     if not result.success:
+        if normalized_request_id and reserved_message is not None:
+            attempted_at = datetime.now(UTC)
+            await mark_max_message_retryable_failure(
+                reserved_message.id,
+                attempted_at=attempted_at,
+                error=result.error,
+                next_retry_at=compute_max_delivery_next_retry_at(
+                    attempt=1,
+                    retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                    retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                    now=attempted_at,
+                ),
+                attempts=1,
+            )
         logger.warning(
             "max.webhook.send_failed",
             extra={"max_user_id": max_user_id, "error": result.error},
         )
         return
 
-    await log_outbound_max_message(
-        max_user_id,
-        text=text,
-        payload=payload,
-        provider_message_id=result.message_id,
-        client_request_id=client_request_id,
-    )
+    if normalized_request_id and reserved_message is not None:
+        await mark_max_message_sent(
+            reserved_message.id,
+            provider_message_id=result.message_id,
+            attempted_at=datetime.now(UTC),
+        )
 
 
 async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) -> MaxWebhookAck:
@@ -365,12 +410,6 @@ async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) ->
         start_param=start_param,
         max_user_id=max_user_id,
     )
-    if await _chat_message_exists(welcome_request_id):
-        return MaxWebhookAck(
-            update_type="bot_started",
-            duplicate=True,
-        )
-
     candidate = None
     if start_param:
         candidate = await bind_max_to_candidate(
@@ -389,13 +428,15 @@ async def _handle_bot_started(payload: dict[str, Any], *, settings: Settings) ->
         async with async_session() as session:
             async with session.begin():
                 if principal is None:
-                    provider_session_suffix = start_param or max_user_id
                     principal = await bootstrap_max_chat_principal(
                         session,
                         settings=settings,
                         max_user_id=max_user_id,
                         start_param=start_param or None,
-                        provider_session_id=f"max-bot-started:{provider_session_suffix}",
+                        provider_session_id=max_bot_started_session_id(
+                            max_user_id=max_user_id,
+                            start_param=start_param or None,
+                        ),
                         display_name=_extract_display_name(payload),
                         username=_extract_username(payload),
                     )
@@ -526,11 +567,12 @@ async def _handle_message_created(payload: dict[str, Any], *, settings: Settings
             ignored_reason="missing_user",
         )
 
-    request_id = _stable_client_request_id("message", provider_message_id or message_text or max_user_id)
-    if await _chat_message_exists(request_id):
-        return MaxWebhookAck(update_type="message_created", duplicate=True)
-
-    message = await log_inbound_max_message(
+    request_id = max_webhook_inbound_message_key(
+        provider_message_id=provider_message_id,
+        message_text=message_text,
+        max_user_id=max_user_id,
+    )
+    message, created = await log_inbound_max_message(
         max_user_id,
         text=message_text,
         provider_message_id=provider_message_id,
@@ -545,6 +587,8 @@ async def _handle_message_created(payload: dict[str, Any], *, settings: Settings
             update_type="message_created",
             ignored_reason="candidate_not_linked",
         )
+    if not created:
+        return MaxWebhookAck(update_type="message_created", duplicate=True)
 
     candidate = await _load_candidate_by_max_user_id(max_user_id)
     if candidate is None:

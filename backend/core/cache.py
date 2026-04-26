@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import timedelta
-from typing import Any, Callable, Optional, TypeVar, cast
+from typing import Any, TypeVar
 
 from redis.asyncio import Redis, ConnectionPool
 from redis.exceptions import RedisError
@@ -32,7 +32,7 @@ class CacheConfig:
         host: str = "localhost",
         port: int = 6379,
         db: int = 0,
-        password: Optional[str] = None,
+        password: str | None = None,
         max_connections: int = 50,
         socket_timeout: float = 5.0,
         socket_connect_timeout: float = 5.0,
@@ -62,15 +62,15 @@ class CacheClient:
 
     def __init__(self, config: CacheConfig):
         self.config = config
-        self._pool: Optional[ConnectionPool] = None
-        self._client: Optional[Redis] = None
+        self._pool: ConnectionPool | None = None
+        self._client: Redis | None = None
 
     async def connect(self) -> None:
         """Initialize Redis connection pool."""
         if self._client is not None:
             return
 
-        self._pool = ConnectionPool(
+        pool = ConnectionPool(
             host=self.config.host,
             port=self.config.port,
             db=self.config.db,
@@ -80,21 +80,22 @@ class CacheClient:
             socket_connect_timeout=self.config.socket_connect_timeout,
             decode_responses=self.config.decode_responses,
         )
-
-        self._client = Redis(connection_pool=self._pool)
+        client = Redis(connection_pool=pool)
         try:
-            await self._client.ping()
+            await client.ping()
+            self._pool = pool
+            self._client = client
             logger.info("Redis cache connected")
         except RedisError as exc:
             logger.warning("Redis cache ping failed during connect: %s", exc)
-            # Do not raise; allow running without cache
-            # self._client remains set, but operations might fail or we can check connectivity
-            pass
+            await client.aclose()
+            await pool.disconnect()
+            raise
 
     async def disconnect(self) -> None:
         """Close Redis connection."""
         if self._client:
-            await self._client.close()
+            await self._client.aclose()
             self._client = None
 
         if self._pool:
@@ -115,13 +116,13 @@ class CacheClient:
             return False
 
     @property
-    def client(self) -> Optional[Redis]:
+    def client(self) -> Redis | None:
         """Get Redis client (must be connected first)."""
         return self._client
 
     async def get(
-        self, key: str, default: Optional[T] = None
-    ) -> Result[Optional[T], DatabaseError]:
+        self, key: str, default: T | None = None
+    ) -> Result[T | None, DatabaseError]:
         """
         Get value from cache.
 
@@ -161,7 +162,7 @@ class CacheClient:
         self,
         key: str,
         value: Any,
-        ttl: Optional[timedelta] = None,
+        ttl: timedelta | None = None,
     ) -> Result[bool, DatabaseError]:
         """
         Set value in cache.
@@ -324,7 +325,7 @@ class CacheClient:
 
 
 # Global cache instance
-_cache: Optional[CacheClient] = None
+_cache: CacheClient | None = None
 
 
 def get_cache() -> CacheClient:
@@ -335,7 +336,7 @@ def get_cache() -> CacheClient:
     return _cache
 
 
-def init_cache(config: Optional[CacheConfig] = None) -> CacheClient:
+def init_cache(config: CacheConfig | None = None) -> CacheClient:
     """
     Initialize global cache instance.
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +13,11 @@ from backend.apps.admin_ui.security import Principal
 from backend.core.audit import log_audit_action
 from backend.core.db import async_session
 from backend.core.messenger.bootstrap import ensure_max_adapter
+from backend.core.messenger.max_recovery import (
+    compute_max_delivery_next_retry_at,
+    mark_max_message_retryable_failure,
+    serialize_inline_buttons,
+)
 from backend.core.messenger.protocol import InlineButton
 from backend.core.settings import Settings, get_settings
 from backend.domain.applications import (
@@ -44,6 +48,11 @@ from backend.domain.candidates.models import (
     User,
 )
 from backend.domain.candidates.test1_shared import TEST1_STEP_KEY
+from backend.domain.idempotency import (
+    has_max_provider_boundary,
+    max_provider_message_id,
+    max_rollout_invite_send_key,
+)
 from backend.domain.models import Slot, SlotStatus
 
 
@@ -688,7 +697,16 @@ async def _create_send_intent(
     text: str,
     correlation_id: str,
     access_token_id: int,
-) -> ChatMessage:
+    buttons: list[list[InlineButton]] | None = None,
+) -> tuple[ChatMessage, bool]:
+    now = _utcnow()
+    client_request_id = max_rollout_invite_send_key(access_token_id)
+    existing = await session.scalar(
+        select(ChatMessage).where(ChatMessage.client_request_id == client_request_id)
+    )
+    if existing is not None:
+        return existing, False
+
     message = ChatMessage(
         candidate_id=int(candidate.id),
         direction=ChatMessageDirection.OUTBOUND.value,
@@ -700,14 +718,20 @@ async def _create_send_intent(
             "author_role": "recruiter",
             "correlation_id": correlation_id,
             "launch_invite_token_id": access_token_id,
+            "buttons": serialize_inline_buttons(buttons),
         },
         status=ChatMessageStatus.QUEUED.value,
         author_label="MAX pilot invite",
-        client_request_id=f"max-invite:{access_token_id}:send:{uuid.uuid4()}",
+        client_request_id=client_request_id,
+        delivery_attempts=0,
+        delivery_locked_at=now,
+        delivery_next_retry_at=None,
+        delivery_last_attempt_at=None,
+        delivery_dead_at=None,
     )
     session.add(message)
     await session.flush()
-    return message
+    return message, True
 
 
 async def _persist_send_attempt_state(
@@ -934,41 +958,84 @@ async def _send_candidate_max_launch_invite(
         return {"send_state": "preview_only", "status": "candidate_not_bound"}
 
     now = _utcnow()
+    buttons: list[list[InlineButton]] = []
+    if launch_url:
+        buttons.append(
+            [InlineButton(text="Открыть MAX mini-app", url=launch_url, kind="open_app")]
+        )
+    elif chat_url:
+        buttons.append([InlineButton(text="Открыть MAX", url=chat_url, kind="link")])
 
     async with async_session() as session:
         async with session.begin():
             db_candidate = await _load_candidate_required(session, int(candidate.id))
-            message = await _create_send_intent(
+            message, created = await _create_send_intent(
                 session,
                 candidate=db_candidate,
                 text=text,
                 correlation_id=correlation_id,
                 access_token_id=token_id,
+                buttons=buttons or None,
             )
-            await _publish_event(
-                session,
-                ApplicationEventCommand(
-                    producer_family="max_invite_delivery",
-                    idempotency_key=f"message-intent:{message.client_request_id}",
-                    event_type=ApplicationEventType.MESSAGE_INTENT_CREATED.value,
-                    candidate_id=int(db_candidate.id),
-                    source_system="admin_ui",
-                    source_ref=f"chat_message:{message.id}",
-                    correlation_id=correlation_id,
-                    occurred_at=now,
-                    actor_type="admin",
-                    actor_id=0,
-                    channel=CandidateLaunchChannel.MAX.value,
-                    metadata_json={
-                        "chat_message_id": int(message.id),
-                        "token_id": token_id,
-                    },
-                ),
-            )
+            if created:
+                await _publish_event(
+                    session,
+                    ApplicationEventCommand(
+                        producer_family="max_invite_delivery",
+                        idempotency_key=f"message-intent:{message.client_request_id}",
+                        event_type=ApplicationEventType.MESSAGE_INTENT_CREATED.value,
+                        candidate_id=int(db_candidate.id),
+                        source_system="admin_ui",
+                        source_ref=f"chat_message:{message.id}",
+                        correlation_id=correlation_id,
+                        occurred_at=now,
+                        actor_type="admin",
+                        actor_id=0,
+                        channel=CandidateLaunchChannel.MAX.value,
+                        metadata_json={
+                            "chat_message_id": int(message.id),
+                            "token_id": token_id,
+                        },
+                    ),
+                )
             queued_message_id = int(message.id)
+            existing_status = str(message.status or "").strip().lower()
+            existing_payload = dict(message.payload_json or {})
+
+    if not created:
+        if has_max_provider_boundary(status=existing_status, payload_json=existing_payload):
+            await _persist_send_attempt_state(
+                token_id=token_id,
+                launch_url=launch_url,
+                chat_url=chat_url,
+                text=text,
+                send_state="sent",
+                last_error_code=None,
+            )
+            return {
+                "send_state": "sent",
+                "status": "sent",
+                "provider_message_id": max_provider_message_id(existing_payload),
+            }
+        return {
+            "send_state": "failed" if existing_status in {"failed", "dead"} else "queued",
+            "status": "duplicate_pending",
+        }
 
     adapter = await ensure_max_adapter(settings=settings)
     if adapter is None:
+        await mark_max_message_retryable_failure(
+            queued_message_id,
+            attempted_at=now,
+            error="adapter_unavailable",
+            next_retry_at=compute_max_delivery_next_retry_at(
+                attempt=1,
+                retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                now=now,
+            ),
+            attempts=1,
+        )
         await _persist_send_attempt_state(
             token_id=token_id,
             launch_url=launch_url,
@@ -979,13 +1046,6 @@ async def _send_candidate_max_launch_invite(
         )
         return {"send_state": "failed", "status": "adapter_unavailable"}
 
-    buttons: list[list[InlineButton]] = []
-    if launch_url:
-        buttons.append(
-            [InlineButton(text="Открыть MAX mini-app", url=launch_url, kind="open_app")]
-        )
-    elif chat_url:
-        buttons.append([InlineButton(text="Открыть MAX", url=chat_url, kind="link")])
     send_result = await adapter.send_message(
         max_user_id,
         text,
@@ -999,11 +1059,17 @@ async def _send_candidate_max_launch_invite(
             token = await session.get(CandidateAccessToken, token_id)
             if message is None or token is None:
                 return {"send_state": "failed", "status": "message_or_token_missing"}
-            payload = dict(message.payload_json or {})
             if send_result.success:
+                payload = dict(message.payload_json or {})
+                payload["provider_message_id"] = send_result.message_id
+                message.payload_json = payload
                 message.status = ChatMessageStatus.SENT.value
                 message.error = None
-                payload["provider_message_id"] = send_result.message_id
+                message.delivery_attempts = max(1, int(message.delivery_attempts or 0) + 1)
+                message.delivery_locked_at = None
+                message.delivery_next_retry_at = None
+                message.delivery_last_attempt_at = now
+                message.delivery_dead_at = None
                 token.launch_payload_json = {
                     **_safe_launch_payload_snapshot(
                         existing=token.launch_payload_json,
@@ -1026,6 +1092,16 @@ async def _send_candidate_max_launch_invite(
             else:
                 message.status = ChatMessageStatus.FAILED.value
                 message.error = str(send_result.error or "max_send_failed")
+                message.delivery_attempts = 1
+                message.delivery_locked_at = None
+                message.delivery_next_retry_at = compute_max_delivery_next_retry_at(
+                    attempt=1,
+                    retry_base_seconds=settings.max_delivery_recovery_retry_base_seconds,
+                    retry_max_seconds=settings.max_delivery_recovery_retry_max_seconds,
+                    now=now,
+                )
+                message.delivery_last_attempt_at = now
+                message.delivery_dead_at = None
                 token.launch_payload_json = {
                     **_safe_launch_payload_snapshot(
                         existing=token.launch_payload_json,
@@ -1046,16 +1122,15 @@ async def _send_candidate_max_launch_invite(
                     "failure_class": "provider_error",
                 }
                 send_state = "failed"
-            message.payload_json = payload
             await _publish_event(
                 session,
                 ApplicationEventCommand(
                     producer_family="max_invite_delivery",
                     idempotency_key=f"{event_type}:{queued_message_id}",
                     event_type=event_type,
-                    candidate_id=int(message.candidate_id),
+                    candidate_id=int(candidate.id),
                     source_system="admin_ui",
-                    source_ref=f"chat_message:{message.id}",
+                    source_ref=f"chat_message:{queued_message_id}",
                     correlation_id=correlation_id,
                     occurred_at=now,
                     actor_type="admin",

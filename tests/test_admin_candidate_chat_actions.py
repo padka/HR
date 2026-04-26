@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -248,7 +249,7 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
             channel="telegram",
             text="Не доставлено",
             status=ChatMessageStatus.FAILED.value,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         session.add(msg)
         await session.commit()
@@ -266,6 +267,130 @@ async def test_chat_retry_marks_as_sent(admin_app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_retry_allows_dead_max_message(admin_app, monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90103,
+        fio="Retry MAX Dead",
+        city="Москва",
+        username="retry_max_dead",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        persisted = await session.get(User, candidate.id)
+        assert persisted is not None
+        persisted.max_user_id = "max-user-retry-dead"
+        persisted.messenger_platform = "max"
+        msg = ChatMessage(
+            candidate_id=candidate.id,
+            direction=ChatMessageDirection.OUTBOUND.value,
+            channel="max",
+            text="Повторная отправка",
+            status=ChatMessageStatus.DEAD.value,
+            error="provider_down",
+            created_at=datetime.now(UTC),
+            delivery_attempts=5,
+            delivery_dead_at=datetime.now(UTC),
+        )
+        session.add(msg)
+        await session.commit()
+        await session.refresh(msg)
+        message_id = msg.id
+
+    class _Adapter:
+        async def send_message(self, chat_id, text, *, buttons=None, correlation_id=None):
+            del chat_id, text, buttons, correlation_id
+            return SimpleNamespace(success=True, message_id="mid-max-retry", error=None)
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        del settings
+        return _Adapter()
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    retry_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/chat/{message_id}/retry",
+    )
+    assert retry_response.status_code == 200
+    result = retry_response.json()
+    assert result["message"]["status"] == ChatMessageStatus.SENT.value
+    assert result["message"]["delivery_attempts"] == 1
+    assert result["message"]["delivery_dead_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_does_not_resend_max_message_with_provider_boundary(
+    admin_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = await candidate_services.create_or_update_user(
+        telegram_id=90104,
+        fio="Retry MAX Boundary",
+        city="Москва",
+        username="retry_max_boundary",
+        initial_status=CandidateStatus.TEST1_COMPLETED,
+    )
+
+    async with async_session() as session:
+        persisted = await session.get(User, candidate.id)
+        assert persisted is not None
+        persisted.max_user_id = "max-user-retry-boundary"
+        persisted.messenger_platform = "max"
+        msg = ChatMessage(
+            candidate_id=candidate.id,
+            direction=ChatMessageDirection.OUTBOUND.value,
+            channel="max",
+            text="Уже принято провайдером",
+            payload_json={"provider_message_id": "mid-existing"},
+            status=ChatMessageStatus.FAILED.value,
+            error="finalize_crashed",
+            created_at=datetime.now(UTC),
+            delivery_attempts=3,
+        )
+        session.add(msg)
+        await session.commit()
+        await session.refresh(msg)
+        message_id = msg.id
+
+    class _Adapter:
+        calls = 0
+
+        async def send_message(self, chat_id, text, *, buttons=None, correlation_id=None):
+            del chat_id, text, buttons, correlation_id
+            self.calls += 1
+            return SimpleNamespace(success=True, message_id="mid-duplicate", error=None)
+
+    adapter = _Adapter()
+
+    async def _fake_ensure_max_adapter(*, settings=None):
+        del settings
+        return adapter
+
+    monkeypatch.setattr(
+        "backend.apps.admin_ui.services.chat.ensure_max_adapter",
+        _fake_ensure_max_adapter,
+    )
+
+    retry_response = await _async_request(
+        admin_app,
+        "post",
+        f"/api/candidates/{candidate.id}/chat/{message_id}/retry",
+    )
+
+    assert retry_response.status_code == 200
+    result = retry_response.json()
+    assert adapter.calls == 0
+    assert result["message"]["status"] == ChatMessageStatus.SENT.value
+    assert result["message"]["provider_message_id"] == "mid-existing"
+    assert result["message"]["delivery_attempts"] == 3
+
+
+@pytest.mark.asyncio
 async def test_chat_updates_endpoint_returns_latest_messages(admin_app) -> None:
     candidate = await candidate_services.create_or_update_user(
         telegram_id=90120,
@@ -275,7 +400,7 @@ async def test_chat_updates_endpoint_returns_latest_messages(admin_app) -> None:
         initial_status=CandidateStatus.TEST1_COMPLETED,
     )
 
-    message_time = datetime.now(timezone.utc) - timedelta(seconds=2)
+    message_time = datetime.now(UTC) - timedelta(seconds=2)
     async with async_session() as session:
         session.add(
             ChatMessage(
@@ -528,7 +653,7 @@ async def test_recruiter_cannot_retry_foreign_candidate_chat(admin_app) -> None:
             channel="telegram",
             text="Чужой ретрай",
             status=ChatMessageStatus.FAILED.value,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         session.add(msg)
         await session.commit()
@@ -602,7 +727,7 @@ async def test_candidate_action_interview_declined_allows_confirmed_legacy_slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) - timedelta(minutes=30),
+            start_utc=datetime.now(UTC) - timedelta(minutes=30),
             duration_min=60,
             status=SlotStatus.CONFIRMED,
             purpose="interview",
@@ -623,7 +748,7 @@ async def test_candidate_action_interview_declined_allows_confirmed_legacy_slot(
             candidate_tg_id=candidate.telegram_id,
             candidate_tz=city.tz,
             status=SlotAssignmentStatus.CONFIRMED,
-            confirmed_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            confirmed_at=datetime.now(UTC) - timedelta(hours=1),
         )
         session.add(assignment)
         await session.commit()
@@ -680,7 +805,7 @@ async def test_candidate_action_repairs_legacy_candidate_confirmed_offer(admin_a
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) - timedelta(minutes=30),
+            start_utc=datetime.now(UTC) - timedelta(minutes=30),
             duration_min=60,
             status=SlotStatus.CONFIRMED_BY_CANDIDATE,
             purpose="interview",
@@ -787,7 +912,7 @@ async def test_candidate_action_send_to_test2_uses_dedicated_use_case(admin_app,
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            start_utc=datetime.now(UTC) + timedelta(days=1),
             duration_min=60,
             status=SlotStatus.BOOKED,
             purpose="interview",
@@ -852,7 +977,7 @@ async def test_candidate_action_send_to_test2_surfaces_scheduling_conflict(admin
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            start_utc=datetime.now(UTC) + timedelta(days=1),
             duration_min=60,
             status=SlotStatus.BOOKED,
             purpose="interview",
@@ -946,7 +1071,7 @@ async def test_candidate_action_resend_test2_supports_max_only_candidate(admin_a
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            start_utc=datetime.now(UTC) + timedelta(days=1),
             duration_min=60,
             status=SlotStatus.CONFIRMED_BY_CANDIDATE,
             purpose="interview",
@@ -1004,7 +1129,7 @@ async def test_candidate_action_send_to_test2_blocks_on_persisted_scheduling_con
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=1),
+            start_utc=datetime.now(UTC) + timedelta(days=1),
             duration_min=60,
             status=SlotStatus.BOOKED,
             purpose="interview",
@@ -1018,7 +1143,7 @@ async def test_candidate_action_send_to_test2_blocks_on_persisted_scheduling_con
             recruiter_id=recruiter.id,
             city_id=city.id,
             tz_name=city.tz,
-            start_utc=datetime.now(timezone.utc) + timedelta(days=2),
+            start_utc=datetime.now(UTC) + timedelta(days=2),
             duration_min=60,
             status=SlotStatus.FREE,
             purpose="interview",
@@ -1035,7 +1160,7 @@ async def test_candidate_action_send_to_test2_blocks_on_persisted_scheduling_con
                 candidate_tg_id=candidate.telegram_id,
                 candidate_tz=city.tz,
                 status=SlotAssignmentStatus.CONFIRMED,
-                confirmed_at=datetime.now(timezone.utc),
+                confirmed_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -1204,7 +1329,7 @@ async def test_recruiter_cannot_delete_foreign_candidate(admin_app) -> None:
 
 @pytest.mark.asyncio
 async def test_calendar_tasks_crud_and_events(admin_app) -> None:
-    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
 
     async with async_session() as session:
         recruiter = Recruiter(name="Calendar Recruiter", tz="Europe/Moscow", active=True)
@@ -1271,7 +1396,7 @@ async def test_calendar_tasks_crud_and_events(admin_app) -> None:
 
 @pytest.mark.asyncio
 async def test_calendar_confirmed_filter_includes_preconfirmed_slots(admin_app) -> None:
-    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
 
     async with async_session() as session:
         recruiter = Recruiter(name="Filter Recruiter", tz="Europe/Moscow", active=True)

@@ -45,6 +45,7 @@ from backend.apps.bot.services import (
     configure as configure_bot_services,
 )
 from backend.apps.bot.state_store import build_state_manager, can_connect_redis
+from backend.core.messenger.max_recovery import MaxDeliveryRecoveryWorker
 from backend.core.redis_factory import create_redis_client
 from backend.core.settings import get_settings
 
@@ -150,6 +151,7 @@ class BotIntegration:
     bot_dispatcher: Dispatcher | None = None
     bot_runner_stop: asyncio.Event | None = None
     notification_watch_task: asyncio.Task | None = None
+    max_delivery_recovery_worker: MaxDeliveryRecoveryWorker | None = None
 
     @classmethod
     def null_integration(cls) -> BotIntegration:
@@ -179,6 +181,7 @@ class BotIntegration:
             reminder_service=reminder_service,
             notification_service=notification_service,
             notification_broker=None,
+            max_delivery_recovery_worker=None,
         )
 
     async def shutdown(self) -> None:
@@ -217,6 +220,11 @@ class BotIntegration:
             self.notification_watch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.notification_watch_task
+        if self.max_delivery_recovery_worker is not None:
+            try:
+                await self.max_delivery_recovery_worker.shutdown()
+            except Exception:
+                logger.exception("Failed to shutdown MAX delivery recovery worker cleanly")
 
 
 def _build_bot(settings) -> tuple[Bot | None, bool]:
@@ -570,6 +578,7 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
         bot_dispatcher=dispatcher,
         bot_runner_stop=bot_runner_stop,
         notification_watch_task=None,
+        max_delivery_recovery_worker=None,
     )
 
     if settings.bot_enabled and redis_url and Redis is not None:
@@ -578,6 +587,14 @@ async def setup_bot_state(app: FastAPI) -> BotIntegration:
         )
         integration.notification_watch_task = watch_task
         app.state.notification_watch_task = watch_task
+
+    if bool(getattr(settings, "max_adapter_enabled", False)) and bool(
+        getattr(settings, "max_delivery_recovery_admin_ui_enabled", False)
+    ):
+        worker = MaxDeliveryRecoveryWorker(settings=settings)
+        worker.start()
+        integration.max_delivery_recovery_worker = worker
+        app.state.max_delivery_recovery_worker = worker
 
     return integration
 

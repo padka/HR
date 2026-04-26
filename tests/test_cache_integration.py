@@ -1,10 +1,12 @@
 """Integration tests for Phase 2 Performance Cache."""
 
 import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
-from datetime import datetime, timezone
 
-from backend.core.cache import CacheConfig, init_cache, connect_cache, get_cache
+from redis.exceptions import RedisError
+
+from backend.core.cache import CacheClient, CacheConfig, get_cache, init_cache
 from backend.core.uow import UnitOfWork
 from backend.domain.models import Slot, SlotStatus, Recruiter, City
 
@@ -30,6 +32,31 @@ async def test_cache_initialization():
 
         assert cache is not None
         assert cache._client is not None
+
+
+@pytest.mark.asyncio
+async def test_cache_connect_fails_closed_when_ping_fails():
+    config = CacheConfig(host="localhost", port=6379, max_connections=10)
+
+    with (
+        patch("backend.core.cache.ConnectionPool") as MockPool,
+        patch("backend.core.cache.Redis") as MockRedis,
+    ):
+        mock_pool = AsyncMock()
+        mock_client = AsyncMock()
+        mock_client.ping.side_effect = RedisError("ping failed")
+        MockPool.return_value = mock_pool
+        MockRedis.return_value = mock_client
+
+        cache = CacheClient(config)
+
+        with pytest.raises(RedisError, match="ping failed"):
+            await cache.connect()
+
+        assert cache._client is None
+        assert cache._pool is None
+        mock_client.aclose.assert_awaited_once()
+        mock_pool.disconnect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -59,7 +86,7 @@ async def test_slot_repository_uses_cache():
         slot = Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc),
+            start_utc=datetime.now(UTC),
             duration_min=60,
             status=SlotStatus.FREE,
         )
@@ -77,7 +104,7 @@ async def test_slot_repository_uses_cache():
 
         # Query slot through UnitOfWork
         async with UnitOfWork() as uow:
-            result = await uow.slots.get(slot_id)
+            await uow.slots.get(slot_id)
 
         # Verify cache was attempted
         assert mock_cache.get.called or mock_cache.set.called, (
@@ -132,7 +159,7 @@ async def test_cache_disabled_gracefully():
         slot = Slot(
             recruiter_id=recruiter.id,
             city_id=city.id,
-            start_utc=datetime.now(timezone.utc),
+            start_utc=datetime.now(UTC),
             duration_min=60,
             status=SlotStatus.FREE,
         )

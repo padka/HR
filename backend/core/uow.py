@@ -23,18 +23,11 @@ from __future__ import annotations
 
 import logging
 from types import TracebackType
-from typing import Any, List, Type
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import new_async_session
-from backend.domain.models import (
-    City,
-    Recruiter,
-    Slot,
-    MessageTemplate,
-)
-from backend.domain.candidates.models import User, TestResult, AutoMessage
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +60,15 @@ class UnitOfWork:
         self._session = session
         self._should_close = session is None
         self._repositories_initialized = False
+        self._entered_once = False
 
     async def __aenter__(self) -> UnitOfWork:
         """Enter async context and initialize session."""
+        if self._entered_once:
+            raise RuntimeError(
+                "UnitOfWork instances are single-use. Create a new UnitOfWork for each transaction scope."
+            )
+        self._entered_once = True
         if self._session is None:
             self._session = new_async_session()
 
@@ -82,7 +81,7 @@ class UnitOfWork:
 
     async def __aexit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:

@@ -32,10 +32,13 @@ def _drop_public_tables(engine):
         conn.commit()
 
 
-def _assert_0105_schema(conn):
+LATEST_MIGRATION = "0106_chat_message_delivery_recovery_fields"
+
+
+def _assert_latest_schema(conn):
     result = conn.execute(text("SELECT version_num FROM alembic_version"))
     version = result.scalar()
-    assert version == "0105_unique_users_max_user_id"
+    assert version == LATEST_MIGRATION
 
     result = conn.execute(
         text(
@@ -53,6 +56,43 @@ def _assert_0105_schema(conn):
     assert "WHERE" in indexdef
     assert "max_user_id IS NOT NULL" in indexdef
     assert "btrim" in indexdef
+
+    recovery_columns = {
+        "delivery_attempts",
+        "delivery_locked_at",
+        "delivery_next_retry_at",
+        "delivery_last_attempt_at",
+        "delivery_dead_at",
+    }
+    result = conn.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'chat_messages'
+              AND column_name = ANY(:column_names)
+            """
+        ),
+        {"column_names": list(recovery_columns)},
+    )
+    assert {row[0] for row in result} == recovery_columns
+
+    result = conn.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'chat_messages'
+              AND indexname = 'ix_chat_messages_max_delivery_recovery'
+            """
+        )
+    )
+    recovery_index = result.scalar()
+    assert recovery_index is not None
+    assert "delivery_next_retry_at" in recovery_index
+    assert "delivery_locked_at" in recovery_index
 
 
 @pytest.mark.no_db_cleanup
@@ -135,8 +175,8 @@ def test_migrations_on_clean_postgres():
             assert result.scalar(), f"Core table '{table_name}' was not created"
 
         latest_revision = _discover_migrations()[-1].revision
-        assert latest_revision == "0105_unique_users_max_user_id"
-        _assert_0105_schema(conn)
+        assert latest_revision == LATEST_MIGRATION
+        _assert_latest_schema(conn)
 
     engine.dispose()
 
@@ -177,7 +217,7 @@ def test_migrations_upgrade_from_0103_to_recovered_0105_postgres():
     upgrade_to_head(sync_db_url)
 
     with engine.connect() as conn:
-        _assert_0105_schema(conn)
+        _assert_latest_schema(conn)
         result = conn.execute(
             text(
                 """

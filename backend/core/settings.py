@@ -127,6 +127,15 @@ class Settings:
     auto_interview_offer_after_test1_enabled: bool
     max_invite_rollout_enabled: bool
     max_adapter_enabled: bool
+    max_delivery_recovery_enabled: bool
+    max_delivery_recovery_admin_api_enabled: bool
+    max_delivery_recovery_admin_ui_enabled: bool
+    max_delivery_recovery_poll_interval: float
+    max_delivery_recovery_batch_size: int
+    max_delivery_recovery_lock_timeout_seconds: int
+    max_delivery_recovery_max_attempts: int
+    max_delivery_recovery_retry_base_seconds: int
+    max_delivery_recovery_retry_max_seconds: int
     max_bot_token: str
     max_public_bot_name: str
     max_miniapp_url: str
@@ -976,6 +985,50 @@ def get_settings() -> Settings:
         "MAX_BOT_ENABLED",
         default=False,
     )
+    max_delivery_recovery_enabled = _get_bool(
+        "MAX_DELIVERY_RECOVERY_ENABLED",
+        default=False,
+    )
+    max_delivery_recovery_admin_api_enabled = _get_bool(
+        "MAX_DELIVERY_RECOVERY_ADMIN_API_ENABLED",
+        default=max_delivery_recovery_enabled,
+    )
+    max_delivery_recovery_admin_ui_enabled = _get_bool(
+        "MAX_DELIVERY_RECOVERY_ADMIN_UI_ENABLED",
+        default=max_delivery_recovery_enabled,
+    )
+    max_delivery_recovery_poll_interval = _get_float(
+        "MAX_DELIVERY_RECOVERY_POLL_INTERVAL",
+        5.0,
+        minimum=0.5,
+    )
+    max_delivery_recovery_batch_size = _get_int(
+        "MAX_DELIVERY_RECOVERY_BATCH_SIZE",
+        25,
+        minimum=1,
+    )
+    max_delivery_recovery_lock_timeout_seconds = _get_int(
+        "MAX_DELIVERY_RECOVERY_LOCK_TIMEOUT_SECONDS",
+        60,
+        minimum=1,
+    )
+    max_delivery_recovery_max_attempts = _get_int(
+        "MAX_DELIVERY_RECOVERY_MAX_ATTEMPTS",
+        5,
+        minimum=1,
+    )
+    max_delivery_recovery_retry_base_seconds = _get_int(
+        "MAX_DELIVERY_RECOVERY_RETRY_BASE_SECONDS",
+        30,
+        minimum=1,
+    )
+    max_delivery_recovery_retry_max_seconds = _get_int(
+        "MAX_DELIVERY_RECOVERY_RETRY_MAX_SECONDS",
+        900,
+        minimum=1,
+    )
+    if max_delivery_recovery_retry_max_seconds < max_delivery_recovery_retry_base_seconds:
+        max_delivery_recovery_retry_max_seconds = max_delivery_recovery_retry_base_seconds
     max_bot_token = os.getenv("MAX_BOT_TOKEN", "").strip()
     max_public_bot_name = os.getenv("MAX_PUBLIC_BOT_NAME", "").strip()
     max_miniapp_url = os.getenv("MAX_MINIAPP_URL", "").strip()
@@ -1132,6 +1185,15 @@ def get_settings() -> Settings:
         auto_interview_offer_after_test1_enabled=auto_interview_offer_after_test1_enabled,
         max_invite_rollout_enabled=max_invite_rollout_enabled,
         max_adapter_enabled=max_adapter_enabled,
+        max_delivery_recovery_enabled=max_delivery_recovery_enabled,
+        max_delivery_recovery_admin_api_enabled=max_delivery_recovery_admin_api_enabled,
+        max_delivery_recovery_admin_ui_enabled=max_delivery_recovery_admin_ui_enabled,
+        max_delivery_recovery_poll_interval=max_delivery_recovery_poll_interval,
+        max_delivery_recovery_batch_size=max_delivery_recovery_batch_size,
+        max_delivery_recovery_lock_timeout_seconds=max_delivery_recovery_lock_timeout_seconds,
+        max_delivery_recovery_max_attempts=max_delivery_recovery_max_attempts,
+        max_delivery_recovery_retry_base_seconds=max_delivery_recovery_retry_base_seconds,
+        max_delivery_recovery_retry_max_seconds=max_delivery_recovery_retry_max_seconds,
         max_bot_token=max_bot_token,
         max_public_bot_name=max_public_bot_name,
         max_miniapp_url=max_miniapp_url,
