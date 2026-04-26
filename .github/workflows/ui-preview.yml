@@ -14,26 +14,48 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Detect UI preview inputs
+        id: preview_inputs
+        run: |
+          if [ -f frontend/app/package-lock.json ] \
+            && node -e "const s=require('./frontend/app/package.json').scripts||{}; process.exit(s['build:css'] ? 0 : 1)" \
+            && [ -f app_demo.py ] \
+            && [ -f tests/test_ui_screenshots.py ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "UI preview inputs are not present in this repository state; skipping legacy preview workflow."
+          fi
       - name: Install Python dependencies
+        if: steps.preview_inputs.outputs.enabled == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
       - name: Install Node dependencies
+        if: steps.preview_inputs.outputs.enabled == 'true'
+        working-directory: frontend/app
         run: npm ci
       - name: Build CSS
+        if: steps.preview_inputs.outputs.enabled == 'true'
+        working-directory: frontend/app
         run: npm run build:css
       - name: Install Playwright browsers
+        if: steps.preview_inputs.outputs.enabled == 'true'
         run: playwright install --with-deps
       - name: Render previews
+        if: steps.preview_inputs.outputs.enabled == 'true'
         run: python tools/render_previews.py
       - name: Capture UI screenshots
+        if: steps.preview_inputs.outputs.enabled == 'true'
         run: pytest tests/test_ui_screenshots.py
       - name: Upload previews
+        if: steps.preview_inputs.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ui-previews
           path: previews
       - name: Upload screenshots
+        if: steps.preview_inputs.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ui-screenshots
